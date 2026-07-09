@@ -62,6 +62,15 @@ func main() {
 	}
 	defer db.Close()
 
+	// Docker's `restart: unless-stopped` policy (unlike `docker compose up`)
+	// does not honor `depends_on: service_healthy` — a crash-restarted
+	// control-server can otherwise race Postgres's own startup and get stuck
+	// in permanent degraded mode (NoopWriter/NoopVehicleStore) until manually
+	// restarted (Sprint 18 Bugfix, found after ICE-Fix-Redeploy 2026-07-09).
+	if err := pkgdb.WaitForReady(db, pkgdb.DefaultConnectRetries, pkgdb.DefaultConnectRetryDelay); err != nil {
+		log.Warn("database not reachable after retries — starting in degraded mode", "error", err)
+	}
+
 	// --- Audit Writer (LOG-10/11 — ADR-018/023) ---
 	var auditWriter audit.AuditWriter
 	pgWriter, err := audit.NewPostgresAuditWriter(db)

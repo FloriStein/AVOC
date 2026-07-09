@@ -39,6 +39,13 @@ func main() {
 	}
 	defer db.Close()
 
+	// See control-server/main.go: Docker's `restart: unless-stopped` policy
+	// does not honor `depends_on: service_healthy`, so a crash-restarted
+	// auth-service can race Postgres's own startup (Sprint 18 Bugfix).
+	if err := pkgdb.WaitForReady(db, pkgdb.DefaultConnectRetries, pkgdb.DefaultConnectRetryDelay); err != nil {
+		log.Warn("database not reachable after retries — proceeding anyway", "error", err)
+	}
+
 	userStore, err := authservice.NewPostgresUserStore(db)
 	if err != nil {
 		log.Fatal("failed to initialize user store", "error", err)
