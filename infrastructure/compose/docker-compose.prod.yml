@@ -1,0 +1,251 @@
+name: avoc
+
+# Production Compose — EC2 Deployment (ADR-019)
+# Übergabe-Abweichung von ADR-019: KEIN Docker Hub / keine Registry — Images werden
+# lokal gebaut, per 'docker save' verpackt und direkt (S3+SSM oder scp) auf die Instanz
+# übertragen, dort per 'docker load' in den lokalen Docker-Daemon eingespielt.
+# Deshalb kein Registry-Präfix bei den avoc-*-Images (nur "avoc-x:${VERSION}"), und
+# kein build: auf der Instanz. Details/Revert: docs/deployment/UEBERGABE-ABWEICHUNGEN.md
+# Secrets kommen als Shell-Env-Variablen von scripts/deploy.sh (aus AWS SSM + lokaler .env).
+#
+# Starten: bash scripts/deploy.sh
+# Manuell: AWS_REGION=... VERSION=latest bash scripts/deploy.sh
+
+services:
+
+  # ─── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    image: avoc-frontend:${VERSION}
+    ports:
+      - "3000:80"
+      - "443:443"    # HTTPS — Self-signed cert aus ./ssl/ (via deploy.sh generiert)
+    volumes:
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - control-server
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── PostgreSQL — primäre Datenbank (ADR-023) ─────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: avoc
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: avoc
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - avoc-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avoc -d avoc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Control Server ────────────────────────────────────────────────────────
+  control-server:
+    image: avoc-control-server:${VERSION}
+    ports:
+      - "8080:8080"
+    environment:
+      CONTROL_PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET}
+      SAFETY_SERVICE_URL: "http://safety-service:8082"
+      SFU_SERVICE_URL: "http://webrtc-sfu:8084"
+      AUTH_SERVICE_URL: "http://auth-service:8081"
+      DATABASE_URL: "postgres://avoc:${DB_PASSWORD}@postgres:5432/avoc?sslmode=disable"
+      LOG_LEVEL: "info"
+      WHIP_STREAM_KEY: ${WHIP_STREAM_KEY}
+      MEDIAMTX_API_URL: "http://mediamtx:9997"
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP}
+      TURN_PORT: "3478"
+      TURN_USER: ${TURN_USER}
+      TURN_PASSWORD: ${TURN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      safety-service:
+        condition: service_started
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── Auth Service ──────────────────────────────────────────────────────────
+  auth-service:
+    image: avoc-auth-service:${VERSION}
+    ports:
+      - "8081:8081"
+    environment:
+      AUTH_PORT: "8081"
+      JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: "postgres://avoc:${DB_PASSWORD}@postgres:5432/avoc?sslmode=disable"
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── Safety Service ────────────────────────────────────────────────────────
+  safety-service:
+    image: avoc-safety-service:${VERSION}
+    ports:
+      - "8082:8082"
+    environment:
+      SAFETY_PORT: "8082"
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── Telemetry Service ─────────────────────────────────────────────────────
+  telemetry-service:
+    image: avoc-telemetry-service:${VERSION}
+    ports:
+      - "8083:8083"
+    environment:
+      TELEMETRY_PORT: "8083"
+      MQTT_BROKER: "mosquitto:1883"
+    depends_on:
+      - mosquitto
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── MQTT Broker ───────────────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── WebRTC SFU ────────────────────────────────────────────────────────────
+  webrtc-sfu:
+    image: avoc-webrtc-sfu:${VERSION}
+    ports:
+      - "8084:8084"
+      - "10000-10050:10000-10050/udp"
+    environment:
+      SFU_PORT: "8084"
+      CONTROL_SERVER_URL: "http://control-server:8080"
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── MediaMTX — WHIP/WHEP Router (ADR-020, Sprint 10) ───────────────────
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    ports:
+      - "8889:8889/tcp"   # WHIP/WHEP Signaling (HTTP)
+      - "8189:8189/udp"   # WebRTC ICE mux UDP (eigener Port, Sprint 10)
+      - "9997:9997"       # Management API (intern, für Control Server SAFE_MODE-Kick)
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP}
+    depends_on:
+      - control-server
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── coturn STUN/TURN (ADR-014, Sprint 10) ────────────────────────────────
+  # network_mode: host — coturn bindet Relay-Sockets direkt an EC2-Private-IP.
+  # Bridge-Networking würde 16384 Port-Mappings (49152-65535) erfordern.
+  # relay-ip=PRIVATE + external-ip=PUBLIC/PRIVATE: AWS-EC2 kennt eigene EIP nicht
+  # auf einem Netzwerk-Interface (kein Hairpin-NAT) — dieses Mapping ist Pflicht.
+  stun-turn:
+    image: coturn/coturn:latest
+    network_mode: host
+    command: >
+      --listening-port=3478
+      --relay-ip=${TURN_PRIVATE_IP}
+      --external-ip=${TURN_EXTERNAL_IP}/${TURN_PRIVATE_IP}
+      --realm=${TURN_REALM}
+      --user=${TURN_USER}:${TURN_PASSWORD}
+      --min-port=49152
+      --max-port=65535
+      --fingerprint
+      --lt-cred-mech
+      --no-cli
+      --log-file=stdout
+      --verbose
+    restart: unless-stopped
+
+  # ─── Loki ──────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.0.0
+    ports:
+      - "3100:3100"
+    volumes:
+      - ../loki/loki.yml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/config.yaml
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── Promtail ──────────────────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:3.0.0
+    volumes:
+      - ../promtail/promtail.yml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── Grafana (DEPLOY-06 — kein Anonymous Admin auf EC2) ───────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+  # ─── Vehicle Mock — simuliert Raspberry Pi (ADR-021) ──────────────────────
+  vehicle-mock:
+    image: avoc-vehicle-mock:${VERSION}
+    environment:
+      VEHICLE_ID: "vehicle-001"
+      CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"
+      JWT_SECRET: ${JWT_SECRET}
+      MQTT_BROKER: "mosquitto:1883"
+    depends_on:
+      - control-server
+      - mosquitto
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
+networks:
+  avoc-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  loki-data:
+  grafana-data:

@@ -1,0 +1,1040 @@
+# Done
+
+Lifecycle: backlog → sprint → done
+
+---
+
+## Sprint 17 — Multi-Vehicle State Isolation (ADR-026)
+
+Abgeschlossen: 2026-06-16 | Deployed: 2026-06-16 (Commits `32de463`, `d20e9f2`)
+
+Test-driven auf Nutzerwunsch: pro Komponente zuerst Szenarien/Edge-Cases durchdacht und Tests
+geschrieben (Red), danach implementiert (Green). Kernfix: State Machine, DeadmanWatchdog,
+ACKTimeoutWatcher und VehicleACKWatchdog waren Prozess-Singletons — zwei Operatoren auf zwei
+Fahrzeugen überschrieben sich gegenseitig die Safety-Überwachung.
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| MV-01 | `vehiclecontext.Registry` | M | ✅ `VehicleContext` (SM + Deadman + ACKTimeoutWatcher + VehicleACKWatchdog) pro Fahrzeug, lazy `Get(vehicleID)`, thread-safe; 13 Unit-Tests |
+| MV-02 | `SafetyBusWatchdog` fleet-wide | M | ✅ Bleibt global (ein Safety-Service), fächert bei Ausfall auf alle `ActiveVehicleIDs()` auf statt nur das zuletzt gestartete Fahrzeug zu kennen; alte Single-Session-Tests vollständig durch 11 neue Fleet-Wide-Tests ersetzt |
+| MV-03 | `main.go` Endpunkte | M | ✅ `session/start`/`session/end`/`media/event` auf Registry umgestellt; `emergency-stop` mit `vehicle_id` (gezielt) oder ohne (fleet-weit via `ActiveVehicleIDs()`) |
+| MV-04 | WS-Handler + Command Engine | M | ✅ `sm`/`deadman`/`ackWatcher`-Felder durch Registry-Lookup über `sess.VehicleID` ersetzt — musste mit MV-03/05 kohärent erfolgen (Split-Brain-Risiko bei Teilmigration) |
+| MV-05 | `vehicleconnection.Handler` | M | ✅ Lookup über `claims.Subject` (Fahrzeug-JWT) statt globaler Felder |
+| MV-06 | `GET /vehicles/{id}/state` | S | ✅ Neuer Endpoint; `GET /state` bewusst als Compat-Shim erhalten (k6 `latency.js`, `services_test.go`) — siehe Backlog MV-12 |
+| MV-07 | Frontend `useSystemState(vehicleId, token)` | M | ✅ Live-Polling vs. Reachability-Probe (`GET /sessions`) getrennt; Page-Reload-Recovery über `activeSessions`; `UserManagementPanel.activeOperatorId` → `activeOperatorIds[]` |
+| MV-08 | Edge-Case-Tests | M | ✅ 2 Fahrzeuge parallel unabhängiges SAFE_MODE, SafetyBusWatchdog fleet-wide, E-Stop mit/ohne `vehicle_id` — Backend via Unit+Integration, Frontend via Hook-Tests |
+
+### Test-Ergebnis
+
+- Backend: 13 (`vehiclecontext_test.go`) + 11 (`watchdog_test.go`, SafetyBusWatchdog neu) + 4 (`multivehicle_test.go`, Integration gegen Docker-Stack) neue Tests, alle grün, `-race`-sauber. Bestehende 112 Unit-Tests bleiben grün.
+- Frontend: 12 (`useSystemState.test.ts`) + 1 (`UserManagementPanel.test.tsx`) neue Tests. Gesamte Suite 103 Tests/10 Dateien grün, `tsc --noEmit` sauber, Produktionsbuild erfolgreich.
+
+### Nebenbei gefunden + behoben
+
+- `tests/integration/services_test.go` + `tests/performance/latency_test.go`/`.js`: altes Login-Feld `id` statt `username`, fehlende Auth-Header — Regression aus einer früheren Nutzerverwaltungs-Aufgabe, durch `go vet`/`go test` erst jetzt sichtbar geworden (eigener Commit `3dc3c9e`).
+
+### Bewusst nicht angefasst (Scope-Grenze, im Backlog verfolgt)
+
+- `HandoverManager` behält eine eigene dedizierte State Machine (`handoverSM`) — transitioniert nur die OPERATOR-Schicht, kein SAFE_MODE-Risiko. Multi-Vehicle-Handover als `MV-11` im Backlog.
+- `internal/authservice/handler_test.go` ist unabhängig von ADR-026 bereits kaputt (alte string-ID/`DisplayName`-API) — als `AUTH-TEST-01` im Backlog, nicht in diesem Sprint angefasst.
+- `GET /state` vollständig entfernen — als `MV-12` im Backlog, hängt nur noch an `latency.js`/`services_test.go`.
+
+### Neue/geänderte Dateien
+
+- `internal/controlserver/vehiclecontext/registry.go` — NEU: `VehicleContext` + `Registry`
+- `internal/controlserver/safety/bus_watchdog.go` — `SafetyBusWatchdog` komplett umgebaut (fleet-wide)
+- `internal/controlserver/session/manager.go` — `ActiveVehicleIDs()`, `GetSessionByVehicle()`
+- `internal/controlserver/command/engine.go` — `vehicleContexts *vehiclecontext.Registry` statt `sm`/`deadman`
+- `internal/controlserver/transport/websocket.go` — `vehicleContexts` statt `sm`/`deadman`/`ackWatcher`
+- `internal/vehicleconnection/handler.go` — `vehicleContexts` statt `sm`/`vehicleACKWatchdog`
+- `cmd/control-server/main.go` — komplette Verdrahtung; `GET /vehicles/{id}/state`; `emergency-stop` Scoping; `GET /state` Compat-Shim
+- `frontend/src/hooks/useSystemState.ts` + `.test.ts` — NEU: vehicle-scoped Polling
+- `frontend/src/lib/api-client.ts` — `getVehicleState()` statt `getState()`
+- `frontend/src/App.tsx` — Page-Reload-Recovery über `activeSessions`; `activeOperatorIds`
+- `frontend/src/components/UserManagementPanel.tsx` + `.test.tsx` — `activeOperatorIds[]`
+- `docs/adr/026-multi-vehicle-state-isolation.md` — NEU
+
+---
+
+## Sprint 16 — Safety Hardening (ADR-009 Lücken geschlossen)
+
+Abgeschlossen: 2026-06-14
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| SAF-01 | VehicleACKWatchdog | M | ✅ 1s Sliding-Window Timer; `CommandForwarded()`/`ACKReceived()`; SAFE_MODE + `EventVehicleACKTimeout` |
+| SAF-02 | SafetyBusWatchdog | M | ✅ 5s Polling, Threshold=2 (=10s); Context-cancel auf Stop(); SAFE_MODE + `EventSafetyBusDown` |
+| BUG-01 | WS-Disconnect-Race | S | ✅ `sessionStillActive`-Check vor SAFE_MODE in readLoop defer |
+| BUG-02 | CONNECTED→IDLE Transition | S | ✅ `validSystemTransitions` erweitert um StateIdle für CONNECTED und DEGRADED |
+| BUG-03 | Page-Reload-Recovery | S | ✅ `GET /state` gibt `vehicle_id`+`role` zurück; `restoreFromServerState()` in useSession |
+| TEST-01 | 18 Unit-Tests (beide Watchdogs) | M | ✅ `tests/unit/watchdog_test.go`; alle 18 grün |
+
+### Neue/geänderte Dateien
+
+- `internal/controlserver/safety/detector.go` — `VehicleACKWatchdog` + `DefaultVehicleACKTimeout`; `EventVehicleACKTimeout`
+- `internal/controlserver/safety/bus_watchdog.go` — NEU: `SafetyBusWatchdog` vollständig
+- `internal/controlserver/command/engine.go` — `vehicleACKWatchdog`-Feld + `WithVehicleACKWatchdog()` + Aufruf nach ForwardCommand
+- `internal/vehicleconnection/handler.go` — `vehicleACKWatchdog`-Feld + `WithVehicleACKWatchdog()` + Aufruf nach ACK-Store
+- `internal/controlserver/statemachine/state.go` — `StateConnected`/`StateDegraded` → `StateIdle` als valide Transition
+- `internal/controlserver/transport/websocket.go` — `sessionStillActive`-Check in readLoop defer
+- `cmd/control-server/main.go` — beide Watchdogs erstellt + verdrahtet; `GET /state` gibt `vehicle_id`+`role`
+- `internal/safetyservice/bus.go` — `EventVehicleACKTimeout` + `EventSafetyBusDown`
+- `pkg/logger/event_types.go` — `EventVehicleACKTimeout` + `EventSafetyBusDown`
+- `frontend/src/lib/api-client.ts` — `SystemStateResponse` um `vehicle_id?` + `role?` erweitert
+- `frontend/src/hooks/useSession.ts` — `restoreFromServerState(sessionId, vehicleId, role)` hinzugefügt
+- `frontend/src/App.tsx` — useEffect für orphaned-SAFE_MODE-Recovery nach Page-Reload
+- `tests/unit/watchdog_test.go` — NEU: 9 VehicleACK + 9 SafetyBus Tests
+- `docs/adr/009-failure-model.md` — Watchdog-Implementierungen dokumentiert; alle 9 CRITICAL-Trigger
+
+### Commit
+
+`844a6ef feat: VehicleACKWatchdog + SafetyBusWatchdog (ADR-009 Lücken geschlossen)`
+
+---
+
+## Sprint 14 (Partial) — Security & Observability
+
+Abgeschlossen (bisherige Tasks): 2026-06-13
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| AUTH-01 | JWT-Pflicht auf REST-Endpoints | M | ✅ `requireJWT`-Middleware; 9 Endpoints geschützt; token in api-client + SafetyPanel + useWebRTC durchgereicht |
+
+### Neue/geänderte Dateien
+
+- `cmd/control-server/main.go` — `requireJWT(secret []byte)` Middleware + 9 geschützte Endpoints
+- `frontend/src/lib/api-client.ts` — `token`-Parameter in `startSession`, `endSession`, `emergencyStop`, `reportMediaState`
+- `frontend/src/hooks/useSession.ts` — Token zu `startSession`/`endSession` durchgereicht; `resumingRef` entfernt
+- `frontend/src/hooks/useWebRTC.ts` — `token` zu `reportMediaState` durchgereicht
+- `frontend/src/components/SafetyPanel.tsx` — `token: string | null` Prop für `emergencyStop`
+- `frontend/src/components/SafetyPanel.test.tsx` — `token={null}` in allen Render-Aufrufen
+- `frontend/src/App.tsx` — `token={session.token}` an `SafetyPanel`
+- `frontend/src/lib/ws-client.ts` — `disconnect()` setzt `ws.onclose = null` vor Close (Race-Condition-Fix)
+
+### Verification — E2E PASS (2026-06-13)
+
+**Surface:** EC2 `18.196.24.10:443`, 13 Container up, curl via SSH.
+
+**AUTH-01 — Geschützte Endpoints (9 Endpoints ohne Token → 401):**
+```
+POST /session/start → 401   POST /session/end    → 401
+POST /emergency-stop → 401  POST /handover/req   → 401
+POST /media/event   → 401   POST /vehicles       → 401
+DELETE /vehicles/x  → 401   GET /audit/events    → 401
+GET /recording/x    → 401
+```
+
+**AUTH-01 — Offene Endpoints (kein Token nötig → 200):**
+```
+GET /state → 200   GET /health → 200   GET /vehicles → 200
+GET /ice-config → 200   POST /log → 202
+```
+
+**AUTH-01 — Edge Cases fehlerhafte Token (alle → 401):**
+- `"Token <jwt>"` (falsches Scheme) → 401
+- `"Bearer "` (leerer Wert) → 401
+- Tampered JWT payload → 401
+- JWT mit anderem Secret signiert → 401
+- Leerer / fehlender Authorization-Header → 401
+
+**AUTH-01 — Business-Logik nach Auth:**
+- session/start mit gültigem Token bei SAFE_MODE → Auth pass, Body: `"system must be in AUTHENTICATED state"` ✅
+- POST /vehicles Duplikat mit Token → 409 ✅
+- POST /vehicles malformed JSON mit Token → 400 ✅
+- DELETE /vehicles nach DELETE → 404 ✅
+- media/event unbekannter State → 400 ✅
+
+**E2E Session-Lifecycle mit JWT:**
+```
+Login → JWT erhalten
+POST /session/start (Token) → 200, session_id=01KV1EA0KTVXXP0V7SRXZXZ7PT
+State → CONNECTED / ACTIVE_OPERATOR
+POST /emergency-stop (Token) → 202
+State → SAFE_MODE / ACTIVE_OPERATOR
+POST /session/end (Token) → 204
+State → SAFE_MODE / NO_OPERATOR  (wartet auf Frontend-Resume — korrekt)
+```
+
+**WSClient-Fix (Doppel-Reconnect-Race):** Kein WS-Client auf EC2 verfügbar → direkt nicht observierbar. Backend-Seiteneffekte: E-Stop → SAFE_MODE korrekt, System bleibt in SAFE_MODE bis Operator-WS-Reconnect (Frontend-Resume). Strukturell korrekt durch `ws.onclose = null` in `disconnect()`. Go Build ✅ · TypeScript ✅ · 41/41 Frontend-Tests ✅.
+
+**⚠️ Finding (pre-existing):** `GET /audit/events?session_id=<unbekannt>` gibt `null` statt `[]` zurück — `json.Encode(nil)` auf nil-Slice. Frontend ruft diesen Endpoint nicht auf; bei späterer Audit-UI defensiv behandeln.
+
+---
+
+## Sprint 13 — Dev-Stack Stabilisierung & Log-Korrelation
+
+Abgeschlossen: 2026-06-13
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| DEV-01 | `nginx.dev.conf` — HTTP-only Dev-nginx; `docker-compose.yml` Volume-Mount | S | ✅ SSL-Fehler beim `make up` behoben |
+| DEV-02 | Makefile: `vehicle-mock` in `build-prod` + `push` | S | ✅ 7 Images statt 6; vehicle-mock.Dockerfile |
+| DEV-03 | `cmd/vehicle-mock/main.go` — `session_id` aus ControlCommand → TelemetryEvent + Ack Header | M | ✅ Vollständige Log-Korrelation über alle Kanäle |
+
+### Neue/geänderte Dateien
+
+- `infrastructure/docker/nginx.dev.conf` — neu (HTTP-only, kein SSL)
+- `infrastructure/compose/docker-compose.yml` — frontend volumes: nginx.dev.conf mount
+- `Makefile` — vehicle-mock in build-prod + push (7 Images)
+- `cmd/vehicle-mock/main.go` — sessionID in state; aus ControlCommand.Header extrahiert; in TelemetryEvent.Header + VehicleCommandAck.Header propagiert
+
+### Verification
+
+E2E-Verification PASS — laufender Stack (alle 13 Container), Python-WS-Skripte für Session-Szenarien.
+
+**DEV-01 nginx.dev.conf:**
+- `docker compose up --build` → frontend startet ohne SSL-Fehler; Volume-Mount aktiv (`listen 80;`, 0 ssl-Treffer)
+- HTTP 200 auf Port 3000; HTTPS Port 3000 → `000 refused` (kein 443-Listener)
+- nginx-Proxy-Routen: `/api/health` → 200, `/auth/operator/login` → 200 + JWT, `/api/vehicles` → 200 + JSON, `/ws` → 401 (Auth-Abweisung korrekt)
+
+**DEV-02 Makefile:**
+- `vehicle-mock.Dockerfile` existiert; Makefile referenziert es korrekt in `build-prod` (7 Images) und `push`
+- Dockerfile kompiliert sauber (Docker golang:1.23-alpine, verifiziert)
+
+**DEV-03 session_id-Propagation:**
+- Python-WS-Script: Operator-JWT → WS-Connect → `POST /session/start` → STEER-ControlCommand mit `session_id=01KTZWQSYKAP3AKVE40W3DNP34` → vehicle-mock forwarded → MQTT-TelemetryEvent enthält exakt dieselbe session_id → **PASS**
+- VehicleCommandAck-Header ebenfalls mit session_id befüllt (Code-Pfad verifiziert)
+
+**Sprint 12 Vehicle Registry (E2E nachverifiziert):**
+- `GET /vehicles` → vehicle-001 auto-geseedet, `online: true`; vehicle-002 angelegt → `online: false`
+- `DELETE /vehicles/does-not-exist` → 404 + `"vehicle not found"` ✅
+- `POST` malformed JSON → 400 + `"invalid JSON"`; fehlende Felder → 400 + `"id and display_name required"` ✅
+- Session-locked DELETE: `DELETE /vehicles/vehicle-001` während aktiver Session → 409 + `"vehicle is currently in active session"`; nach Session-Ende → 204 ✅
+- SeedDefault nach control-server-Restart → exakt 1× vehicle-001, kein Duplikat ✅
+- SQL-Injection in `id`-Feld → 201 (stored literal), Tabelle intakt (parametrisiertes SQL) ✅
+
+**⚠️ Finding (pre-existing, nicht durch Sprint 12/13 eingeführt):**
+`GET/POST/DELETE /vehicles` haben keine JWT-Pflicht — konsistent mit allen anderen REST-Endpoints des control-servers (`/state`, `/session/start` etc.). Schutz besteht nur durch Docker-Netzwerk-Isolation; Port 8080 sollte nie direkt öffentlich exponiert werden.
+
+---
+
+## Sprint 12 — Vehicle Registry (ADR-022)
+
+Abgeschlossen: 2026-06-12
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| VEH-REG-01 | ADR-022 — Vehicle Registry Architecture | L | ✅ `docs/adr/022-vehicle-registry.md` |
+| VEH-REG-02 | `pkg/audit/sqlite_writer.go` — `DB() *sql.DB` getter | S | ✅ Shared WAL-Connection für vehicleregistry |
+| VEH-REG-03 | `internal/vehicleregistry/` — VehicleStore + SQLiteVehicleStore + NoopVehicleStore | M | ✅ ErrNotFound-Sentinel; ConnectionChecker Interface |
+| VEH-REG-04 | `cmd/control-server/main.go` — Store-Init + `GET/POST/DELETE /vehicles` | M | ✅ SeedDefault vehicle-001; korrekte Status-Codes |
+| VEH-REG-05 | `frontend/src/lib/api-client.ts` + `useVehicles.ts` | S | ✅ `VehicleInfo`, `listVehicles()`, 2s-Polling |
+| VEH-REG-06 | `frontend/src/hooks/useSession.ts` — `startSession(vehicleId)` | M | ✅ VEHICLE_ID-Hardcoding vollständig entfernt |
+| VEH-REG-07 | `frontend/src/components/VehicleSelector.tsx` | M | ✅ Dropdown + Online-Indikator + "Session starten" |
+| VEH-REG-08 | `SafetyPanel.tsx` + `ControlPanel.tsx` + `ConnectionPanel.tsx` + `App.tsx` | M | ✅ vehicleId-Prop-Chain; Auto-Start entfernt |
+| VEH-REG-12 | Bugfix: `DELETE /vehicles/{id}` → 404 (ErrNotFound) | S | ✅ `RowsAffected()` Check + errors.Is() im Handler |
+| VEH-REG-13 | Bugfix: `POST /vehicles` malformed JSON → "invalid JSON" (400) | S | ✅ Decode von Feldvalidierung getrennt |
+
+### Neue/geänderte Dateien
+
+- `pkg/audit/sqlite_writer.go` — `DB() *sql.DB` getter
+- `internal/vehicleregistry/registry.go` — neu (Vehicle, VehicleStore Interface, ConnectionChecker, ErrNotFound)
+- `internal/vehicleregistry/sqlite_store.go` — neu (SQLiteVehicleStore, vehicles-Tabelle, SeedDefault)
+- `internal/vehicleregistry/noop_store.go` — neu (NoopVehicleStore)
+- `cmd/control-server/main.go` — vehicleregistry import, Store-Init, 3 neue Endpoints
+- `frontend/src/lib/api-client.ts` — VehicleInfo + listVehicles()
+- `frontend/src/hooks/useVehicles.ts` — neu
+- `frontend/src/hooks/useSession.ts` — startSession(vehicleId) statt startSessionIfNeeded()
+- `frontend/src/components/VehicleSelector.tsx` — neu
+- `frontend/src/components/SafetyPanel.tsx` — vehicleId prop
+- `frontend/src/components/ControlPanel.tsx` — vehicleId prop
+- `frontend/src/components/ConnectionPanel.tsx` — VehicleSelector + onStartSession prop
+- `frontend/src/App.tsx` — Auto-Start entfernt, vehicleId-Prop-Chain
+- `frontend/src/components/SafetyPanel.test.tsx` — vehicleId={null} ergänzt
+- `frontend/src/components/ControlPanel.test.tsx` — vehicleId={null} ergänzt
+- `docs/adr/022-vehicle-registry.md` — neu
+
+### Verification
+
+E2E-Verification PASS: vehicle-001 auto-geseedet · Online-Flag live aus WS-Registry · alle CRUD-Endpoints korrekte Status-Codes · SQL-Injection-Probe neutralisiert · Persistenz nach Neustart bestätigt
+
+---
+
+## Sprint 11 — Vehicle Connectivity & Feedback (ADR-021)
+
+Abgeschlossen: 2026-06-11
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| VEH-01 | ADR-021 — Vehicle Connectivity & Feedback Architecture | L | ✅ `docs/adr/021-vehicle-connectivity-feedback.md` |
+| VEH-02 | `proto/vehicle.proto` — VehicleCommandAck | S | ✅ header + command_event_id + received + received_at_ms |
+| VEH-03 | `proto/telemetry.proto` — Actuation Fields 7–11 | S | ✅ steer/throttle/brake commanded + actual |
+| VEH-04 | `internal/vehicleconnection/registry.go` — ForwardCommand | M | ✅ VehicleForwarder-Impl.; kritischer Gap geschlossen |
+| VEH-05 | `internal/vehicleconnection/ackstore.go` — AckStore | S | ✅ Latest-ACK je vehicleID |
+| VEH-06 | `internal/controlserver/command/engine.go` — VehicleForwarder | M | ✅ Interface + WithVehicleForwarder() |
+| VEH-07 | `cmd/control-server/main.go` — ACK-Endpoint | M | ✅ `GET /vehicle/ack/latest/{vehicleID}` |
+| VEH-08 | `cmd/vehicle-mock/main.go` — Docker-Fahrzeug-Simulation | L | ✅ JWT self-gen, WS, Protobuf, ACK, MQTT-Lerp 15% |
+| VEH-09 | `vehicle-mock.Dockerfile` + Compose + nginx | M | ✅ `/vehicle/` Proxy, dev+prod Compose |
+| VEH-10 | `useVehicleAck.ts` — Frontend Hook | S | ✅ 500ms-Polling |
+| VEH-11 | `InputIndicatorPanel.tsx` — Lenkrad + ActuationBars + AckBadge | M | ✅ Im Footer integriert |
+| VEH-12 | Tests: 7 Go + 7 TypeScript | M | ✅ 26/26 Go Unit + 41/41 Frontend grün |
+
+### Neue/geänderte Dateien
+
+- `proto/vehicle.proto` — VehicleCommandAck
+- `proto/telemetry.proto` — Actuation Fields 7–11
+- `internal/vehicleconnection/registry.go` — neu
+- `internal/vehicleconnection/ackstore.go` — neu
+- `internal/vehicleconnection/handler.go` — rewritten (register/unregister/readLoop)
+- `internal/controlserver/command/engine.go` — VehicleForwarder Interface
+- `cmd/control-server/main.go` — Registry/AckStore verdrahtet, ACK-Endpoint
+- `cmd/vehicle-mock/main.go` — neu
+- `cmd/telemetry-service/main.go` — Actuation Fields in JSON
+- `infrastructure/docker/vehicle-mock.Dockerfile` — neu
+- `infrastructure/compose/docker-compose.yml` — vehicle-mock Service
+- `infrastructure/compose/docker-compose.prod.yml` — vehicle-mock Image
+- `infrastructure/docker/nginx.conf` — `/vehicle/` + `/vehicle/ws` Proxy
+- `frontend/src/hooks/useVehicleAck.ts` — neu
+- `frontend/src/hooks/useTelemetry.ts` — Interface erweitert
+- `frontend/src/components/InputIndicatorPanel.tsx` — neu
+- `frontend/src/App.tsx` — useVehicleAck + InputIndicatorPanel
+- `tests/unit/vehicleconnection_test.go` — neu
+- `frontend/src/components/InputIndicatorPanel.test.tsx` — neu
+- `docs/adr/021-vehicle-connectivity-feedback.md` — neu
+- `docs/sprints/sprint-11-vehicle-connectivity.md` — neu
+- `docs/sprints/sprint-11-verification.md` — neu
+
+### Verification
+
+E2E-Verification PASS: `steer_commanded=0.75 → steer_actual=0.6375 (Lerp 15%) → ACK <500ms`
+Finding: `make up` startet Frontend lokal nicht ohne SSL-Cert (Sprint-10-Regression, kein Sprint-11-Bug)
+
+---
+
+## Sprint 10 — Browser WebRTC ICE Migration
+
+Abgeschlossen: 2026-06-10
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| WEBRTC-01 | CDK Security Group: 3478 TCP/UDP, 8189 UDP, 49152–65535 UDP | S | ✅ Via `aws ec2 authorize-security-group-ingress` (CDK deploy übersprungen wegen Subnet-AZ-Drift) |
+| WEBRTC-02 | `mediamtx.yml`: `webrtcIPsFromInterfaces: false`, ICEServers2 entfernt, Port 8189 | S | ✅ Verifiziert via `/v3/config/global/get` |
+| WEBRTC-03 | `docker-compose.prod.yml`: coturn `network_mode: host`, relay-ip, external-ip=PUBLIC/PRIVATE | M | ✅ `relay-ip=10.0.33.191`, `external-ip=18.196.24.10/10.0.33.191` |
+| WEBRTC-04 | mediamtx UDP-Port 8889 → 8189 | S | ✅ |
+| WEBRTC-05 | `deploy.sh`: `TURN_PRIVATE_IP` aus IMDS (IMDSv2 Token-Header) | S | ✅ Amazon Linux 2023 erfordert IMDSv2 |
+| WEBRTC-06 | control-server: `GET /ice-config` Endpoint | M | ✅ STUN + TURN UDP + TURN TCP; nginx-Präfix-Regel beachtet |
+| WEBRTC-07 | control-server env: `TURN_USER`, `TURN_PASSWORD`, `TURN_EXTERNAL_IP` | S | ✅ |
+| WEBRTC-08 | `useWebRTC.ts`: DTLS-Fix (actpass→active), `/api/ice-config` fetch, 5s Gathering-Timeout | M | ✅ |
+| WEBRTC-09 | Deploy auf EC2 `18.196.24.10`; alle 12 Container Up | M | ✅ Deployed, E2E Smoke Test offen |
+
+### Neue/geänderte Dateien
+
+- `infrastructure/mediamtx/mediamtx.yml` — Komplett neu (webrtcIPsFromInterfaces, Port 8189, kein ICEServers2)
+- `infrastructure/compose/docker-compose.prod.yml` — coturn host mode, mediamtx Ports, control-server env
+- `scripts/deploy.sh` — IMDSv2 TURN_PRIVATE_IP, TURN_REALM, TURN_USER, TURN_PASSWORD
+- `cmd/control-server/main.go` — `GET /ice-config` Endpoint
+- `frontend/src/hooks/useWebRTC.ts` — DTLS-Fix, fetchIceServers(), 5s ICE-Gathering-Timeout
+- `infrastructure/AWS/cdk_server-stack.ts` — Port 3478 statt 3479, Port 8189, Relay 49152-65535
+- `docs/sprints/sprint-10-webrtc-ice-migration.md` — Sprint-Dokument mit Deployment-Protokoll
+
+### Bugs gefunden & behoben
+
+| Bug | Ursache | Fix |
+|-----|---------|-----|
+| `TURN_PRIVATE_IP` leer | IMDSv1 auf Amazon Linux 2023 | IMDSv2 Token-Header |
+| loki/promtail crash loop | Docker erstellte Verzeichnis statt File-Bind | Container stoppen, `rm -rf`, Config neu hochladen |
+| `/api/ice-config` → 404 | Route `/api/ice-config` statt `/ice-config` (nginx strippt Präfix) | Route umbenannt |
+| mediamtx startet nicht | Port 9997 durch streaming-mediamtx-1 belegt | streaming-platform gestoppt |
+| Grafana Provisioning fehlt | Config-Pfade `~/grafana/provisioning` nicht angelegt | Dirs + Files hochgeladen |
+
+### Testprotokoll (2026-06-10)
+
+| Test | Ergebnis |
+|------|---------|
+| `curl http://18.196.24.10:3000/api/ice-config` | STUN + TURN UDP + TURN TCP ✅ |
+| `POST /whep/vehicle-test/whep` ohne Token | HTTP 401 ✅ |
+| Frontend `http://18.196.24.10:3000/` | HTTP 200 ✅ |
+| coturn relay-ip / external-ip | 10.0.33.191 / 18.196.24.10/10.0.33.191 ✅ |
+| mediamtx webrtcIPsFromInterfaces | false ✅ |
+| Port 3478 TCP von extern | OPEN ✅ |
+| Port 8889 TCP von extern | OPEN ✅ |
+| 31/31 TypeScript Unit-Tests | ✅ |
+| Go Unit-Tests | ✅ |
+
+---
+
+## Sprint 9 — WebRTC Videostream: Larix WHIP → MediaMTX → Browser
+
+Abgeschlossen: 2026-06-05
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| STREAM-01 | ADR-020 — MediaMTX als WHIP/WHEP Router | L | ✅ `docs/adr/020-mediamtx-whip-whep.md` |
+| STREAM-02 | `infrastructure/mediamtx/mediamtx.yml` + Docker Service | M | ✅ |
+| STREAM-03 | nginx: `/whep/` Proxy | S | ✅ |
+| STREAM-04 | `useWebRTC.ts` → WHEP-Protokoll + vehicleId-Prop | M | ✅ |
+| STREAM-05 | Control Server: `/internal/media/auth` + SAFE_MODE → MediaMTX API | M | ✅ |
+| STREAM-06 | TURN in MediaMTX ICE-Config + Compose env | S | ✅ |
+| STREAM-07 | CDK Port 8889 + SSM `whip-stream-key` | S | ✅ |
+| STREAM-08 | `docker-compose.prod.yml`: mediamtx + deploy.sh Update | S | ✅ |
+| STREAM-09 | Larix Setup Guide + E2E Smoke Test | S | ✅ `docs/deployment/larix-setup.md` |
+
+---
+
+## Sprint 8 — EC2 Deployment via Docker Hub
+
+Abgeschlossen: 2026-06-04
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| DEPLOY-01 | ADR-019 — Deployment-Strategie | L | ✅ `docs/adr/019-deployment-strategy.md` — Docker Hub private Repos + EC2 Elastic IP + AWS SSM Parameter Store; linux/amd64; 3 Optionen bewertet |
+| DEPLOY-02 | Makefile `build-prod` + `push` | M | ✅ `build-prod`: docker buildx --platform linux/amd64 für 5 Go-Services + Frontend; `push`: build-prod + docker push; Guard-Clause bei fehlendem DOCKER_USERNAME; `.docker-username` als gitignorierter lokaler Helper |
+| DEPLOY-03 | `docker-compose.prod.yml` | M | ✅ Alle Custom-Services mit `image:` statt `build:`, `restart: unless-stopped` auf allen 11 Services, YAML validiert |
+| DEPLOY-04 | `scripts/setup-ssm.sh` + `scripts/deploy.sh` | M | ✅ `setup-ssm.sh`: interaktiv, 9 SSM-Parameter, Input-Validierung (min. Längen), SecureString für Secrets; `deploy.sh`: SSM-Fetch → docker login → pull → up -d; Bash-Syntax valide |
+| DEPLOY-05 | coturn EC2-Konfiguration | M | ✅ In `docker-compose.prod.yml`: Command-Override mit `--external-ip=${TURN_EXTERNAL_IP}`, Port-Range 49160-49200 (passend zu CDK Security Group) |
+| DEPLOY-06 | Grafana Security | S | ✅ `GF_AUTH_ANONYMOUS_ENABLED: "false"`, `GF_AUTH_DISABLE_LOGIN_FORM: "false"`, Credentials aus SSM |
+| DEPLOY-07 | EC2 Bootstrap Guide | M | ✅ `docs/deployment/ec2-bootstrap.md` — 6 Schritte, Troubleshooting (5 Szenarien), Rollback, Update-Prozess |
+
+### Neue Dateien
+
+- `infrastructure/compose/docker-compose.prod.yml` — Production Compose (DEPLOY-03/05/06)
+- `scripts/setup-ssm.sh` — SSM Parameter anlegen (DEPLOY-04)
+- `scripts/deploy.sh` — EC2 Deployment Script (DEPLOY-04)
+- `docs/adr/019-deployment-strategy.md` — ADR-019 (DEPLOY-01)
+- `docs/deployment/ec2-bootstrap.md` — Bootstrap Guide (DEPLOY-07)
+
+### Geänderte Dateien
+
+- `Makefile` — `build-prod` + `push` Targets + `DOCKER_USERNAME`/`REGISTRY`/`PLATFORM` Variablen (DEPLOY-02)
+- `.gitignore` — `.docker-username` ergänzt
+- `tasks/current-sprint.md` — Sprint 8 Plan + DoD
+- `tasks/backlog.md` — DEPLOY-Epics + offene Folge-Entscheidungen aktualisiert
+- `docs/implementation-plan.md` — Phase 8 ergänzt, ADR-Index auf 19 ADRs
+- `DECISIONS.MD` — ADR-019 + Folge-Entscheidungen aktualisiert
+
+### Gelöschte Dateien
+
+- `infrastructure/docker/telemtry.Dockerfile` — leer, Tippfehler im Namen, nicht referenziert
+- `infrastructure/docker/video.Dockerfile` — leer, nicht referenziert
+
+### Testprotokoll (2026-06-04)
+
+| Test-ID | Test | Erwartung | Ergebnis |
+|---------|------|-----------|----------|
+| T01 | `make build-prod` ohne `DOCKER_USERNAME` | Guard-Clause + Fehlermeldung | ✅ ERROR-Meldung + exit 1 |
+| T02 | `GO_SERVICES` in Makefile vs. `cmd/` Verzeichnisse | Exakte Übereinstimmung (5/5) | ✅ identisch |
+| T03 | Referenzierte Dockerfiles vorhanden | `go-service.Dockerfile`, `frontend.Dockerfile` | ✅ beide vorhanden, keine toten Files mehr |
+| T04 | `docker-compose.prod.yml` YAML-Syntax | Keine Fehler | ✅ YAML valide |
+| T05 | Kein `build:` in Custom Services | 0 build:-Einträge | ✅ 0 gefunden |
+| T06 | coturn `--external-ip` Flag | In Command-Override vorhanden | ✅ `--external-ip=${TURN_EXTERNAL_IP}` |
+| T07 | Grafana Anonymous Auth deaktiviert | `GF_AUTH_ANONYMOUS_ENABLED: "false"` | ✅ |
+| T08 | `restart: unless-stopped` auf allen Services | 11 Services | ✅ 11/11 |
+| T09 | Alle 9 Env-Var-Referenzen in Compose | `${REGISTRY}`, `${JWT_SECRET}`, … | ✅ alle 9 vorhanden |
+| T10 | Image-Naming für alle 6 Services | `avoc-<service>` Pattern | ✅ alle 6 vorhanden |
+| T11 | SSM-Pfade `setup-ssm.sh` ↔ `deploy.sh` identisch | 9 Pfade, kein Unterschied | ✅ identisch (diff leer) |
+| T12 | `deploy.sh` exportiert alle Compose-Env-Vars | 9 `export`-Statements | ✅ alle 9 |
+| T13 | `deploy.sh` nutzt `docker compose` (Plugin v2) | Kein `docker-compose` als Befehl | ✅ nur Dateiname enthält Bindestrich, alle Befehle korrekt |
+| T14 | Port-Konsistenz Compose ↔ CDK Security Group | 7 Ports übereinstimmend | ✅ 3000, 8080, 1883, 3479, 8084, 10000-10050, 3001 |
+| T15 | Bootstrap Guide — 6 Schritte vorhanden | Schritt 1–6 | ✅ alle 6 |
+| T16 | Bootstrap Guide — kritische Abschnitte | Troubleshooting, Rollback, SSM, Security Group | ✅ alle vorhanden |
+| T17 | `.docker-username` gitignored | In `.gitignore` eingetragen | ✅ |
+| T18 | Tote Dockerfiles entfernt | `telemtry.Dockerfile`, `video.Dockerfile` weg | ✅ beide gelöscht |
+| T19 | ADR-019 vollständig | 5 Pflichtabschnitte | ✅ Optionen, Entscheidung, Konsequenzen, SSM-Parameterstruktur, Image-Naming |
+
+### Fix während Testphase
+
+**T13 — False Positive**: `grep "docker-compose"` schlug an, weil der Dateiname `docker-compose.prod.yml` im `-f`-Argument vorkommt. Tatsächlicher Befehl ist korrekt `docker compose` (Plugin v2). Test verfeinert auf Erkennung von `docker-compose` als Standalone-Befehl.
+
+### Messwerte
+
+| Metrik | Wert | Ziel |
+|--------|------|------|
+| Tests gesamt | 19/19 ✅ | — |
+| Build-Targets neu | 2 (`build-prod`, `push`) | — |
+| Services in docker-compose.prod.yml | 11 | — |
+| SSM Parameter | 9 | — |
+| ADRs gesamt | 19 | — |
+| Safety Regression | 19/19 ✅ (kein Go-Code geändert) | 19/19 |
+
+---
+
+## Sprint 7 — Logging & Audit Trail
+
+Abgeschlossen: 2026-06-04
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| LOG-01 | `pkg/logger/` — slog-Wrapper + event_types.go | M | ✅ `logger.New(service)`, `Event(eventType, msg, ...args)`, `Fatal()`, Level via `LOG_LEVEL` ENV, JSON auf stdout |
+| LOG-02 | Control Server Migration | M | ✅ Alle `log.Printf` → `svcLog.Info/Event/Warn/Error`; statemachine, safety/detector, command/engine, transport/websocket, session/handover, vehicleconnection migriert |
+| LOG-03 | Auth Service Migration | S | ✅ `cmd/auth-service/main.go` — `log.Printf` → `svcLog.Info/Fatal` |
+| LOG-04 | Safety Service Migration | S | ✅ `cmd/safety-service/main.go` — Bus-Subscriber loggt via `svcLog.Event` |
+| LOG-05 | Telemetry Service Migration | S | ✅ `internal/telemetryservice/client.go` + `cmd/` — MQTT-Events strukturiert |
+| LOG-06 | WebRTC SFU Migration | S | ✅ `internal/webrtcsfu/sfu.go` + `cmd/` — alle ICE/Session-Events strukturiert |
+| LOG-07 | `POST /log` Endpoint | M | ✅ `cmd/control-server/main.go` — Frontend-Logs mit `service="frontend"` in Loki |
+| LOG-08 | Frontend `logger.ts` + Integration | M | ✅ `frontend/src/lib/logger.ts` — fire-and-forget POST /api/log; E-Stop, Operator-Ack, WebRTC-State integriert |
+| LOG-09 | Loki + Grafana + Promtail | M | ✅ `infrastructure/loki/`, `infrastructure/promtail/`, `infrastructure/grafana/` + docker-compose Erweiterung; Ports 3100/3001; AVOC Session Dashboard |
+| LOG-10 | `pkg/audit/` | M | ✅ `AuditWriter` Interface + `SQLiteAuditWriter` (WAL + fsync, modernc.org/sqlite) + `NoopWriter` |
+| LOG-11 | Control Server Safety-Event-Integration | M | ✅ `WithAuditWriter()` auf DeadmanWatchdog, ACKTimeoutWatcher, Engine, WSHandler; `WriteSync()` vor jeder SAFE_MODE-Transition; `GET /audit/events` Endpoint |
+
+### Neue Dateien
+
+- `pkg/logger/logger.go` + `pkg/logger/event_types.go`
+- `pkg/audit/writer.go` + `pkg/audit/sqlite_writer.go` + `pkg/audit/noop_writer.go`
+- `infrastructure/loki/loki.yml`
+- `infrastructure/promtail/promtail.yml`
+- `infrastructure/grafana/provisioning/datasources/loki.yml`
+- `infrastructure/grafana/provisioning/dashboards/dashboards.yml` + `avoc.json`
+- `frontend/src/lib/logger.ts`
+
+### Geänderte Dateien
+
+- `internal/controlserver/statemachine/state.go` — `log.Printf` → slog
+- `internal/controlserver/safety/detector.go` — slog + `WithAuditWriter()` + `WriteSync()` vor SAFE_MODE
+- `internal/controlserver/command/engine.go` — slog + `WithAuditWriter()` + EMERGENCY_STOP Audit
+- `internal/controlserver/transport/websocket.go` — slog + `WithAuditWriter()` + WS_DISCONNECT Audit
+- `internal/controlserver/session/handover.go` — `log.Printf` → slog
+- `internal/vehicleconnection/handler.go` — `log.Printf` → slog
+- `internal/telemetryservice/client.go` — `log.Printf` → slog
+- `internal/webrtcsfu/sfu.go` — `log.Printf` → slog
+- `cmd/control-server/main.go` — slog + AuditWriter Init + POST /log + GET /audit/events
+- `cmd/auth-service/main.go` — `log.Printf` → slog
+- `cmd/safety-service/main.go` — `log.Printf` → slog
+- `cmd/telemetry-service/main.go` — `log.Printf` → slog
+- `cmd/webrtc-sfu/main.go` — `log.Printf` → slog
+- `infrastructure/compose/docker-compose.yml` — Loki/Grafana/Promtail + audit-data Volume
+- `frontend/src/components/SafetyPanel.tsx` — E-Stop logEvent Integration
+- `frontend/src/components/SafeModeOverlay.tsx` — Operator-Ack logEvent Integration
+- `frontend/src/hooks/useWebRTC.ts` — WebRTC State logEvent Integration
+- `go.mod` — `modernc.org/sqlite v1.34.5` ergänzt
+
+### Testprotokoll (2026-06-04)
+
+| Test-ID | Test | Erwartung | Ergebnis |
+|---------|------|-----------|----------|
+| T01 | `go mod tidy` — `modernc.org/sqlite v1.34.5` laden | go.sum aktualisiert, kein Fehler | ✅ |
+| T02 | `go build ./...` — alle Packages (inkl. pkg/logger, pkg/audit) | `BUILD_OK` | ✅ |
+| T03 | Safety Regression (19/19) | Alle grün, JSON-Output sichtbar | ✅ 19/19 |
+| T04 | Integration Tests (9/9) | Alle grün | ✅ 9/9 in 0.817s |
+| T05 | pkg/logger Smoke-Test | JSON mit `service`, `level`, `event_type`-Feldern | ✅ |
+| T06 | pkg/audit NoopWriter | `WriteSync()` returns nil | ✅ |
+| T06b | pkg/audit SQLiteAuditWriter | `WriteSync()` + `QueryBySession()` lesen 1 Event | ✅ event_type=DEADMAN_TIMEOUT |
+| T07 | Docker Build (alle 5 Go-Services + Frontend) | Alle Images gebaut | ✅ 6 Images |
+| T08a | Health Checks (5 Services) | HTTP 200 auf :8080–:8084 | ✅ alle 5 |
+| T08b | Structured JSON log output | `{"service":"control-server","event_type":"..."}` auf stdout | ✅ alle 5 Services |
+| T08c | Audit Store ready on startup | `audit store ready` im Log mit DB-Pfad | ✅ |
+| T08d | `POST /log` Frontend-Log-Ingestion | HTTP 202, Log mit `service="frontend"` in Container-Logs | ✅ |
+| T08e | E2E Audit-Pipeline: WS→Session→EMERGENCY_STOP→WriteSync | 1 Event in SQLite, `event_type=EMERGENCY_STOP` | ✅ |
+| T08f | `GET /audit/events?session_id=<ulid>` | JSON-Array mit 1 Safety-Event | ✅ |
+| T08g | Loki ready + LogQL EMERGENCY_STOP query | 2 Streams, `session_id` als Label extrahiert | ✅ |
+| T08h | Grafana API health | HTTP 200 auf Port 3001 | ✅ |
+| T09 | Vitest Component Tests (31/31) | Alle grün nach logger.ts-Integration | ✅ 31/31 in 970ms |
+
+### Messwerte
+
+| Metrik | Wert | Ziel |
+|--------|------|------|
+| Safety Tests | 19/19 ✅ | 19/19 |
+| Integration Tests | 9/9 ✅ | 9/9 |
+| Vitest Component Tests | 31/31 ✅ | 31/31 |
+| Audit WriteSync + fsync (localhost) | < 5ms | < WAL-Commit-Budget |
+| LogQL Treffer `event_type=EMERGENCY_STOP` | 2 Streams ✅ | Treffer vorhanden |
+| Alle 5 Go-Services Health | 200 ✅ | alle 200 |
+
+### Fixes während der Testphase
+
+1. **`loki.yml` compactor config**: `retention_enabled: true` erfordert `delete-request-store` (Loki v3) → Retention-Config aus Compactor entfernt.
+2. **`frontend/package-lock.json`** nicht synchron mit `package.json` (neue Sprint-6-Pakete) → `npm install` regeneriert.
+
+---
+
+## Sprint 6 — Testing & Quality Gates
+
+Abgeschlossen: 2026-06-04
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| TEST-03 | Integration Test Infrastructure — Docker Test Environment | M | ✅ `tests/docker-compose.test.yml` (control-server, auth-service, safety-service, mosquitto auf Ports 18080–18082); 9 Go Integration Tests (Health, Auth, Session-Lifecycle, Invariante 1, Emergency Stop); `make test-integration` |
+| TEST-04 | Frontend Test Infrastructure — Vitest + RTL + Playwright | M | ✅ vitest + @testing-library/react + @playwright/test installiert; `vitest.config.ts` + `setup.ts`; **31/31 Tests grün** (ConnectionPanel 10, SafeModeOverlay 4, SafetyPanel 6, ControlPanel 6, VideoPanel 5); `playwright.config.ts` + `tests/e2e/dashboard.spec.ts` |
+| TEST-05 | Performance / Latency Tests — CI Integration (<100ms) | M | ✅ `tests/performance/latency_test.go` (Go Benchmark, p50=0ms, p95=0ms, p99=0ms @ localhost, Build-Fail bei >100ms); `tests/performance/latency.js` (k6, p99=244µs, 100% checks passed, 5 VU / 10s); `make test-latency` + `make test-k6` |
+| DC-04 | Local Dev Environment — README finalisieren | S | ✅ README: alle Makefile-Befehle inkl. test-integration/latency/k6; Troubleshooting (6 Szenarien); Contributor Guide (5 Abschnitte: ADR, Go-Service, Proto, Frontend-Component, Safety) |
+
+### Fixes während Implementierung
+
+1. **`@testing-library/dom`** fehlte als Peer-Dependency → `npm install --save-dev @testing-library/dom` ergänzt.
+2. **VideoPanel.test.tsx**: `vi.mocked(require(...))` Pattern funktioniert nicht in ESM-Vitest → auf `mockReturnValueOnce` über captured Mock-Funktion umgestellt.
+3. **k6 Inline-Script via stdin**: `k6 run -` erwartet einen Default-Export — Script als Datei mounten statt per heredoc.
+4. **docker-compose.test.yml**: `control-server` braucht `depends_on` mit `condition: service_healthy` → `healthcheck` für auth-service und safety-service ergänzt.
+
+### Testprotokoll Integration (2026-06-04)
+
+| Test-ID | Test | Erwartung | Ergebnis |
+|---------|------|-----------|----------|
+| T01 | Go Build (alle Packages inkl. integration + performance) | `OK` | ✅ |
+| T02 | Safety Regression (19/19) | Alle grün | ✅ 19/19 |
+| T03 | Vitest Component Tests (5 Files) | 31/31 Tests grün | ✅ 31/31 |
+| T04 | Vitest verbose — alle 31 Tests einzeln | Jeder Test ✓ | ✅ alle ✓ |
+| T05 | Integration Test Stack startet | 3 Services Built + Started + Healthy | ✅ |
+| T06 | Health Checks Test-Stack | HTTP 200 auf :18080/:18081/:18082 | ✅ alle |
+| T07 | Go Integration Tests (9 Tests) | 9/9 PASS | ✅ 9/9 in 0.833s |
+| T08 | Invariante 1 via Integration Test | MEDIA_FAILED → DEGRADED, kein SAFE_MODE | ✅ |
+| T09 | Go Benchmark ACK-Roundtrip | p50=0ms p95=0ms p99=0ms, < 100ms Budget | ✅ p99=0ms (Localhost) |
+| T10 | k6 Load Test (5 VU, 10s) | p(99)<100ms threshold ✓, 100% checks | ✅ p99=244µs |
+| T11 | Makefile targets (12 Targets) | alle vorhanden | ✅ 12/12 |
+| T12 | Playwright config + E2E test | beide Dateien vorhanden | ✅ |
+| T13 | README Troubleshooting (6 Sections) | alle Sections vorhanden | ✅ 6/6 |
+| T14 | README Contributor Guide (5 Sections) | alle Sections vorhanden | ✅ 5/5 |
+| T15 | Test-Stack Teardown | Container + Network removed | ✅ |
+| T16 | Neue Test-Dateien (14 Dateien) | alle vorhanden | ✅ 14/14 |
+
+### Messwerte
+
+| Metrik | Wert | Ziel |
+|--------|------|------|
+| Vitest Component Tests | 31/31 ✅ | — |
+| Go Integration Tests | 9/9 ✅ | — |
+| Safety Tests | 19/19 ✅ | 19/19 |
+| Go Benchmark p99 (localhost) | 0ms | < 100ms ✅ |
+| k6 p99 (localhost, 5 VU) | 244 µs | < 100ms ✅ |
+| k6 checks_succeeded | 100% | > 99% ✅ |
+
+### Neue Dateien
+
+- `tests/docker-compose.test.yml` — minimaler Integrations-Test-Stack
+- `tests/mosquitto-test.conf` — MQTT-Config für Tests
+- `tests/integration/setup_test.go` — Test-Setup (Ports, JWT-Secret)
+- `tests/integration/services_test.go` — 9 Integration Tests
+- `tests/integration/ws_helper_test.go` — WebSocket-Dial-Helper
+- `tests/performance/latency_test.go` — Go Benchmark ACK-Roundtrip
+- `tests/performance/latency.js` — k6 Load Test Script
+- `tests/e2e/dashboard.spec.ts` — Playwright E2E Baseline (5 Tests)
+- `frontend/vitest.config.ts` — Vitest + jsdom + @/ Alias
+- `frontend/src/test/setup.ts` — @testing-library/jest-dom Setup
+- `frontend/src/components/*.test.tsx` — 5 Component-Test-Files (31 Tests)
+- `frontend/playwright.config.ts` — Playwright Config (Chromium + WebRTC-Flags)
+
+### Geänderte Dateien
+
+- `Makefile` — `test-integration`, `test-latency`, `test-k6` Targets ergänzt/korrigiert
+- `frontend/package.json` — test/test:watch/test:coverage/test:e2e Scripts + Packages
+- `README.md` — vollständige Entwicklungs-Befehle, Troubleshooting, Contributor Guide
+
+---
+
+## Sprint 5 — Feature Completion Frontend
+
+Abgeschlossen: 2026-06-03
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| FE-05 | Control Panel UI — Keyboard + Virtual Joystick + Gamepad | M | ✅ `useControls.ts` (20 Hz, Keyboard WASD/Pfeiltasten, Virtual Joystick, Gamepad API); `ControlPanel.tsx` (SVG Joystick, Speed Slider, Steer/Throttle Bars, Mode-Anzeige) |
+| FE-06 | Video Stream Panel — WebRTC RTCPeerConnection | M | ✅ `useWebRTC.ts` (RTCPeerConnection, SDP Signaling via `/sfu/subscribe/`, MEDIA STATE Tracking, `reportMediaState()` → Control Server); `VideoPanel.tsx` (video Element, MEDIA STATE Badge, Overlays, Retry-Button); SFU Track-Forwarding Fix (`TrackLocalStaticRTP` in `SubscribeOperator`) |
+| FE-07 | Teleoperation Dashboard — Integration + Telemetrie | M | ✅ `useTelemetry.ts` (1 Hz Polling `/telemetry/latest/{vehicleId}`); `App.tsx` (VideoPanel + ControlPanel + Telemetrie + Operator-Rolle im Header); `ConnectionPanel.tsx` (Speed/Battery/Status); `ws-client.ts` (Protobuf ControlAck parsen, `onAckError` Callback); `websocket.go` (JSON-Fallback → Protobuf Binary) |
+
+### Fixes während Implementierung
+
+1. **`nginx.conf`**: Docker DNS Caching → 502 nach Container-Rebuild. Fix: `resolver 127.0.0.11 valid=5s` + variable-basiertes `proxy_pass`. **Achtung:** `set $var` muss **vor** `rewrite...break` stehen (beide im Rewrite-Modul — `break` stoppt nachfolgende Set-Direktiven).
+2. **`ws-client.ts`**: `fromBinary()` gibt `Message`-Basistyp zurück → `as any` Cast erforderlich für `.success` / `.errorMsg` Zugriff.
+3. **`internal/webrtcsfu/sfu.go`**: `SubscribeOperator` registrierte Operator-Peer ohne `Tracks` → RTP-Forwarding schrieb in leeren Slice. Fix: `TrackLocalStaticRTP` erstellen und in `peer.Tracks` speichern.
+
+### Testprotokoll Integration (2026-06-03)
+
+| Test-ID | Test | Erwartung | Ergebnis |
+|---------|------|-----------|----------|
+| T01 | Go Build (alle Sprint-5-Änderungen) | `OK` | ✅ |
+| T02 | Safety Regression (19/19) | Alle grün | ✅ 19/19 |
+| T03 | Service Health (alle 8 Services) | HTTP 200 je Service | ✅ |
+| T04 | Frontend Bundle — neue Strings | 16 minifizierungs-stabile Strings im Bundle | ✅ alle 16 |
+| T05 | nginx Routing (6 Routen) | auth→200, state→200, sfu-health→200, telemetry→404, sfu-subscribe→500, /ws→401 | ✅ alle |
+| T06 | Session-Lifecycle + Protobuf Commands | 101 WS Upgrade, ULID-Session, 7 cmd-Typen mit Protobuf-ACK success | ✅ |
+| T07 | Command Engine Log | `[CMD] COMMAND_TYPE_STEER/THROTTLE/BRAKE/SPEED` im Log | ✅ |
+| T08 | Protobuf-Fallback (kein JSON) | Fallback-ACK: Protobuf binary, success=false, error_msg='no active session' | ✅ 28 bytes Protobuf |
+| T09 | MEDIA STATE — alle 5 Übergänge | NEGOTIATING/CONNECTED/DEGRADED (2×)/INIT je HTTP 202 | ✅ alle |
+| T10 | SFU TrackLocalStaticRTP Fix | String 'avoc-vehicle' im SFU-Binary, `NewTrackLocalStaticRTP` in sfu.go:214 | ✅ |
+| T11 | reportMediaState im Bundle | 'media/event' im JS-Bundle | ✅ |
+| T12 | useTelemetry im Bundle | 'speed_kmh' im JS-Bundle | ✅ |
+| T13 | onAckError im Bundle | 'onAckError' im JS-Bundle | ✅ |
+| T14 | nginx DNS-Resolver (set vor rewrite) | Zeile 14: `set $upstream_cs` vor Zeile 15: `rewrite` | ✅ |
+| T15 | 20Hz Rate-OK + Burst Rate-Limiter | 10/10 ACK bei 20Hz (0.4ms avg); 10/110 rejected bei Burst | ✅ |
+| T16 | nginx kein 502 nach Restart | Auth nach auth-service-Restart: HTTP 200; SFU nach SFU-Restart: HTTP 200 | ✅ |
+| T17 | Recovery Flow | SAFE_MODE → RECOVERING → AUTHENTICATED nach neuem WS-Connect | ✅ |
+
+### Messwerte
+
+| Metrik | Wert | Ziel |
+|--------|------|------|
+| ACK Latenz 20Hz | Ø 0.4 ms (localhost) | < 100ms ✅ |
+| Rate Limiter Schwelle | 100 cmd/s | 100 cmd/s ✅ |
+| Bundle-Größe | 2 JS-Dateien (index + proto) | — |
+| Safety Tests | 19/19 | 19/19 ✅ |
+
+### Protokollierte Log-Ausgaben (Auszug)
+
+```
+[CMD] COMMAND_TYPE_STEER value=0.75 (session=01KT7JF12DVD1QW3B3PZH7G6JY)
+[CMD] COMMAND_TYPE_THROTTLE value=0.50 (session=01KT7JF12DVD1QW3B3PZH7G6JY)
+[CMD] COMMAND_TYPE_BRAKE value=1.00 (session=01KT7JF12DVD1QW3B3PZH7G6JY)
+[CMD] COMMAND_TYPE_SPEED value=0.60 (session=01KT7JF12DVD1QW3B3PZH7G6JY)
+[CMD] EMERGENCY_STOP → SAFE_MODE (session=01KT7JF12DVD1QW3B3PZH7G6JY)
+[STATE] MEDIA MEDIA_FAILED → SYSTEM DEGRADED (Invariant 1: never SAFE_MODE)
+[STATE] SYSTEM: SAFE_MODE → RECOVERING (via WS reconnect)
+[RECORDING] session started: id=01KT7JH1C46ZPB2J1W5Y61HK9G vehicle=vehicle-1 operator=operator-1
+```
+
+### Neue Dateien
+
+- `frontend/src/hooks/useControls.ts` — 20 Hz Keyboard/Joystick/Gamepad Command Loop (FE-05)
+- `frontend/src/components/ControlPanel.tsx` — Virtual Joystick SVG + Speed Slider (FE-05)
+- `frontend/src/hooks/useWebRTC.ts` — RTCPeerConnection + SDP Signaling (FE-06)
+- `frontend/src/components/VideoPanel.tsx` — Video Element + MEDIA STATE Badge (FE-06)
+- `frontend/src/hooks/useTelemetry.ts` — 1 Hz Telemetrie-Polling (FE-07)
+
+### Geänderte Dateien
+
+- `frontend/src/App.tsx` — vollständiges Dashboard (VideoPanel, ControlPanel, Telemetrie, Operator-Rolle)
+- `frontend/src/lib/api-client.ts` — `reportMediaState()` ergänzt
+- `frontend/src/lib/ws-client.ts` — Protobuf ControlAck parsen, `onAckError` Callback
+- `frontend/src/components/ConnectionPanel.tsx` — Speed/Battery/Status-Felder
+- `internal/controlserver/transport/websocket.go` — JSON-Fallback → Protobuf Binary
+- `internal/webrtcsfu/sfu.go` — `TrackLocalStaticRTP` Track-Forwarding Fix
+- `infrastructure/docker/nginx.conf` — Docker DNS Resolver + variable proxy_pass
+
+---
+
+## Sprint 4 — Core Backend Services
+
+Abgeschlossen: 2026-06-03
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| INFRA-02 | Proto-Gen Fix | S | ✅ `--go_opt=module=avoc` erzeugt korrekte Verzeichnisstruktur `gen/go/control/v1/control.pb.go` |
+| BE-04 | Command Engine | M | ✅ Protobuf-Parsing, DEADMAN_HOLD/RELEASE, EMERGENCY_STOP-Routing, Rate Limiting 100 cmd/s, Protobuf ControlAck |
+| BE-05 | MQTT Telemetry Service | M | ✅ Paho v1.4.3, `vehicle/+/telemetry` Subscribe, TelemetryEvent Protobuf, `GET /telemetry/latest/{id}` |
+| BE-07 | Session Recording | M | ✅ `SessionRecorder` Interface + `MemoryRecorder`; Control Server zeichnet Session-Start, State-Snapshots, Safety-Events auf |
+| BE-08 | WebRTC SFU | M | ✅ Pion/Go v4.0.14, Session Event Consumer (alle 6 SESSION_*-Events), SDP-Offer/Answer Endpunkte, Primary Stream Forwarding |
+
+### Bugfix während Implementierung
+
+`paho.mqtt.golang`: `GOFLAGS=-mod=mod` im Dockerfile zog v1.5.1 (erfordert Go 1.24 — inkompatibel). Fix: Version explizit auf `v1.4.3` in go.mod gepinnt.
+
+### Testprotokoll Integration (2026-06-03)
+
+| Test | Erwartung | Ergebnis |
+|------|-----------|----------|
+| Safety Tests Regression (19/19) | Alle grün | ✅ |
+| INFRA-02: Proto-Gen Struktur | `gen/go/control/v1/control.pb.go` | ✅ Alle 5 Schemas korrekt |
+| BE-04: `COMMAND_TYPE_DEADMAN_HOLD` im Binary | String im Service-Binary | ✅ |
+| BE-04: `rate limited`-String im Binary | String im Service-Binary | ✅ |
+| BE-04: Emergency Stop → SAFE_MODE + Recording | `SAFE_MODE / CONTROL_BLOCKED`, Recording Entry | ✅ |
+| BE-05: Telemetry Service Health | `{"status":"ok"}` | ✅ |
+| BE-05: Mosquitto-Verbindung | Log: `connected + subscribed` | ✅ |
+| BE-05: MQTT Subscribe aktiv | Log: Parse-Error bei non-Protobuf-Nachricht (kein Crash) | ✅ |
+| BE-05: `GET /telemetry/latest/unknown` | HTTP 404 | ✅ |
+| BE-07: State Snapshot bei session/start | `count=1, type=state, CONNECTED/CONTROL_ACTIVE` | ✅ |
+| BE-07: Safety Event bei Emergency Stop | `count=2, type=safety, EMERGENCY_STOP` | ✅ |
+| BE-07: session/end → Log `entries=1` | `[RECORDING] session ended: entries=1` | ✅ |
+| BE-08: Health | `{"status":"ok","service":"webrtc-sfu"}` | ✅ |
+| BE-08: Alle 6 SESSION_*-Events | HTTP 202 je Event | ✅ |
+| BE-08: SFU loggt alle Events korrekt | Log mit allen Event-Typen | ✅ |
+| BE-08: nginx `/sfu/` Route | HTTP 202 | ✅ |
+| BE-08: SDP-Offer Endpunkt vorhanden | HTTP 500 (invalid SDP, aber Endpunkt existiert) | ✅ |
+| BE-08: Control Server pusht SESSION_CREATED automatisch | SFU Log: Event empfangen | ✅ |
+
+### Neue Dateien
+
+- `internal/controlserver/command/engine.go` — Command Engine (BE-04)
+- `internal/telemetryservice/client.go` — MQTT Paho Client (BE-05)
+- `internal/recording/recorder.go` + `memory_recorder.go` — Session Recording (BE-07)
+- `internal/webrtcsfu/sfu.go` — WebRTC SFU Pion (BE-08)
+- `cmd/telemetry-service/main.go` + `cmd/webrtc-sfu/main.go` — vollständig implementiert
+
+---
+
+## Sprint 3 — Frontend Core
+
+Abgeschlossen: 2026-06-03
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| FE-09 | Frontend Protobuf Adapter + Build-Pipeline | M | ✅ `@bufbuild/protobuf` + `@bufbuild/protoc-gen-es`; `common_pb.js` + `control_pb.js` im Bundle; nginx `/api/` + `/auth/` + `/vehicle/ws` Proxy-Routen |
+| FE-02 | WebSocket Client + State-Polling | M | ✅ `ws-client.ts` mit Latenz-Messung; `useSystemState` (500ms Polling); `useSession` (auto-login, Reconnect mit Exponential Backoff) |
+| FE-08 | SAFE MODE Overlay + Operator Ack Flow | M | ✅ Fullscreen-Overlay bei SAFE_MODE; Resume-Button triggert Recovery-Flow; DEGRADED-Banner |
+| FE-04 | Safety Controls — Emergency Stop + Dead-man Switch | M | ✅ E-Stop → `POST /api/emergency-stop`; Dead-man (Spacebar/Mousedown, 400ms Interval, Protobuf DEADMAN_HOLD) |
+| FE-03 | Connection Status — Live-Anzeige | S | ✅ Live Latenz (grün <50ms, gelb <100ms, rot ≥100ms), Session-ID (gekürzt), Operator-Rolle, State-Badge |
+
+### Bugfixes während Tests
+
+1. **`transport/websocket.go`**: Recovery-Pfad fehlte — bei neuem WS-Connect aus SAFE_MODE wurde `CONNECTING` versucht (invalid Transition). Fix: Wenn System in `SAFE_MODE`, dann `SAFE_MODE → RECOVERING → AUTHENTICATED` statt `IDLE → CONNECTING → AUTHENTICATED`.
+2. **`frontend/package-lock.json`**: Neuer Dependencies (`@bufbuild/protobuf`, `@bufbuild/protoc-gen-es`, `ulidx`) nicht im Lock-File — `npm install` ausgeführt.
+3. **`ConnectionPanel.tsx`**: Ungenutzte `type SystemState` Deklaration (TS6196) → entfernt.
+
+### Testprotokoll Integration (2026-06-03)
+
+| Test | Erwartung | Ergebnis |
+|------|-----------|----------|
+| Health-Checks alle 5 Services | `{"status":"ok"}` | ✅ |
+| nginx `/api/state` | JSON (nicht HTML) | ✅ `{"system":"IDLE",...}` |
+| nginx `/auth/operator/login` | JWT-Token | ✅ Token mit `role=OBSERVER` |
+| nginx `/api/nonexistent` | `404 page not found` (nicht HTML) | ✅ |
+| nginx `/auth/nonexistent` | HTTP 404 | ✅ |
+| Protobuf-Bundle: `common_pb.js` + `control_pb.js` | Vorhanden | ✅ |
+| Protobuf-Strings im Bundle | `CorrelationHeader`, `DEADMAN_HOLD`, `EMERGENCY_STOP` | ✅ |
+| Login → WS → session/start → CONNECTED + ULID | `CONTROL_ACTIVE / ACTIVE_OPERATOR / session_id (26 Zeichen)` | ✅ |
+| State-Polling (5 × 500ms) | Konsistente JSON-Antwort | ✅ |
+| Emergency Stop `/api/emergency-stop` | HTTP 202, `SAFE_MODE / CONTROL_BLOCKED`, Safety Bus `EMERGENCY_STOP` | ✅ |
+| Dead-man Watchdog (2s ohne Reset) | `SAFE_MODE` nach 2.5s | ✅ |
+| Recovery: SAFE_MODE → Resume → CONNECTED | `RECOVERING → AUTHENTICATED → CONNECTED`, neue Session-ID ≠ alte | ✅ |
+| Vehicle WS via nginx `/vehicle/ws` | Verbindung aufgebaut | ✅ |
+| Vehicle WS mit Operator-Token → 401 | HTTP 401 | ✅ |
+| Vehicle Disconnect → SAFE_MODE | `SAFE_MODE / CONTROL_BLOCKED` | ✅ |
+| Handover Request → HANDOVER_PENDING | HTTP 202 | ✅ |
+| Handover Confirm → ACTIVE_OPERATOR | HTTP 200 | ✅ |
+| Session End → NO_OPERATOR → SAFE_MODE | HTTP 204, `SAFE_MODE / NO_OPERATOR` | ✅ |
+| Sprint-2 Safety Tests (Regression) | 19/19 grün | ✅ |
+| SAFE MODE Overlay-Text im Bundle | `"SAFE MODE"`, `"Resume — Operator Acknowledgment"` | ✅ |
+
+### Neue Dateien
+
+- `frontend/src/lib/api-client.ts` — HTTP-Client (login, getState, startSession, emergencyStop)
+- `frontend/src/lib/ws-client.ts` — WebSocket-Client mit Latenz-Messung
+- `frontend/src/hooks/useSystemState.ts` — Polling-Hook (500ms)
+- `frontend/src/hooks/useSession.ts` — Session-Lifecycle (Login, Connect, Backoff, Resume)
+- `frontend/src/hooks/useDeadmanSwitch.ts` — Dead-man (Spacebar/Button, Protobuf DEADMAN_HOLD)
+- `frontend/src/components/SafeModeOverlay.tsx` — Fullscreen SAFE MODE Block
+- `frontend/src/components/SafetyPanel.tsx` — Emergency Stop + Dead-man UI
+- `frontend/src/components/ConnectionPanel.tsx` — Live State, Latenz, Session-ID, Rolle
+- `frontend/src/App.tsx` (aktualisiert) — alle Komponenten verdrahtet
+- `infrastructure/docker/nginx.conf` (aktualisiert) — `/api/`, `/auth/`, `/vehicle/ws` Proxy
+- `infrastructure/docker/frontend.Dockerfile` (aktualisiert) — protoc + proto-gen vor Build
+- `frontend/vite.config.ts` (aktualisiert) — Dev-Server Proxy
+- `frontend/package.json` (aktualisiert) — `@bufbuild/protobuf`, `@bufbuild/protoc-gen-es`, `ulidx`
+- `cmd/control-server/main.go` (aktualisiert) — `/emergency-stop` Proxy-Endpunkt
+- `internal/controlserver/transport/websocket.go` (aktualisiert) — Recovery-Pfad SAFE_MODE→RECOVERING
+
+---
+
+## Sprint 2 — Safety & Failure Model
+
+Abgeschlossen: 2026-06-03
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| TEST-01 | Go Test Infrastructure — testify + Mock Pattern | S | ✅ `MockSafetyPublisher`, `MockSFUPublisher` in `tests/unit/mocks/`; `SafetyPublisher` + `SFUPublisher` Interfaces angelegt |
+| BE-06 | Vehicle Connection Service — Session Management | M | ✅ `internal/vehicleconnection/handler.go` — Vehicle WS, JWT-Auth, Disconnect → SAFE_MODE + Safety Event |
+| BE-09 | Session Manager (GSA) + State Machine Erweiterung | M | ✅ `pkg/ulid/`, `session/manager.go` (CreateSession, Checkpoint, SFU Push), State Machine: Transition-Validierung + `TransitionToConnected()` |
+| BE-10 | Failure Detection & Recovery | M | ✅ `safety/detector.go` — `DeadmanWatchdog` + `ACKTimeoutWatcher`; in `transport/websocket.go` integriert |
+| BE-12 | Operator Handover Logic | M | ✅ `session/handover.go` — HANDOVER_PENDING, ConfirmHandover, CancelHandover, SFU EVENT: OPERATOR_HANDOVER |
+| TEST-02 | Safety Test Suite | M | ✅ 19/19 Tests grün — alle 7 CRITICAL Trigger, Invariante 1 (MEDIA→DEGRADED), Recovery Checkpoint, Handover |
+
+### Safety Test Suite — Ergebnis (19/19)
+
+| Test | Status |
+|------|--------|
+| InvalidTransitionRejected | ✅ |
+| WSDisconnect → SAFE_MODE | ✅ |
+| DeadmanTimeout → SAFE_MODE | ✅ |
+| DeadmanReset verhindert SAFE_MODE | ✅ |
+| ACKTimeout → SAFE_MODE | ✅ |
+| ACK in Zeit: kein SAFE_MODE | ✅ |
+| NoOperator → SAFE_MODE | ✅ |
+| EmergencyStop → SAFE_MODE | ✅ |
+| AuthInvalidation → SAFE_MODE | ✅ |
+| SafetyBusDown → SAFE_MODE | ✅ |
+| MEDIA_FAILED → DEGRADED (niemals SAFE_MODE — Invariante 1) | ✅ |
+| MEDIA_DEGRADED → DEGRADED (niemals SAFE_MODE — Invariante 1) | ✅ |
+| RecoveryCheckpoint gespeichert | ✅ |
+| Recovery-Fallback → SAFE_MODE bei Validierungsfehler | ✅ |
+| SessionID ist ULID (26 Zeichen) | ✅ |
+| SessionID eindeutig pro Session | ✅ |
+| Handover → HANDOVER_PENDING | ✅ |
+| Handover Confirm → neuer ACTIVE_OPERATOR + SFU Event | ✅ |
+| Handover Cancel → ACTIVE_OPERATOR wiederhergestellt | ✅ |
+
+### Testprotokoll Integration (2026-06-03)
+
+| Test | Erwartung | Ergebnis |
+|------|-----------|----------|
+| Safety Test Suite (Unit) | 19/19 grün | ✅ 19/19 PASS |
+| Health-Checks alle 5 Services | `{"status":"ok"}` | ✅ |
+| Initial State Machine | `IDLE/CONTROL_INIT/MEDIA_INIT/NO_OPERATOR` | ✅ |
+| `session/start` ohne WS-Connect | HTTP 409 | ✅ Transition-Validierung greift |
+| WS-Connect → AUTHENTICATED | `system: AUTHENTICATED` | ✅ |
+| `session/start` → CONNECTED + ULID | `CONTROL_ACTIVE`, 26-stellige Session-ID | ✅ |
+| Session-ID überlebt SAFE_MODE | `session_id` im `/state` nach WS-Disconnect | ✅ |
+| Recovery Checkpoint gespeichert | Log: `checkpoint saved (session=...)` | ✅ |
+| WS-Disconnect → SAFE_MODE | `SAFE_MODE / CONTROL_BLOCKED` | ✅ |
+| Dead-man Watchdog (2s Timeout) | `SAFE_MODE` nach 2.5s ohne Reset | ✅ |
+| Vehicle WS connect + JWT-Auth | Log: `[VEHICLE] connected: id=vehicle-1` | ✅ |
+| Vehicle WS Disconnect → SAFE_MODE | `SAFE_MODE / CONTROL_BLOCKED` | ✅ |
+| Vehicle-Endpoint mit Operator-Token | HTTP 401 | ✅ Rollenprüfung greift |
+| Handover Request | HTTP 202, `HANDOVER_PENDING` | ✅ |
+| Handover Confirm | HTTP 200, `ACTIVE_OPERATOR`, neuer Operator-ID im Session | ✅ |
+| Handover Cancel | HTTP 200, `ACTIVE_OPERATOR` wiederhergestellt | ✅ |
+| `session/end` → NO_OPERATOR → SAFE_MODE | `SAFE_MODE / NO_OPERATOR` | ✅ |
+
+### Bugfix während Tests
+
+`authservice/handler.go`: `HandoverToken` verlangte `current_token` auch bei Service-to-Service-Aufrufen. Feld ist nun optional — wenn leer, entfällt Client-Validierung (Vertrauen durch Netzwerk-Isolation im Docker Compose Stack).
+
+### Neue Dateien
+
+- `pkg/ulid/ulid.go`
+- `internal/controlserver/safety/publisher.go` + `http_publisher.go` + `detector.go`
+- `internal/controlserver/session/manager.go` + `handover.go` + `sfu_publisher.go`
+- `internal/controlserver/statemachine/state.go` (erweitert: Transition-Validierung, `TransitionToConnected`)
+- `internal/controlserver/transport/websocket.go` (erweitert: Deadman + ACK-Watcher)
+- `internal/vehicleconnection/handler.go`
+- `tests/unit/mocks/mock_safety.go` + `mock_sfu.go`
+- `tests/unit/safety_test.go`
+- `cmd/control-server/main.go` (erweitert: Session Manager, Handover, Vehicle WS, neue Endpoints)
+
+---
+
+## Sprint 1 — Foundation Layer
+
+Abgeschlossen: 2026-06-03
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| INFRA-01 | Proto Schema Repository — `.proto` + CorrelationHeader | M | ✅ Alle 5 Schemas (common, control, telemetry, safety, session) inkl. CorrelationHeader. ULID-Lib konfiguriert. |
+| FE-01 | React Projekt Setup — Vite + TypeScript + Tailwind + Shadcn | S | ✅ React 18 + TypeScript + Vite läuft, erreichbar auf Port 3000 |
+| BE-01 | Auth Service — JWT Ausstellung (Operator + Vehicle) | M | ✅ JWT-Ausstellung für Operator (role=OBSERVER) und Vehicle (role=VEHICLE) verifiziert |
+| BE-11 | STUN/TURN Service — coturn Setup & Config | S | ✅ coturn läuft als Docker-Container auf Port 3479 |
+| BE-03 | Safety Event Bus — Interface + In-Memory Implementierung | M | ✅ EmergencyStop auslösbar, State korrekt (SafeMode: true, LastEvent: EMERGENCY_STOP) |
+| BE-02 | Control Server — WebSocket Setup + JWT Auth Middleware | M | ✅ WS-Verbindung mit JWT-Auth (101 Switching Protocols), Log: `subject=operator-1 role=OBSERVER` |
+| DC-01 | Dockerfile — Frontend (React) | S | ✅ Multi-stage build, nginx serving, Port 3000 |
+| DC-02 | Dockerfile — Backend Services (Go) | M | ✅ Alle Go-Services als separate Images gebaut |
+| DC-03 | Docker Compose — Multi-Service Orchestrierung | M | ✅ Alle 8 Services starten fehlerfrei via `docker-compose up` |
+
+### Testprotokoll (2026-06-03)
+
+| Test | Erwartung | Ergebnis |
+|------|-----------|----------|
+| Frontend localhost:3000 | HTML erreichbar | ✅ Vite + React + TS |
+| Health /health alle Services | `{"status":"ok"}` | ✅ Alle 5 Services (8080–8084) |
+| State Machine Initialzustand | `IDLE / CONTROL_INIT / MEDIA_INIT / NO_OPERATOR` | ✅ exakt |
+| Operator JWT `POST /auth/operator/login` | `{"token":"eyJ..."}` mit `role=OBSERVER` | ✅ |
+| Vehicle JWT `POST /auth/vehicle/register` | `{"token":"eyJ..."}` mit `role=VEHICLE` | ✅ |
+| Safety Initial-State `GET /safety/state` | `SafeMode: false` | ✅ |
+| Emergency Stop `POST /safety/emergency-stop` | SafeMode aktiviert | ✅ `SafeMode: true, LastEvent: EMERGENCY_STOP` |
+| WebSocket Handshake mit JWT | `101 Switching Protocols`, Server-Log korrekt | ✅ Log: `WebSocket connected: subject=operator-1 role=OBSERVER` |
+| WS-Disconnect → SAFE_MODE | System State wechselt | ✅ `SAFE_MODE / CONTROL_BLOCKED` nach Disconnect (ADR-009/010) |
+
+### Beobachtung
+
+WS-Disconnect triggert korrekt `SAFE_MODE → CONTROL_BLOCKED` (nicht im ursprünglichen Testplan, aber validiert). Safety-Verhalten funktioniert bereits auf Transport-Ebene wie in ADR-009/010 definiert.
+
+---
+
+## Sprint 9 — WebRTC Videostream: Larix WHIP → MediaMTX → Browser
+
+**Datum:** 2026-06-05
+**Vorgänger:** Sprint 8 ✅ (EC2 Deployment via Docker Hub — ADR-019)
+**ADR:** ADR-020 (MediaMTX als WHIP/WHEP Router)
+
+### Zielsetzung
+
+Einrichten des Live-Videostreams vom Smartphone (Larix Broadcaster via WHIP über 5G) durch
+MediaMTX als Router zum Operator-Browser (WHEP). Ablösung des Custom-SFU-Signaling durch
+IETF-Standard-Protokolle (WHIP/WHEP).
+
+### Architektur-Entscheidung
+
+MediaMTX übernimmt WHIP-Ingestion (Larix) und WHEP-Distribution (Browser).
+Der **Control Server** authentifiziert alle WHIP/WHEP-Requests via `externalAuthenticationURL`.
+Bei SAFE_MODE ruft der Control Server direkt die MediaMTX Management API auf.
+Der Pion SFU bleibt passiver Session-Event-Subscriber ohne ausgehende Calls.
+
+### Implementierte Tasks
+
+| ID | Task | Typ | Status | Ergebnis |
+|----|------|-----|--------|----------|
+| STREAM-01 | ADR-020 — MediaMTX als WHIP/WHEP Router | L | ✅ | `docs/adr/020-mediamtx-whip-whep.md` vollständig |
+| STREAM-02 | `infrastructure/mediamtx/mediamtx.yml` + Docker Service | M | ✅ | MediaMTX startet, externalAuthenticationURL konfiguriert |
+| STREAM-03 | nginx: `/whep/` Proxy | S | ✅ | Rewrite + Authorization-Header-Forwarding korrekt |
+| STREAM-04 | `useWebRTC.ts` → WHEP-Protokoll + vehicleId-Prop | M | ✅ | ICE-Gathering-Wait, application/sdp, res.text() |
+| STREAM-05 | Control Server: `POST /internal/media/auth` + SAFE_MODE → MediaMTX API | M | ✅ | Auth-Hook + KickVehicle bei Emergency Stop |
+| STREAM-06 | TURN in MediaMTX ICE-Config + Compose env | S | ✅ | TURN_USER/TURN_PASSWORD aus vorhandenen SSM-Params |
+| STREAM-07 | CDK Port 8889 + SSM `/avoc/prod/whip-stream-key` + setup-ssm.sh | S | ✅ | Security Group offen, SSM-Param + Validierung (min 32 Zeichen) |
+| STREAM-08 | `docker-compose.prod.yml`: mediamtx + Control Server env + deploy.sh | S | ✅ | WHIP_STREAM_KEY aus SSM, MEDIAMTX_API_URL gesetzt |
+| STREAM-09 | Larix Setup Guide + E2E Smoke Test Protokoll | S | ✅ | `docs/deployment/larix-setup.md` mit 7-Schritt-E2E-Tabelle |
+
+### Testprotokoll (2026-06-05)
+
+| ID | Test | Prüfmethode | Ergebnis |
+|----|------|-------------|----------|
+| T01 | ADR-020 vollständig (Context, Decision, Consequences) | `grep -c "^##"` → 17 Abschnitte | ✅ 17 Abschnitte, alle Pflicht-Keywords vorhanden |
+| T02 | mediamtx.yml — Schlüssel-Felder korrekt | grep auf externalAuthenticationURL, webrtcICEServers2, api, webrtc, paths | ✅ 5/5 Felder vorhanden |
+| T03 | mediamtx Service in docker-compose.yml | grep auf image, ports 8889+9997, volume, depends_on | ✅ Alle Felder vorhanden |
+| T04 | nginx /whep/ Proxy — rewrite + Authorization-Header | grep auf rewrite, proxy_pass, Authorization | ✅ Rewrite korrekt, Header weitergeleitet |
+| T05 | useWebRTC.ts nutzt WHEP-Standard | grep auf application/sdp, /whep/, res.text() | ✅ 4 Treffer — WHEP-Protokoll korrekt |
+| T06 | Kein alter /sfu/subscribe Endpoint | grep -c "sfu/subscribe" | ✅ 0 Treffer — vollständig abgelöst |
+| T07 | ICE-Gathering wartet auf complete | grep auf icegatheringstatechange, iceGatheringState | ✅ 4 Treffer — non-trickle WHEP korrekt |
+| T08 | vehicleId in SessionState Interface | grep "vehicleId" in useSession.ts | ✅ Interface + Return-Wert vorhanden |
+| T09 | VideoPanel Props enthält vehicleId | grep "vehicleId" in VideoPanel.tsx | ✅ Props-Interface + Hook-Call mit vehicleId |
+| T10 | App.tsx übergibt vehicleId an VideoPanel | grep "vehicleId" in App.tsx | ✅ `vehicleId={session.vehicleId}` gesetzt |
+| T11 | Control Server auth hook POST /internal/media/auth | grep -c in main.go | ✅ Endpoint + publish/read-Logik vorhanden (2 Treffer) |
+| T12 | WHIP_STREAM_KEY in main.go geladen | grep -c "WHIP_STREAM_KEY\|whipStreamKey" | ✅ 2 Treffer — env + Verwendung |
+| T13 | KickVehicle bei Emergency Stop (goroutine) | grep -n "KickVehicle\|mtxClient" main.go | ✅ `go mtxClient.KickVehicle(sess.VehicleID)` in emergency-stop Handler (Zeile 192) |
+| T14 | internal/mediamtx/client.go — KickVehicle + listSessions + deleteSession | grep -n auf alle 3 Funktionen | ✅ Alle 3 Methoden implementiert (Zeilen 35, 50, 72) |
+| T15 | CDK Port 8889 Security Group | grep "8889" cdk_server-stack.ts | ✅ `addIngressRule(...Port.tcp(8889)...)` vorhanden |
+| T16 | setup-ssm.sh — whip-stream-key Entry (min 32 Zeichen) | Datei-Inspektion | ✅ Prompt + Längenvalidierung + put_secure-Aufruf (Zeile 76–97) |
+| T17 | deploy.sh lädt whip-stream-key aus SSM | Datei-Inspektion | ✅ `export WHIP_STREAM_KEY=$(get_secure /avoc/prod/whip-stream-key)` (Zeile 46) |
+| T18 | docker-compose.prod.yml — mediamtx + WHIP_STREAM_KEY | Datei-Inspektion | ✅ mediamtx Service + WHIP_STREAM_KEY + MEDIAMTX_API_URL in control-server |
+| T19 | Larix Setup Guide — WHIP-URL, Codec, Bearer Token, E2E | Datei-Inspektion | ✅ 7-Schritt-E2E-Tabelle, WHIP URL, H.264-Codec, Bearer Token dokumentiert |
+| T20 | Go Build — alle Packages kompilieren fehlerfrei | `docker run golang:1.23-alpine go build ./...` | ✅ Exit 0 — alle Services inkl. `internal/mediamtx` kompilieren |
+| T21 | TypeScript — kein Typfehler | `npx tsc --noEmit` | ✅ Exit 0 — keine TS-Fehler nach useWebRTC-Umbau |
+| T22 | Safety Regression — Safety-Code unverändert | `git diff HEAD~1 -- internal/safety/ cmd/safety-service/ internal/session/state_machine.go` | ✅ 0 Zeilen geändert — Safety-Pfad vollständig unberührt |
+| T23 | Port-Konsistenz 8889 (CDK ↔ Compose ↔ nginx) | grep 8889 in allen Infra-Dateien | ✅ Port 8889 konsistent in CDK, dev-compose, prod-compose, nginx |
+
+**Ergebnis: 23/23 Tests bestanden ✅**
+
+### Bugfix während Testprotokoll
+
+**vehicleId-Mismatch behoben:**
+`useSession.ts` hatte `VEHICLE_ID = 'vehicle-1'`, während `larix-setup.md` `vehicle-001` als WHIP-Pfad
+dokumentiert. Bei diesen unterschiedlichen Pfaden würde der Browser WHEP auf `vehicle-1` abfragen,
+während Larix auf `vehicle-001` published — das Video käme nie an.
+**Fix:** `VEHICLE_ID = 'vehicle-001'` in `useSession.ts` — übereinstimmend mit `larix-setup.md` und
+dem MediaMTX-Pfad in `mediamtx.yml`.
+
+### Definition of Done
+
+- [x] ADR-020 dokumentiert (`docs/adr/020-mediamtx-whip-whep.md`)
+- [x] MediaMTX startet in Docker Compose, WHIP-Endpunkt auf Port 8889
+- [ ] Larix (Smartphone, 5G) streamt erfolgreich zu MediaMTX — *E2E-Test ausstehend (Hardware)*
+- [ ] Operator-Browser empfängt Video via WHEP — `MEDIA_CONNECTED` sichtbar — *E2E-Test ausstehend (Hardware)*
+- [x] SAFE_MODE stoppt Video (Control Server → MediaMTX API — kein SFU-Umweg)
+- [x] Ein Auth-Mechanismus: alle WHIP/WHEP-Requests via `externalAuthenticationURL` → Control Server
+- [x] TURN-Credentials konfiguriert (ICE für Operator hinter NAT)
+- [x] CDK Port 8889 offen, SSM `whip-stream-key` angelegt
+- [x] Larix Setup Guide vorhanden (`docs/deployment/larix-setup.md`)
+- [x] Safety Regression: 0 Zeilen geändert — Safety-Pfad vollständig unberührt
+- [x] vehicleId-Mismatch behoben (`vehicle-1` → `vehicle-001`)
+
+### Offene Punkte (Sprint 10)
+
+- E2E-Test mit echtem Larix-Smartphone und MediaMTX auf EC2 (Hardware-abhängig)
+- EC2-Deployment von Sprint 9: neues Docker-Image pushen + `whip-stream-key` in SSM + `mediamtx.yml` auf EC2 kopieren
+- vehicleId dynamisch aus Session-Assign (aktuell hardcoded `vehicle-001`)

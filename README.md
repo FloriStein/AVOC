@@ -1,0 +1,239 @@
+# AVOC — Autonomous Vehicle Operational Control Center
+
+Sicheres, modulares Echtzeit-Teleoperation-System zur Fernsteuerung von Fahrzeugen über das offene Internet (Vehicle ↔ Internet ↔ OCC).
+
+→ Vollständige Projektdokumentation: [docs/](docs/) | ADRs: [docs/adr/](docs/adr/) | Vision: [docs/vision.md](docs/vision.md)
+
+---
+
+## Schnellstart
+
+**Voraussetzungen:** Docker, Docker Compose
+
+```bash
+# Umgebungsvariablen einrichten
+cp .env.example .env
+# JWT_SECRET in .env auf einen sicheren Wert setzen
+
+# Alle Services starten (Build inklusive)
+make up
+# oder direkt:
+docker compose -f infrastructure/compose/docker-compose.yml --env-file .env up --build
+```
+
+**Services nach Start:**
+
+| URL | Service |
+|-----|---------|
+| http://localhost:3000 | Frontend (React Dashboard) |
+| http://localhost:8080 | Control Server |
+| http://localhost:8081 | Auth Service |
+| http://localhost:8082 | Safety Service |
+| http://localhost:8083 | Telemetry Service |
+| http://localhost:8084 | WebRTC SFU (passiv, Session-Events) |
+| http://localhost:8889 | MediaMTX WHIP/WHEP (Larix → Browser) |
+| http://localhost:3001 | Grafana (Log-Dashboard) |
+| http://localhost:3100 | Loki (Log-Aggregation API) |
+
+---
+
+## Architektur
+
+Zwei orthogonale Hubs, vier Kommunikationskanäle:
+
+```
+CONTROL HUB (Rang 1 — Safety Truth)     VIDEO HUB (Rang 2 — Awareness only)
+Control Server (Go)                      MediaMTX (WHIP/WHEP Router — ADR-020)
+  · 4-Layer State Machine                  · WHIP Ingestion (Larix Broadcaster)
+  · Safety Decision Engine                 · WHEP Distribution (Operator Browser)
+  · Session Manager (GSA)                  · Auth-Hook → Control Server
+  · Failure Detection                      · SAFE_MODE-Kick via Management API
+  · Operator Handover
+  · MediaMTX Auth + SAFE_MODE-Kontrolle
+
+WebRTC SFU (Pion/Go) — passiv: nur Session-Event-Subscriber, kein Media-Routing
+```
+
+**4-Layer State Machine:** SYSTEM STATE (Master) · CONTROL STATE · MEDIA STATE · OPERATOR STATE
+
+**Kanäle:** WebSocket (Control) · MQTT (Telemetry) · Safety Event Bus (Go In-Memory) · WHIP/WHEP via MediaMTX (Video)
+
+→ Details: [docs/architecture.md](docs/architecture.md)
+
+---
+
+## Entwicklung
+
+```bash
+# Proto-Code generieren (Go + TypeScript)
+make proto-gen          # Go (via Docker)
+make proto-gen-ts       # TypeScript (via Docker) — einmalig vor npm run dev erforderlich
+
+# Alle Go-Services bauen
+make build
+
+# Tests
+make test               # alle Go-Tests
+make test-safety        # Safety Test Suite (CI Safety Gate — muss 19/19 bleiben)
+make test-integration   # Integration Tests (startet/stoppt Test-Stack automatisch)
+make test-latency       # Go Benchmark ACK-Roundtrip <100ms (ADR-010 Build-Fail)
+make test-k6            # k6 Load Test 10 VU / 30s (benötigt Docker)
+
+# Frontend Tests
+cd frontend && npm test           # Vitest Component-Tests (41 Tests)
+cd frontend && npm run test:e2e   # Playwright E2E (benötigt laufenden Stack)
+
+# Stack stoppen
+make down
+```
+
+**Lokales Frontend mit Hot-Reload:**
+```bash
+# 1. Proto-Dateien generieren (einmalig nach git clone oder proto/-Änderungen)
+make proto-gen-ts
+
+# 2. Dependencies installieren
+cd frontend && npm install
+
+# 3. Dev-Server starten (benötigt laufenden Backend-Stack)
+cd frontend && npm run dev
+# → http://localhost:5173
+```
+
+---
+
+## Troubleshooting
+
+### 502 Bad Gateway nach Container-Rebuild
+nginx cached Docker-IPs beim Start. Fix:
+```bash
+docker exec avoc-frontend-1 nginx -s reload
+```
+Ursache: `set $upstream` + `rewrite...break` — `set` muss vor `rewrite` stehen (nginx Rewrite-Modul).
+
+### `npm run dev` schlägt fehl: `Cannot find @/gen/control_pb.js`
+Proto-Dateien fehlen lokal. Fix (einmalig, aus Repo-Root):
+```bash
+make proto-gen-ts
+```
+Hintergrund: `frontend/src/gen/` ist gitignored — wird nur im Docker-Build und via `make proto-gen-ts` generiert.
+
+### `npm run dev` schlägt fehl: `Cannot find @rollup/rollup-linux-x64-gnu`
+`node_modules` wurde in Docker (Alpine/musl) als root installiert. Fix:
+```bash
+# Root-owned node_modules via Docker löschen
+docker run --rm \
+  -v $(PWD)/frontend:/app -w /app node:22-alpine \
+  sh -c 'rm -rf node_modules package-lock.json'
+# Neu installieren auf Host-Platform
+cd frontend && npm install
+```
+
+### Port-Konflikte beim Stack-Start
+```bash
+lsof -i :3000   # Frontend (nginx)
+lsof -i :8080   # Control Server
+lsof -i :8081   # Auth Service
+lsof -i :8084   # WebRTC SFU
+```
+Test-Stack läuft auf Ports 18080–18082 (kein Konflikt mit Dev-Stack).
+
+### WSL2: Services nicht erreichbar über `localhost`
+WSL2 hat eine eigene IP-Adresse. `.env` und `frontend/vite.config.ts` ggf. anpassen:
+```bash
+# WSL2-IP ermitteln:
+hostname -I | awk '{print $1}'
+```
+
+### `make test-integration` schlägt fehl: Services nicht erreichbar
+Test-Stack braucht ggf. mehr Zeit. Timeout erhöhen oder manuell starten:
+```bash
+docker compose -f tests/docker-compose.test.yml up --build -d
+sleep 10
+go test ./tests/integration/... -v -timeout 120s
+docker compose -f tests/docker-compose.test.yml down
+```
+
+---
+
+## Projektstruktur
+
+```
+├── cmd/                    # Go Service Entry Points
+├── internal/               # Go Service-interne Pakete
+│   ├── authservice/
+│   ├── controlserver/
+│   │   ├── safety/         # Safety Decision Module (DeadmanWatchdog, ACKTimeout)
+│   │   ├── session/        # Session Manager (GSA), Handover
+│   │   ├── statemachine/   # 4-Layer State Machine
+│   │   └── transport/      # WebSocket Transport Layer
+│   ├── safetyservice/      # Safety Event Bus (In-Memory)
+│   ├── vehicleconnection/  # Vehicle WebSocket Handler
+│   └── vehicleregistry/    # Vehicle Registry (ADR-022) — SQLiteVehicleStore, VehicleStore Interface
+├── pkg/ulid/               # ULID-Wrapper (ADR-016)
+├── proto/                  # .proto Source — Single Source of Truth
+├── gen/                    # Generated Code — gitignored
+├── frontend/               # React 18 + TypeScript + Vite + Tailwind
+├── infrastructure/
+│   ├── compose/            # docker-compose.yml + docker-compose.prod.yml
+│   ├── docker/             # Dockerfiles, nginx.conf
+│   ├── coturn/             # STUN/TURN Konfiguration
+│   ├── mediamtx/           # MediaMTX WHIP/WHEP Config (ADR-020)
+│   ├── mosquitto/          # MQTT Broker Konfiguration
+│   └── AWS/                # CDK Stack (EC2, Security Groups)
+└── tests/unit/             # Safety Test Suite (19 Szenarien, Sprint 2)
+```
+
+---
+
+## Implementierungsstand & Sprint-Stand
+
+Der jeweils aktuelle Stand wird ausschließlich in den lebenden Task-/Entscheidungs-Dokumenten gepflegt (nicht hier, damit nichts mehr veraltet):
+
+- **Aktiver Sprint:** [tasks/current-sprint.md](tasks/current-sprint.md)
+- **Abgeschlossene Sprints (vollständige Historie):** [tasks/done.md](tasks/done.md)
+- **Offener Backlog:** [tasks/backlog.md](tasks/backlog.md)
+
+---
+
+## ADR-Übersicht
+
+Alle Architekturentscheidungen sind dokumentiert und unveränderlich. Neue Erkenntnisse führen zu einem neuen ADR.
+
+→ Vollständiger, aktuell gepflegter Index: [docs/adr/README.md](docs/adr/README.md) | Live-Übersicht: [DECISIONS.MD](DECISIONS.MD)
+
+---
+
+## Contributor Guide
+
+### Neues ADR erstellen
+1. Kopiere [docs/adr/000-template.md](docs/adr/000-template.md) → `docs/adr/0XX-titel.md`
+2. Fülle alle Pflichtfelder aus (Kontext, Optionen, Entscheidung, Konsequenzen)
+3. Trage ADR in [DECISIONS.MD](DECISIONS.MD) und [docs/adr/README.md](docs/adr/README.md) ein
+
+### Neuen Go-Service hinzufügen
+1. Erstelle `cmd/<service-name>/main.go` mit `/health` Endpoint
+2. Nutze `infrastructure/docker/go-service.Dockerfile` (wiederverwendbar via `SERVICE_NAME` ARG)
+3. Ergänze Service in `infrastructure/compose/docker-compose.yml` + `tests/docker-compose.test.yml`
+4. Füge `pkg/logger.New("<service-name>")` für strukturiertes Logging ein (Phase 7)
+
+### Proto-Schema ändern
+Field-based Versioning (ADR-012): **keine Field-IDs ändern**, keine Felder entfernen.
+```bash
+# 1. proto/*.proto ändern
+# 2. Code generieren:
+make proto-gen       # Go → gen/go/
+make proto-gen-ts    # TypeScript → frontend/src/gen/
+# gen/ ist gitignored — nie committen
+```
+
+### Neuen Frontend-Component erstellen
+1. `frontend/src/components/<Name>.tsx`
+2. Hooks in `frontend/src/hooks/use<Name>.ts`
+3. Test: `frontend/src/components/<Name>.test.tsx` — Vitest + RTL
+4. Mock externe Dependencies: `vi.mock('@/hooks/use...')`
+
+### Safety-kritischen Code ändern
+- Safety Tests (19/19) müssen grün bleiben: `make test-safety`
+- Änderungen an `detector.go`, `statemachine.go`, `websocket.go` erfordern Test-Update
+- SAFE_MODE-Transitionen: erst `AuditWriter.WriteSync()` (Phase 7 — ADR-018), dann Transition

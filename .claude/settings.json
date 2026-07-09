@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -o StrictHostKeyChecking=no ec2-admin@18.196.24.10 ' *)",
+      "Bash(timeout 15 firefox --headless --screenshot /tmp/sprint11-ui.png --window-size=1400,900 \"http://localhost:3000\")",
+      "Bash(curl -sv http://localhost:3000)",
+      "Bash(openssl req *)",
+      "Bash(curl -sk https://localhost:3000)",
+      "Bash(curl -sk http://localhost:3000)",
+      "Bash(curl -sk \"http://localhost:3000/assets/index-D-GH87ob.js\")",
+      "Bash(git commit -m ' *)",
+      "Bash(awk '{print $2}')",
+      "Bash(docker rm *)",
+      "Bash(curl -s http://localhost:8080/dev/whip-key)",
+      "Bash(pdftoppm -png -r 100 -f 1 -l 1 kurzversion.pdf preview_kurz)",
+      "Bash(pdftoppm -png -r 100 -f 2 -l 2 kurzversion.pdf preview_kurz)",
+      "Bash(lp -d HL5250DN \"/home/floriansteinmann/Dokumente/Remotesteuerung/AutonomousVehicleOperationalControlCenter/docs/praesentation-theorie-kurzversion.pdf\")",
+      "Bash(grep -v '^d.*\\\\.$')",
+      "Bash(grep -E \"^\\(DOKU|README|DECISIONS|CONTEXT\\)\\\\.MD$|^README\\\\.md$|^docs/\\(architecture|requirements|webrtc|implementation-plan\\)\\\\.md$|^docs/sprints/|^docs/adr/README\\\\.md$|^docs/deployment/\\(ec2-bootstrap|network_migration\\)\\\\.md$\")",
+      "Bash(git rm *)",
+      "Bash(rmdir docs/sprints)",
+      "Bash(file vehicle-mock *)",
+      "Bash(ls -la vehicle-mock)",
+      "Bash(ls -la .claude/)",
+      "Bash(head -5 package-lock.json)",
+      "Bash(file control-server *)"
+    ]
+  }
+}
