@@ -151,7 +151,9 @@ services:
     volumes:
       - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
     environment:
-      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP}
+      # MediaMTX unterstützt kein $VAR-Interpolation in der YAML — Override
+      # muss über MTX_<PARAMNAME> laufen (siehe mediamtx.yml Kommentar).
+      MTX_WEBRTCADDITIONALHOSTS: ${TURN_EXTERNAL_IP}
     depends_on:
       - control-server
     networks:

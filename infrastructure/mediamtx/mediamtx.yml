@@ -31,8 +31,9 @@ webrtc: yes
 webrtcAddress: :8889          # HTTP Signaling (WHIP/WHEP POST)
 
 # EC2 liegt hinter NAT — nur die öffentliche Elastic IP als Host-Candidate annoncieren.
-# TURN_EXTERNAL_IP wird von docker-compose als Env-Var injiziert.
-webrtcAdditionalHosts: ["$TURN_EXTERNAL_IP"]
+# MediaMTX kennt keine $VAR-Interpolation innerhalb der YAML-Werte — die IP wird
+# stattdessen per MTX_WEBRTCADDITIONALHOSTS Env-Var überschrieben (docker-compose.prod.yml).
+webrtcAdditionalHosts: []
 
 # Alle Interface-Candidates unterdrücken (Docker-interne IPs 172.x, 10.x, 127.x).
 # Ohne dieses Flag: Candidate Explosion → ICE-Timeout 30-60s (Sprint 10 Root Cause #1).
