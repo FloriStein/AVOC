@@ -646,11 +646,9 @@ auf die Domain umstellen.
 
 ---
 
-## Larix Broadcaster (Fahrzeug-Kamera)
+## Fahrzeug-Kamera (WHIP-Publish)
 
 Identisch zum EC2-Setup — nur die IP ändert sich:
 
 - WHIP-URL: `http://<SERVER_IP>:8889/vehicle-001/whip`
 - Authorization: `Bearer <WHIP_STREAM_KEY>` (aus `.env` auf dem Server)
-
-Vollständige Anleitung: [larix-setup.md](larix-setup.md)

@@ -147,7 +147,7 @@ const fixedSdp = offer.sdp!.replace(/a=setup:actpass/g, 'a=setup:active')
 
 WHIP (WebRTC-HTTP Ingestion Protocol, RFC 9725) und WHEP (WebRTC-HTTP Egress Protocol, RFC 9728) definieren HTTP als Signaling-Kanal — kein WebSocket nötig.
 
-### WHIP (Publish — Browser/Larix → MediaMTX)
+### WHIP (Publish — Browser/Fahrzeug → MediaMTX)
 
 ```
 POST /vehicle-001/whip
@@ -193,7 +193,7 @@ Content-Type: application/sdp
                                │ (SDP+ICE)   │ (SDP+ICE)
                                ▼              ▼
 ┌────────────────┐   ┌─────────────────────────────────────────────────┐
-│ Larix (5G)     │──▶│              nginx (Port 443/80)                 │
+│ Fahrzeug (5G)  │──▶│              nginx (Port 443/80)                 │
 │ WHIP Publisher │   │  /whip/ → mediamtx:8889   /api/ → control:8080  │
 └────────────────┘   │  /whep/ → mediamtx:8889                         │
                      └──────────────┬──────────────┬────────────────────┘
@@ -350,7 +350,7 @@ mux.HandleFunc("POST /internal/media/auth", func(w http.ResponseWriter, r *http.
     // ...
     switch req.Action {
     case "publish":
-        // WHIP: Larix Broadcaster authentifiziert sich mit Stream Key
+        // WHIP: Fahrzeug-Client authentifiziert sich mit Stream Key
         if whipStreamKey == "" || req.Token != whipStreamKey {
             http.Error(w, "unauthorized", http.StatusUnauthorized)
             return

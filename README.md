@@ -31,7 +31,7 @@ docker compose -f infrastructure/compose/docker-compose.yml --env-file .env up -
 | http://localhost:8082 | Safety Service |
 | http://localhost:8083 | Telemetry Service |
 | http://localhost:8084 | WebRTC SFU (passiv, Session-Events) |
-| http://localhost:8889 | MediaMTX WHIP/WHEP (Larix → Browser) |
+| http://localhost:8889 | MediaMTX WHIP/WHEP (Fahrzeug → Browser) |
 | http://localhost:3001 | Grafana (Log-Dashboard) |
 | http://localhost:3100 | Loki (Log-Aggregation API) |
 
@@ -44,7 +44,7 @@ Zwei orthogonale Hubs, vier Kommunikationskanäle:
 ```
 CONTROL HUB (Rang 1 — Safety Truth)     VIDEO HUB (Rang 2 — Awareness only)
 Control Server (Go)                      MediaMTX (WHIP/WHEP Router — ADR-020)
-  · 4-Layer State Machine                  · WHIP Ingestion (Larix Broadcaster)
+  · 4-Layer State Machine                  · WHIP Ingestion (Fahrzeug-Kamera)
   · Safety Decision Engine                 · WHEP Distribution (Operator Browser)
   · Session Manager (GSA)                  · Auth-Hook → Control Server
   · Failure Detection                      · SAFE_MODE-Kick via Management API

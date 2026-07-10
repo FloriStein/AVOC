@@ -446,7 +446,7 @@ func main() {
 
 		switch req.Action {
 		case "publish":
-			// WHIP: Fahrzeug-Client (Larix) authentifiziert sich mit Stream Key
+			// WHIP: Fahrzeug-Client authentifiziert sich mit Stream Key
 			if whipStreamKey == "" || req.Token != whipStreamKey {
 				log.Warn("media auth: WHIP publish rejected", "path", req.Path)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)

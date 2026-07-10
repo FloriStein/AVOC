@@ -13,7 +13,7 @@ Das Teleoperation System besteht aus **zwei orthogonalen Hubs** und **vier Kommu
 ```
 CONTROL HUB (Rang 1 — Safety Truth)       VIDEO HUB (Rang 2 — Awareness only)
 Control Server (Go)                        MediaMTX (WHIP/WHEP Router — ADR-020)
-  · State Machine (4 Layer)                 · WHIP Ingestion (Larix Broadcaster, 5G)
+  · State Machine (4 Layer)                 · WHIP Ingestion (Fahrzeug-Kamera, 5G)
   · Safety Decision Engine                  · WHEP Distribution (Operator Browser)
   · Session Manager (GSA)                   · Auth-Hook → Control Server (einzige Auth-Instanz)
   · Failure Detection                        · SAFE_MODE-Kick via Management API (:9997)
@@ -25,6 +25,16 @@ WebRTC SFU (Pion/Go) — passiv: Session-Event-Subscriber, kein Media-Routing (A
 ```
 
 **Invariante:** `CONTROL HUB > VIDEO HUB`. Video Hub darf System State nie beeinflussen außer via DEGRADED-Annotation.
+
+**Warum getrennte Transportkanäle statt einer gemeinsamen WebRTC-PeerConnection:** Control (WS/Protobuf)
+und Video (WHIP/WHEP) laufen bewusst über vollständig getrennte Transporte, nicht über eine
+PeerConnection mit DataChannel (Control) + Media-Track (Video). Standard-WebRTC bündelt bei
+diesem verbreiteten Muster alles außer Audio/Video in einem DataChannel und priorisiert bei
+Bandbreitenengpässen Audio > Video > Daten — für Teleoperation falsch herum, da ein verlorener
+Steuerbefehl kritisch, ein eingefrorenes Videobild aber überlebbar ist. Branchenkritiker an
+Standard-WebRTC für Robotik (z. B. Adamo, RoboticsTomorrow) empfehlen deshalb explizit eine
+"Control-first"-Architektur mit eigenem, hochpriorisiertem Kanal für Steuerbefehle — das deckt
+sich mit dem hier gewählten Design (Recherche 2026-07-10, siehe `CONTEXT.MD` Architekturprinzip 14).
 
 ### Vier Kommunikationskanäle
 
@@ -65,7 +75,7 @@ WebRTC SFU (Pion/Go) — passiv: Session-Event-Subscriber, kein Media-Routing (A
 ### WHIP/WHEP Layer (Video Channel — ADR-020)
 
 - **MediaMTX** als WHIP/WHEP Router (ersetzt Pion SFU als Media-Layer)
-- **WHIP** (WebRTC-HTTP Ingestion Protocol): Larix Broadcaster (Smartphone, 5G) → MediaMTX Port 8889
+- **WHIP** (WebRTC-HTTP Ingestion Protocol): Fahrzeug-Kamera (Onboard-Client, 5G) → MediaMTX Port 8889
 - **WHEP** (WebRTC-HTTP Egress Protocol): Browser → nginx `/whep/` Proxy → MediaMTX Port 8889
 - **ICE/NAT Traversal**: STUN + TURN via coturn (TURN_USER/TURN_PASSWORD aus SSM)
 - **Auth**: Einziger Mechanismus — `externalAuthenticationURL` → `POST /internal/media/auth` (Control Server)

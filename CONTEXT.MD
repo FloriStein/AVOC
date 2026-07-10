@@ -119,7 +119,7 @@ INVARIANT 3: Control Hub is Single Source of Truth for Session State.
 | Control | WebSocket (WSS + JWT), sync ACK | Bidirektionale Steuerung, <100ms | ADR-004/010/012b |
 | Telemetry | MQTT (Mosquitto), async | Fahrzeugstatus pub/sub | ADR-003/012b |
 | Safety | Safety Event Bus (Go, In-Memory), async | Safety-Events; DDS-Interface-kompatibel | ADR-002/012b |
-| Video | MediaMTX WHIP/WHEP + coturn | Live-Video (Browser/Larix→WHIP, Browser→WHEP), HTTPS-Pflicht für getUserMedia, NAT Traversal | ADR-014/020 |
+| Video | MediaMTX WHIP/WHEP + coturn | Live-Video (Fahrzeug/Browser→WHIP, Browser→WHEP), HTTPS-Pflicht für getUserMedia, NAT Traversal | ADR-014/020 |
 | Message Format | Protobuf (Application Bus) | Control/Safety/Telemetry + CorrelationHeader | ADR-008/016 |
 | WebRTC Signaling | SDP/ICE (WebRTC Standard) | Media Layer — bewusst außerhalb Protobuf | ADR-014 |
 | Session Correlation | ULID (Vehicle-ID→Session-ID→Event-ID) | Systemweite Korrelation aller Kanäle | ADR-016 |
@@ -148,7 +148,7 @@ CONTROL HUB (Rang 1 — Safety Truth)
 VIDEO HUB (Rang 2 — Awareness only)
 ┌─────────────────────────────────┐
 │   MediaMTX (WHIP/WHEP)          │
-│  · WHIP-Ingestion (Larix/5G)    │
+│  · WHIP-Ingestion (Fahrzeug/5G) │
 │  · WHEP-Egress (Browser)        │
 │  · Auth-Hook → Control Server   │
 │  · SAFE_MODE-Kick per API       │
@@ -288,3 +288,4 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 11. **Safety-Log-Garantie** — Safety Events dürfen niemals verloren gehen; separater SQLite Audit Store orthogonal zu Loki (ADR-018)
 12. **Vehicle-Feedback-First** — InputIndicatorPanel zeigt was beim Fahrzeug ankommt, nicht was der Operator eingibt; Ist-Werte > Soll-Werte für Safety-Awareness (ADR-021)
 13. **Per-Vehicle Safety Isolation** — State Machine und Deadman-/ACK-Watchdogs existieren pro Fahrzeug, nicht global; ein Fahrzeug in SAFE_MODE darf kein anderes Fahrzeug blockieren (ADR-026)
+14. **Control-first Kanaltrennung** — Control (WS/Protobuf, ADR-004/010) und Video (WHIP/WHEP, ADR-014/020) laufen über vollständig getrennte Transportkanäle statt einer gemeinsamen WebRTC-PeerConnection mit DataChannel+Media-Track. Verhindert, dass Steuerbefehle hinter Video-Traffic anstehen — Standard-WebRTC priorisiert bei Bandbreitenengpässen Audio > Video > Daten, für Teleoperation genau falsch herum (ein verlorener Steuerbefehl ist kritisch, ein eingefrorenes Videobild ist überlebbar → DEGRADED statt SAFE_MODE, Prinzip 1). Deckt sich mit dokumentierter Branchenpraxis ("Control-first architecture", Recherche 2026-07-10 — RoboticsTomorrow, Adamo, AWS Teleoperation-Referenzarchitektur)

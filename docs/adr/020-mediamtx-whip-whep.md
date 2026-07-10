@@ -2,6 +2,15 @@
 
 Status: Accepted
 
+> **Update (2026-07-10):** Larix Broadcaster wird nicht mehr als Fahrzeug-Kamera-Client
+> eingesetzt — der Workflow ist jetzt, dass Flottenfahrzeuge ihr Kamerabild direkt per
+> WebRTC/WHIP an den Operator-Browser senden (Fahrzeug-Onboard-Client statt Smartphone-App).
+> Die hier getroffene Entscheidung selbst — MediaMTX als WHIP/WHEP-Router, IETF-Standard-
+> Protokolle, Auth-Delegation an den Control Server — bleibt unverändert gültig; WHIP ist
+> client-agnostisch, jeder WHIP-fähige Client (Larix, OBS, ffmpeg, eigene Fahrzeug-Software)
+> funktioniert ohne Änderung am Router. Alle "Larix" genannten Stellen unten sind historischer
+> Kontext aus Sprint 9 (validiert gegen die damals verfügbare Test-Hardware).
+
 ## Kontext
 
 Sprint 9 schließt den letzten fehlenden Kanal: echten Live-Videostream vom Fahrzeug
