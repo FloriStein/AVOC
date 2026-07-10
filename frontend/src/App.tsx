@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSystemState } from "@/hooks/useSystemState";
 import { useSession } from "@/hooks/useSession";
 import { useTelemetry } from "@/hooks/useTelemetry";
@@ -65,11 +65,14 @@ function AppContent({ session }: { session: SessionState }) {
   const isObserver = tokenRole === "OBSERVER";
   const canControl = !isObserver && session.role !== 'OBSERVER';
 
+  const hasPolledSessionsRef = useRef(false);
+
   useEffect(() => {
     const token = session.token
     if (!token) return
     const poll = async () => {
       try { setActiveSessions((await listSessions(token)) ?? []) } catch { /* ignore */ }
+      finally { hasPolledSessionsRef.current = true }
     }
     poll()
     const id = setInterval(poll, 3000)
@@ -82,9 +85,16 @@ function AppContent({ session }: { session: SessionState }) {
   // SAFE_MODE overlay / resume() can work. Decoupled from isSafeMode (ADR-026) — vehicleId
   // discovery no longer depends on the per-vehicle system state, which itself depends on
   // knowing the vehicleId first.
+  // Fires at most once per mount (restoreAttemptedRef): activeSessions is only refreshed
+  // every 3s, so right after a deliberate endSession() this effect would otherwise see the
+  // stale pre-end list on the very next render and immediately restore the session that was
+  // just ended, leaving the operator unable to start a new one.
   const { sessionId: localSessionId, operatorId, restoreFromServerState } = session
+  const restoreAttemptedRef = useRef(false);
   useEffect(() => {
     if (localSessionId || !operatorId) return
+    if (restoreAttemptedRef.current || !hasPolledSessionsRef.current) return
+    restoreAttemptedRef.current = true
     const mine = activeSessions.find((s) => s.operator_id === operatorId)
     if (mine) restoreFromServerState(mine.session_id, mine.vehicle_id, mine.role)
   }, [activeSessions, localSessionId, operatorId, restoreFromServerState])
