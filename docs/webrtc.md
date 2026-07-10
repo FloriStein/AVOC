@@ -641,23 +641,31 @@ nginx ist kein aktiver Teilnehmer in WebRTC-Verbindungen — er proxyt nur das H
 
 ```nginx
 # WHIP: Browser → nginx → MediaMTX (Präfix /whip/ wird gestripped)
+# Bewusst OHNE $upstream-Variable (Sprint 19): mediamtx läuft im Dev-Stack mit
+# network_mode: host (ICE-Stabilität) — kein Docker-DNS-Eintrag "mediamtx" auf
+# avoc-net. Der `resolver`-Trick der anderen Locations fragt nur Docker-DNS
+# (127.0.0.11) und kennt host.docker.internal nicht (reiner /etc/hosts-Eintrag
+# via extra_hosts). Statisches proxy_pass wird einmalig beim Config-Load über
+# den System-Resolver aufgelöst, der /etc/hosts respektiert.
 location /whip/ {
-    set $upstream_mtx http://mediamtx:8889;
     rewrite ^/whip/(.*) /$1 break;
-    proxy_pass $upstream_mtx;
+    proxy_pass http://host.docker.internal:8889;
     proxy_set_header Authorization $http_authorization;
 }
 
 # WHEP: Browser → nginx → MediaMTX (Präfix /whep/ wird gestripped)
 location /whep/ {
-    set $upstream_mtx http://mediamtx:8889;
     rewrite ^/whep/(.*) /$1 break;
-    proxy_pass $upstream_mtx;
+    proxy_pass http://host.docker.internal:8889;
     proxy_set_header Authorization $http_authorization;
 }
 ```
 
 `/whip/vehicle-001/whip` → nginx strippt → `/vehicle-001/whip` → MediaMTX.
+
+> **Prod-Unterschied:** In `docker-compose.prod.yml` läuft `mediamtx` *ohne* `network_mode: host`
+> (normaler Bridge-Service) — dort ist `http://mediamtx:8889` weiterhin korrekt und per
+> Docker-DNS auflösbar. Der `host.docker.internal`-Fix betrifft nur `nginx.dev.conf`.
 
 ---
 
@@ -778,6 +786,14 @@ Alle 5 Root Causes aus der ICE-Migration und ihre Lösungen:
 | 3 | **Pion DTLS-Client-Bug** — Retransmit-Loop bis Timeout | Browser sendet `a=setup:actpass` → Pion wählt "active" → verarbeitet ServerHello nicht korrekt | SDP-Fix: `actpass → active` erzwingen in `useWebRTC.ts` und `useWHIPSender.ts` |
 | 4 | **TURN-Relay nicht erreicht** auf 5G/CGNAT | `useWebRTC.ts` hatte nur STUN (falscher Port 3479), kein TURN UDP/TCP | `GET /api/ice-config` Endpoint im Control Server; liefert STUN + TURN UDP + TURN TCP |
 | 5 | **coturn relay-Adresse falsch** auf AWS | `external-ip=PUBLIC` ohne Private-Mapping → coturn advertised falsche Relay-Adresse | `--relay-ip=PRIVATE --external-ip=PUBLIC/PRIVATE` + `network_mode: host` + IMDSv2 für `TURN_PRIVATE_IP` |
+
+> **Update Sprint 19 (2026-07-10):** Der `actpass → active`-Fix aus Zeile 3 wurde lokal mit
+> aktuellem Chromium erneut getestet — `setRemoteDescription` schlägt jetzt fehl mit
+> *"Offerer must use actpass value for setup attribute"*. Der ursprüngliche Pion-v1.19.0-Bug
+> ist damit möglicherweise durch ein neueres, gegenteiliges Problem ersetzt worden (modernes
+> Chrome erzwingt Spec-Konformität, die der Workaround verletzt). Nicht behoben — betrifft
+> potenziell auch den Produktiv-Video-Empfang auf AWS (`useWebRTC.ts`/WHEP), nicht nur lokale
+> Tests. Siehe `CONTEXT.MD` „Offene Fragen" und Backlog-Task `WEBRTC-10`.
 
 ---
 

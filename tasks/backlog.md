@@ -205,6 +205,21 @@ LOG-10 → LOG-11 (nach LOG-02)
 
 ---
 
+## EPIC: Lokaler Dev-Stack Verifikation (Sprint 19) ✅
+
+| ID | Task | Typ | Status | Referenz |
+|----|------|-----|--------|----------|
+| LOCAL-01..05 | Full-Rebuild, SSL-Frage, Hot-Reload, WHIP/WHEP-DNS-Fix, Doku — siehe `tasks/current-sprint.md` Sprint 19 | S/M | ✅ | |
+
+**Folge-Task (bewusst aus Sprint 19 ausgeklammert):**
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| WEBRTC-10 | SDP `a=setup:active`-Workaround (`useWebRTC.ts`, `useWHIPSender.ts`) inkompatibel mit aktuellem Chromium (`setRemoteDescription` wirft „Offerer must use actpass") | M/L | 🔲 Backlog | Entdeckt Sprint 19 (LOCAL-04) beim ersten Mal, dass WHIP tatsächlich bis zum SDP-Austausch kam. Ursprünglich dokumentierter Fix für Pion-v1.19.0-DTLS-Bug (`docs/webrtc.md`). Vor jeder Änderung prüfen: (1) hat `mediamtx:latest` den Pion-Bug noch (Version pinnen/prüfen), (2) betrifft `useWebRTC.ts` auch den Produktiv-Video-Empfang auf AWS — kein reines Lokal-Problem. Ggf. Grill-Me + eigenes ADR nötig, da Video-Hub-Architektur (ADR-014/020) berührt |
+| DOC-01 | `frontend/README.md` seit MediaMTX-WHIP/WHEP-Migration (Sprint 9/10) nicht mehr gepflegt | S | 🔲 Backlog | Entdeckt Sprint 19 bei MD-Datei-Review. Proxy-Tabelle fehlen `/whip/`, `/whep/`, `/vehicle/ws`; beschreibt `useWebRTC.ts` noch mit altem SFU-Signaling-Pfad (`/sfu/subscribe/`) statt aktuellem WHEP-Pfad; Komponenten-/Hooks-Liste fehlen `LoginPanel`, `UserManagementPanel`, `StreamSenderPanel`, `useWHIPSender`, `useVehicleAck` u.a.; „Implementierter Funktionsumfang" beschreibt nur Sprint 5 (kein Auth/Sprint 15, kein Multi-Vehicle/Sprint 17) |
+
+---
+
 ## Offene Entscheidungen (blockieren zukünftige Tasks)
 
 | Entscheidung | Blockiert | Referenz |

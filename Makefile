@@ -1,4 +1,4 @@
-.PHONY: proto-gen proto-gen-ts build up down test test-safety test-integration test-latency test-k6 lint clean build-prod push
+.PHONY: proto-gen proto-gen-ts dev-frontend build up down test test-safety test-integration test-latency test-k6 lint clean build-prod push
 
 # ─── Docker Hub / EC2 Deployment (ADR-019) ────────────────────────────────────
 # Set DOCKER_USERNAME via env or create a local .docker-username file (gitignored)
@@ -34,6 +34,10 @@ proto-gen-ts:
 		PATH=\$$PATH:./node_modules/.bin protoc \
 			--proto_path=../proto --es_out=src/gen --es_opt=target=ts ../proto/*.proto && \
 		echo 'TypeScript proto generation done.'"
+
+# Start frontend dev server with hot-reload (benötigt laufenden Backend-Stack via `make up`)
+dev-frontend:
+	cd frontend && npm run dev
 
 # Build all Go services
 build:

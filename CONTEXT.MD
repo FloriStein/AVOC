@@ -267,9 +267,9 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Backup-Strategie Audit Store (SQLite Volume) | offen | ADR-019 möglich — SQLite-Volume-Sicherung für Produktivbetrieb (LOG-10 implementiert) |
 | vehicle-mock in Makefile GO_SERVICES | offen | ADR-021 Folge — `make build-prod` baut vehicle-mock nicht |
 | session_id in MQTT-TelemetryEvent | offen | ADR-021 Folge — Log-Korrelations-Gap: vehicle-mock hat keinen Operator-Session-Kontext |
-| Dev-Stack SSL-Fix (nginx.conf) | offen | Sprint-10-Regression: `make up` startet Frontend lokal nicht ohne SSL-Cert |
 | Vehicle-Dropdown Live-State-Badge | offen | ADR-026 Folge (MV-09) — bewusst ausgeklammert (Grill-Me 2026-06-14) |
 | Multi-Vehicle Handover | offen | ADR-026 Folge (MV-11) — `HandoverManager` nutzt noch eine globale State Machine für die OPERATOR-Schicht |
+| WebRTC SDP `a=setup:active`-Workaround inkompatibel mit aktuellem Chrome | offen | Sprint 19 (LOCAL-04) — `useWebRTC.ts`/`useWHIPSender.ts` erzwingen `a=setup:active` im Offer (dokumentierter Pion-v1.19.0-DTLS-Fix, `docs/webrtc.md`). Aktuelles Chromium lehnt das als Spec-Verstoß ab (`setRemoteDescription` wirft „Offerer must use actpass"). Betrifft potenziell auch Produktiv-Video-Empfang (WHEP) auf AWS, nicht nur lokal — braucht eigene Untersuchung (Pion-Version in `mediamtx:latest` prüfen) vor jeder Änderung, kein Fix in diesem Cleanup-Sprint |
 
 ---
 

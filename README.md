@@ -95,8 +95,9 @@ make proto-gen-ts
 # 2. Dependencies installieren
 cd frontend && npm install
 
-# 3. Dev-Server starten (benötigt laufenden Backend-Stack)
-cd frontend && npm run dev
+# 3. Dev-Server starten (benötigt laufenden Backend-Stack via `make up`)
+make dev-frontend
+# oder direkt: cd frontend && npm run dev
 # → http://localhost:5173
 ```
 
@@ -137,6 +138,25 @@ lsof -i :8081   # Auth Service
 lsof -i :8084   # WebRTC SFU
 ```
 Test-Stack läuft auf Ports 18080–18082 (kein Konflikt mit Dev-Stack).
+
+### WHIP/WHEP (`/whip/`, `/whep/`) liefert 502 Bad Gateway
+`mediamtx` läuft im Dev-Stack mit `network_mode: host` (ICE-Stabilität) und hat daher
+keinen Docker-DNS-Eintrag auf `avoc-net`. `nginx.dev.conf` routet `/whip/` und `/whep/`
+seit Sprint 19 über `host.docker.internal` (mit `extra_hosts` im `frontend`-Service) —
+bewusst mit statischem `proxy_pass` statt der `resolver`-Variablen-Technik der anderen
+Locations, da diese nur Docker-DNS (127.0.0.11) fragt und `host.docker.internal` (ein
+reiner `/etc/hosts`-Eintrag) nicht kennt.
+
+### `make up --build` / `docker buildx build` schlägt mit DNS-Fehlern fehl
+```
+failed to resolve source metadata for docker.io/library/...: dial tcp: lookup registry-1.docker.io ...: i/o timeout
+```
+Der `buildx`-Builder-Container merkt sich `/etc/resolv.conf` beim Start und aktualisiert
+es nicht automatisch bei Netzwerkwechseln (WLAN-Wechsel, VPN an/aus). Nach langer
+Laufzeit des Builders kann das auf eine nicht mehr erreichbare DNS-IP zeigen. Fix:
+```bash
+docker restart buildx_buildkit_<projektname>-builder0
+```
 
 ### WSL2: Services nicht erreichbar über `localhost`
 WSL2 hat eine eigene IP-Adresse. `.env` und `frontend/vite.config.ts` ggf. anpassen:
