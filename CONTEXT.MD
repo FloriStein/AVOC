@@ -270,6 +270,8 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Vehicle-Dropdown Live-State-Badge | offen | ADR-026 Folge (MV-09) — bewusst ausgeklammert (Grill-Me 2026-06-14) |
 | Multi-Vehicle Handover | offen | ADR-026 Folge (MV-11) — `HandoverManager` nutzt noch eine globale State Machine für die OPERATOR-Schicht |
 | WebRTC SDP `a=setup:active`-Workaround inkompatibel mit aktuellem Chrome | offen | Sprint 19 (LOCAL-04) — `useWebRTC.ts`/`useWHIPSender.ts` erzwingen `a=setup:active` im Offer (dokumentierter Pion-v1.19.0-DTLS-Fix, `docs/webrtc.md`). Aktuelles Chromium lehnt das als Spec-Verstoß ab (`setRemoteDescription` wirft „Offerer must use actpass"). Betrifft potenziell auch Produktiv-Video-Empfang (WHEP) auf AWS, nicht nur lokal — braucht eigene Untersuchung (Pion-Version in `mediamtx:latest` prüfen) vor jeder Änderung, kein Fix in diesem Cleanup-Sprint |
+| Konkrete ROS2/DDS-Fahrzeugschnittstelle (IBATOUR) | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1) noch ausstehend; `FleetGateway`-Interface läuft bis dahin gegen Mock. Bezug zu ADR-002 (Safety Bus bereits DDS-interface-kompatibel designed) prüfen, sobald die reale Schnittstelle bekannt ist |
+| Verhältnis Direct-Teleop-System zu neuer Fleet-Leitstelle | offen | Ausgelöst durch IBATOUR-Kurswechsel (2026-07-10) — unklar ob bestehendes Control-Server/Safety-Bus/Deadman-System (a) als manueller Eingriffsmodus in die Leitstelle integriert wird, (b) parallel weiterläuft, oder (c) abgelöst wird. Ebenso offen: Sicherheitskonzept für Video-Verlust bei Routenzügen auf Betriebsgelände (vermutlich Maschinensicherheit/ISO 3691-4 statt Straßenverkehrsrecht — noch nicht verifiziert) |
 
 ---
 

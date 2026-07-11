@@ -1,6 +1,48 @@
 # Requirements — Teleoperation Control System
 
-Stand: 2026-06-14 (aktualisiert nach ADR-001 bis ADR-026)
+Stand: 2026-07-10 (Fleet Gateway Requirements ergänzt nach ADR-027)
+
+---
+
+## Fleet Gateway Requirements (IBATOUR — vorläufig, ADR-027)
+
+> **Status:** Vorläufig. Das Projekt entwickelt sich von einem Direct-Teleoperation-Proof-of-Concept
+> hin zu einer Leitstellensoftware für das Förderprojekt IBATOUR (Bundesministerium für Verkehr,
+> Auftraggeber-seitig: Professur Logistik). Die hier beschriebenen Anforderungen basieren auf der
+> Leistungsbeschreibung der Ausschreibung und einer Architektur-Vorlage des Auftraggebers — die
+> konkrete Schnittstelle zum externen Fahrzeug-Backend ist zum Stand 2026-07-10 noch nicht bestätigt.
+
+- Fahrzeugseitige Automatisierung, Hardware-Schnittstellen (ROS/ROS2) und das fahrzeugseitige
+  Backend werden extern durch die Professur Logistik bereitgestellt — **nicht** Teil dieses Projekts
+- Dieses Projekt liefert die übergeordnete Leitstellen-Infrastruktur mit Schwerpunkt auf der
+  clientseitigen Visualisierungsschicht (Web-Dashboard, Admin-Konsole)
+- Kommunikation mit dem externen Fahrzeug-Backend läuft über ein abstraktes `FleetGateway`-Interface
+  (ADR-027, konsistent mit dem Interface-over-Implementation-Prinzip aus `CONTEXT.MD` Prinzip 6) —
+  nicht direkt fest verdrahtet gegen eine angenommene Schnittstelle
+- **Angenommene Ziel-Designprinzipien** (unbestätigt, aus Architektur-Vorlage des AG):
+  - Event-Driven Communication via ROS 2 DDS (Pub/Sub), ROSbridge + WebSocket als Fallback für ROS1
+  - Multi-Protocol: DDS lokal, MQTT/Zenoh für WAN, WebSocket für Web-Clients
+  - Time-Series-optimierte Speicherung für hochfrequente Flotten-Telemetrie
+  - Security-First: Ende-zu-Ende-Verschlüsselung, Authentifizierung, Zero-Trust-Netzwerkarchitektur
+- Bis zur Bestätigung der konkreten Schnittstelle (Workshop mit der Professur Logistik, Teil von AP1)
+  läuft die Entwicklung von Web-Dashboard/Admin-Konsole gegen eine Mock-Implementierung des
+  `FleetGateway` (analog zum bestehenden `vehicle-mock`-Muster, ADR-021)
+- Weicht die tatsächliche Schnittstelle signifikant von der Annahme ab: neues ADR, `ADR-027` nicht
+  überschreiben (siehe `CONTEXT.MD` Offene Fragen)
+
+### Fleet-Domänenkonzepte (neu gegenüber bisherigem Direct-Teleop-Modell)
+
+Aus der Leistungsbeschreibung (AP2/AP3) ergeben sich Anforderungen, die im bisherigen
+Single-Vehicle-Direct-Teleop-Modell nicht existieren:
+
+- **Flottenübersicht:** Echtzeit-Fahrzeugstatus mehrerer Fahrzeuge gleichzeitig, Batterielevel mit Alert-System
+- **Kartenansicht:** Werkshallen-/Betriebsgelände-Visualisierung, Echtzeit-Positionsverfolgung, Routenübersicht
+- **Task Management:** Aufgaben erstellen/zuweisen, Prozess-Status-Tracking, Prioritätenmanagement, Task-History
+- **Alert System:** Echtzeit-Benachrichtigungen mit Prioritätsklassen, Audio-Alerts, Acknowledgement-Feature
+- **Admin-Konsole:** zentrales Nutzer-/Rollenmanagement, Fahrzeugregistrierung/-konfiguration, Zonenzuweisung, Maintenance-Tracking, System-Health-Monitoring (Service-Status, API-Gateway-Health, Logs)
+
+Verhältnis zum bestehenden Direct-Teleop-System (Control Server, Safety Event Bus, Deadman-Switch,
+WebRTC-Video, 4-Layer State Machine) ist noch nicht final geklärt — siehe `CONTEXT.MD` Offene Fragen.
 
 ---
 

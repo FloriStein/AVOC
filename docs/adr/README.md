@@ -6,7 +6,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 
 ---
 
-## ADR-Index (26 ADRs)
+## ADR-Index (27 ADRs)
 
 | ADR | Titel | Kernentscheidung |
 |-----|-------|-----------------|
@@ -37,6 +37,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | [ADR-024](024-user-management.md) | User Management | bcrypt-Passwörter; ADMIN-Rolle; Auto-Seed Admin; `/auth/users` CRUD hinter RequireAdmin |
 | [ADR-025](025-multi-operator.md) | Multi-Operator | ACTIVE_OPERATOR/OBSERVER pro Vehicle; `vehicleController`-Map; WS connect nach `session/start` |
 | [ADR-026](026-multi-vehicle-state-isolation.md) | Multi-Vehicle State Isolation | Pro-Fahrzeug State Machine + Watchdogs (`vehiclecontext.Registry`); SafetyBusWatchdog fächert fleet-weit auf; `GET /vehicles/{id}/state` ergänzt — implementiert + deployed (Sprint 17, 2026-06-16) |
+| [ADR-027](027-fleet-gateway-interface.md) | Fleet Gateway Interface | Abstraktes Interface gegen noch unbestätigte externe ROS2/DDS-Fahrzeugschnittstelle (IBATOUR); Mock jetzt, Adapter nach AP1-Workshop mit Professur Logistik — konkrete Schnittstellenparameter vorläufig |
 
 ---
 
