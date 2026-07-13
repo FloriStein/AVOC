@@ -38,6 +38,24 @@ sowohl Schema-Idempotenz als auch korrektes CRUD/Upsert-Verhalten. `go build ./.
 für das gesamte Repo sauber. Test: `internal/fleetservice/store_test.go` (Skip ohne
 `DATABASE_URL`, analog bestehendem Integrationstest-Muster).
 
+**FLEET-01 — Erweitertes Testmodell (Edge Cases, Integration, E2E-Vorstufe) ✅**
+Auf Nutzerwunsch vertieft, bevor es weiterging:
+- `edgecases_test.go`: FK-Verletzungen (Task/Station auf unbekannte IDs), PK-Duplikate (Zone
+  zweimal), CHECK-Verletzungen (ungültiger `environment`/`autonomy_mode`/`severity`), Not-Found-
+  Pfade (`SetVehicleType`/`AcknowledgeAlert`), NULL-Handling (Indoor-Station ohne GPS), deutsche
+  Umlaute/Sonderzeichen in Namen/Alert-Texten
+- `integration_test.go`: `fleetservice` + `vehicleregistry` koexistieren nachweislich auf
+  derselben `vehicles`-Tabelle (Kernanspruch aus `ADR-029` jetzt verifiziert, nicht nur behauptet)
+  — inkl. Nachweis, dass `vehicleregistry.List()` durch die neue Spalte nicht bricht. Zusätzlich:
+  FK-RESTRICT-Verhalten bestätigt (referenzierte Zone kann nicht gelöscht werden)
+- `lifecycle_test.go`: kompletter Autonomy-First-Ablauf aus `ADR-028` einmal end-to-end auf
+  Datenebene durchgespielt (Fahrzeug registriert → Typ → Zone/Stationen → Task → autonomous →
+  Alert → teleoperated → Task completed → zurück zu autonomous) — E2E-Vorstufe, echtes HTTP-E2E
+  folgt mit FLEET-02/05
+
+9 Testfunktionen, alle grün, 2x hintereinander wiederholt (Wiederholbarkeit auf geteilter
+Dev-DB bestätigt), `gofmt`/`go vet`/`go build` sauber.
+
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
 ---
