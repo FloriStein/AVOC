@@ -17,7 +17,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 |----|------|-----|--------|
 | FLEET-01 | DB-Migration: `vehicle_type` Spalte zu `vehicles` (`ADR-029`); neue Tabellen `vehicle_status`, `zones`, `stations`, `tasks`, `alerts` mit FK auf `vehicles.id` | S | ✅ |
 | FLEET-02 | `fleet-service` Skeleton — neuer Go-Service nach bestehendem Muster (`cmd/fleet-service/main.go`, `/health`, eigener DB-Connection-Pool auf `avoc`), Docker-Integration (`docker-compose.yml`, `Makefile` GO_SERVICES) | M | ✅ |
-| FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | 🔲 |
+| FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | ✅ |
 | FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | 🔲 |
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | 🔲 |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | 🔲 |
@@ -91,6 +91,27 @@ Update-Hinweis korrigiert statt stillschweigend umgeschrieben.
 
 Volle Suite (`make test-integration`, alle Services inkl. `fleet-service`) und die komplette
 `internal/fleetservice`-Testsuite (10 Testfunktionen) laufen nach dem Fix durch.
+
+**FLEET-03 — FleetGateway-Interface + Mock ✅**
+Neues Paket `internal/fleetgateway` (ADR-027): `FleetGateway`-Interface mit
+`SubscribeVehicleStatus`/`SubscribeVehicleAlerts` (Pub/Sub, analog zum bestehenden
+`safetyservice.Bus`-Muster) + `DispatchTask` (Leitstelle → Fahrzeug, Richtung noch unklar bis
+AP1-Workshop). Event-Typen (`VehicleStatusEvent`, `VehicleAlertEvent`, `TaskAssignment`) bewusst
+von den Persistenz-Typen aus `fleetservice` getrennt, damit das Interface stabil bleibt, falls
+sich das DB-Schema später ändert.
+
+`MockGateway`: erfüllt "liefert simulierte Fahrzeugdaten" bereits eigenständig — eingebauter
+Simulationsloop (`StartSimulation`, Random-Walk-Position, sinkende Batterie, seltene
+fahrzeug-initiierte Alerts) läuft ohne Abhängigkeit von FLEET-04. Zusätzlich `SimulateVehicleStatus`/
+`SimulateVehicleAlert` exportiert, damit FLEET-04s `vehicle-mock`-Erweiterung und FLEET-05 den
+Mock auch von außen treiben können.
+
+12 Testfunktionen: Pub/Sub-Grundverhalten, Mehrfach-Subscriber, Edge Cases (keine Subscriber,
+Zero-Timestamp-Autofill, explizite Timestamps erhalten), Nebenläufigkeit (`-race`, keine Data
+Races bei gleichzeitigem Subscribe+Simulate), Simulationsloop (produziert Events pro Fahrzeug,
+Batterie sinkt nachweislich über Zeit, bleibt im 0–100-Bereich, `Stop()` beendet den Loop
+tatsächlich, `Stop()` ohne vorherigen `Start()` crasht nicht). `go build`/`go vet`/`gofmt` für
+das gesamte Repo sauber.
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
