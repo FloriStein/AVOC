@@ -32,6 +32,8 @@
 | [ADR-025](docs/adr/025-multi-operator.md) | Multi-Operator | Accepted | ACTIVE_OPERATOR/OBSERVER pro Vehicle; `vehicleController`-Map; WS connect nach `session/start` |
 | [ADR-026](docs/adr/026-multi-vehicle-state-isolation.md) | Multi-Vehicle State Isolation | Accepted, implementiert + deployed (Sprint 17, 2026-06-16) | `vehiclecontext.Registry` — pro Fahrzeug eigene State Machine + Deadman-/ACKTimeout-/VehicleACK-Watchdog; SafetyBusWatchdog fächert fleet-weit auf; `GET /vehicles/{id}/state` ergänzt (`GET /state` als Compat-Shim erhalten) |
 | [ADR-027](docs/adr/027-fleet-gateway-interface.md) | Fleet Gateway Interface | Accepted (Strategie), Schnittstellenparameter vorläufig | Abstraktes Interface gegen das noch unbestätigte externe ROS2/DDS-Fahrzeugbackend (IBATOUR); Mock jetzt, Adapter nach AP1-Workshop mit Professur Logistik |
+| [ADR-028](docs/adr/028-autonomy-first-operator-model.md) | Autonomy-First Operator Model | Accepted | Flotte fährt autonom als Normalfall, Teleop nur Notfall-Ausnahme (fahrzeuginitiiert via Alert); `NO_OPERATOR→SAFE_MODE` (ADR-009/011) gilt nur innerhalb aktiver Session; Vehicle-WS bereits session-unabhängig |
+| [ADR-029](docs/adr/029-fleet-vehicle-data-model.md) | Fleet Vehicle Data Model | Accepted | Neuer `fleet-service`; bestehende `vehicles`-Tabelle bleibt Identitäts-Quelle (+`vehicle_type`), neue FK-Tabellen (vehicle_status/zones/stations/tasks/alerts); Frontend führt Services clientseitig zusammen; Indoor+Outdoor beide SVG, Outdoor geo-referenziert |
 
 ## Offene Folge-Entscheidungen
 
@@ -58,3 +60,5 @@
 | `GET /state` final entfernen | offen | ADR-026 Folge (MV-12) — Frontend migriert seit MV-07, nur noch `latency.js`/`services_test.go` hängen daran |
 | `internal/authservice/handler_test.go` veraltet | offen | AUTH-TEST-01 — unabhängig von ADR-026, kompiliert nicht (`go vet`), entdeckt während Sprint-17-Verifikation |
 | Konkrete ROS2/DDS-Schnittstelle zum externen Fahrzeug-Backend | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1, IBATOUR) noch ausstehend; `FleetGateway` läuft bis dahin gegen Mock |
+| Handshake-basierte Autonomie-Rückgabe (statt einfachem Session-Ende) | offen | ADR-028 Folge — bewusst zurückgestellt, `endSession()` reicht für den Anfang |
+| Persistenzform für "gefahrene Route" (Historie) | offen | ADR-029 Folge — Zeitreihen-DB vs. einfache Tabelle noch nicht entschieden |

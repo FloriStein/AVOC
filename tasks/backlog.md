@@ -221,6 +221,24 @@ LOG-10 → LOG-11 (nach LOG-02)
 
 ---
 
+## EPIC: Fleet Dashboard Planung (ADR-027/028/029, IBATOUR)
+
+Grill-Me-Sessions 2026-07-10 bis 2026-07-14 haben den Kurswechsel Richtung IBATOUR-Leitstelle
+geklärt (Autonomy-First-Betrieb, Fleet-Datenmodell, Notfall-Trigger). Details in
+`docs/requirements.md`, `CONTEXT.MD`, `docs/adr/027-029`. Konkrete Sprint-Tasks (fleet-service
+aufsetzen, Multi-Vehicle-Simulation, Dashboard-Komponenten) folgen in `tasks/current-sprint.md`,
+sobald die Architektur final abgestimmt ist.
+
+**Bewusst zurückgestellte Folge-Entscheidungen:**
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| FLEET-01 | Handshake-basierte Autonomie-Rückgabe (statt einfachem `endSession()`) | M | 🔲 Backlog | `ADR-028` — bewusst zurückgestellt; Risiko: Fahrzeug könnte Kontrolle zurückerhalten, bevor es sicher verarbeitet ist. `endSession()` reicht für den Anfang |
+| FLEET-02 | Persistenzform für gefahrene Route (Historie) — Zeitreihen-DB vs. einfache Tabelle | M | 🔲 Backlog | `ADR-029` — noch nicht entschieden, betrifft Karten-Route-Darstellung (Historie-Linie) |
+| FLEET-03 | Bestehende `POST /vehicles`/`DELETE /vehicles/{id}` in `control-server` vs. neue `fleet-service`-Admin-API — Ablösung oder Koexistenz | S | 🔲 Backlog | `ADR-029` — kein Bruch im aktuellen Schritt, aber langfristig vermutlich durch reichhaltigere Fleet-Admin-API abgelöst |
+
+---
+
 ## Offene Entscheidungen (blockieren zukünftige Tasks)
 
 | Entscheidung | Blockiert | Referenz |

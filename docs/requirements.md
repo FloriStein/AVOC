@@ -41,8 +41,92 @@ Single-Vehicle-Direct-Teleop-Modell nicht existieren:
 - **Alert System:** Echtzeit-Benachrichtigungen mit Prioritätsklassen, Audio-Alerts, Acknowledgement-Feature
 - **Admin-Konsole:** zentrales Nutzer-/Rollenmanagement, Fahrzeugregistrierung/-konfiguration, Zonenzuweisung, Maintenance-Tracking, System-Health-Monitoring (Service-Status, API-Gateway-Health, Logs)
 
-Verhältnis zum bestehenden Direct-Teleop-System (Control Server, Safety Event Bus, Deadman-Switch,
-WebRTC-Video, 4-Layer State Machine) ist noch nicht final geklärt — siehe `CONTEXT.MD` Offene Fragen.
+**Verhältnis zum bestehenden Direct-Teleop-System (geklärt, Grill-Me 2026-07-13):** Das
+bestehende System (Control Server, Safety Event Bus, Deadman-Switch, WebRTC-Video, 4-Layer State
+Machine) bleibt unverändert bestehen und wird aus dem Dashboard heraus verlinkt — ein "Teleoperate"-
+Button am Fahrzeug navigiert zur vollständigen bestehenden Teleop-Oberfläche des jeweiligen
+Fahrzeugs. Keine neue, parallele oder vereinfachte Steuerungsoberfläche im Dashboard selbst.
+
+**Sicherheitskonzept fürs Betriebsgelände (geklärt):** Die Fahrzeuge verantworten ihre eigene
+Sicherheit selbst (fahrzeugseitige Automatisierung/Safety, außerhalb dieses Projekts). Die
+Leitstelle ist Monitoring/Dispatch-Ebene, nicht Safety-Enforcement-Instanz für autonome Fahrzeuge —
+die bestehende Safety-Architektur (Deadman-Switch, SAFE_MODE etc.) gilt weiterhin ausschließlich
+für den Fall, dass ein Operator ein Fahrzeug über die bestehende Teleop-Oberfläche aktiv steuert.
+
+**Grundparadigma (geklärt, Grill-Me 2026-07-13/14, `ADR-028`):** Die Flotte fährt **autonom als
+Normalfall** auf dem Betriebsgelände. Teleoperation ist die **Ausnahme**, ausgelöst durch vom
+Fahrzeug selbst erkannte Probleme, die einen Eingriff erfordern (nicht kontinuierliche
+Fernsteuerung). Details siehe "Notfall-Trigger-Modell" unten.
+
+---
+
+## Web Dashboard Requirements (Priority 1, AP2 — geklärt, Grill-Me 2026-07-13)
+
+> Referenzmodell: zwei vom Auftraggeber bereitgestellte Screenshots (2026-07-11/12), gelten
+> vorläufig als Referenzdesign. Die darin gezeigten "Scene 1–5"-Tabs sind reine Demo-Choreografie,
+> keine reale App-Navigation — die tatsächliche Navigationsstruktur ist von uns zu entwerfen.
+> Die dort gezeigten Fahrzeugtypen ("Tugger Train", "Forklift AGV") sind generisches
+> Beispielmaterial des Auftraggebers, **nicht** die echten Zieltypen (siehe Vehicle-Datenmodell unten).
+
+### Kartendarstellung (`ADR-029`)
+
+- **Indoor:** SVG-Karte. Für den Start soll eine Beispiel-SVG-Karte (Werkshalle/Betriebsgelände) selbst erstellt werden — kein vorhandenes Material vom AG
+- **Outdoor:** **ebenfalls SVG-Karte**, aber geo-referenziert — die SVG wird als Overlay über echte GPS-Koordinaten gelegt (Leaflet `imageOverlay`/`svgOverlay` mit Bounds), keine externen Kartenkacheln/SaaS-Abhängigkeit nötig
+- **Routen-Darstellung:** sowohl geplante Route als auch gefahrene Historie, mit unterschiedlichen visuellen Markierungen (nicht identisch dargestellt) — Historie-Persistenzform noch offen (`CONTEXT.MD`)
+- **Zonen:** verwaltbares Konzept, nicht hart codiert — deckt sich mit AP3 "Räumliche Zonenzuweisung" (Admin-Konsole verwaltet Zonen)
+- **Stationen:** auf der Karte markierte Punkte, Grundlage für das Task-Modell (siehe unten)
+
+### Task-Modell (Erstversion)
+
+- Ein Task = Bewegung eines Fahrzeugs zwischen auf der Karte markierten **Stationen**
+- Kein komplexeres Job-Modell (Be-/Entladen, Prozessschritte) in der Erstversion — das ist eine spätere Erweiterung, kein aktuelles Requirement
+
+### Notfall-Trigger-Modell (geklärt, Grill-Me 2026-07-13/14, `ADR-028`)
+
+- Alle Fahrzeuge halten eine **dauerhafte WebSocket-Verbindung** zum Control Server, unabhängig
+  von einer aktiven Teleop-Session (bereits heute so implementiert — `/vehicle/ws` ist von
+  `session/start` entkoppelt, keine Codeänderung nötig)
+- Immer mindestens ein Operator im Dienst, während die Flotte autonom fährt (Aufsichtspflicht)
+- Fahrzeuge erkennen Probleme, die einen Eingriff erfordern, **selbstständig** und melden sie über
+  das Alert-System (Weg: künftige FleetGateway-Schnittstelle, `ADR-027`)
+- Operator sieht den Alert im Notification-System und wählt das betroffene Fahrzeug über das
+  bestehende Dropdown-Muster (`VehicleSelector`) aus — kein automatisches Queue/Claim-System
+- Jeder Operator kontrolliert jeweils genau ein Fahrzeug gleichzeitig; mehrere Operatoren an
+  unterschiedlichen Arbeitsplätzen sind möglich (ergänzt `ADR-025`)
+- Nach Problemlösung: **`endSession()` reicht vorerst** zur Rückgabe an die Autonomie. Ein
+  expliziter Handshake mit dem Fahrzeug ist bewusst zurückgestellt (`tasks/backlog.md`)
+- `NO_OPERATOR → SAFE_MODE` (`ADR-009/011`) gilt **nur innerhalb einer bereits aktiven Session**,
+  nicht als Dauerzustand für autonom fahrende Fahrzeuge ohne Session (`ADR-028`)
+
+### Alert-System
+
+Zwei Quellen, beide laufen in dieselbe Notification-UI:
+
+- **Leitstellen-generiert:** Schwellenwert-/Regellogik in `fleet-service` (z. B. Batterie-Warnung bei niedrigem Ladezustand) — berechnet aus empfangener Telemetrie
+- **Fahrzeug-initiiert:** das Fahrzeug erkennt selbst ein Problem, das einen Operator-Eingriff erfordert, und sendet das explizit als Alert (Notfall-Trigger, siehe oben) — nicht aus Telemetrie-Schwellenwerten abgeleitet, sondern ein eigenständiges Ereignis vom Fahrzeug
+
+### Vehicle-Datenmodell, Service-Grenze & Multi-Vehicle-Simulation (`ADR-029`)
+
+- Neuer Service `fleet-service`; bestehende `vehicles`-Tabelle (`control-server`/`vehicleregistry`)
+  bleibt einzige Identitäts-Quelle, erweitert um `vehicle_type` (**Lastenrad**, **Lastenzug** —
+  nicht "Forklift AGV"/"Tugger Train" aus dem Referenzdesign, das war Beispielmaterial des AG).
+  `fleet-service` besitzt neue, per Fremdschlüssel verknüpfte Tabellen: `vehicle_status`, `zones`,
+  `stations`, `tasks`, `alerts` — Details siehe `ADR-029`
+- Frontend führt `control-server` (Online-Status) und `fleet-service` (Typ/Batterie/Position/
+  Task/Alerts) clientseitig über `vehicle_id` zusammen — keine Backend-zu-Backend-Kopplung
+- `vehicle-mock` wird zu einer Multi-Vehicle-Simulation erweitert (mehrere simulierte Fahrzeuge
+  gleichzeitig, Position/Batterie/Status), um Backend-Services und Dashboard gegen Bewegtdaten zu
+  testen (Priority-1-Notiz: "enables testing of backend services", "multi-vehicle simulation demonstration")
+- Das Datenformat dieser Simulation dient vorerst als konkrete Ausprägung des `FleetGateway`-Interfaces (`ADR-027`) — bis zur Bestätigung der echten ROS2-Schnittstelle
+
+### Multi-Operator / Multi-Workstation
+
+- Mehrere Leitstellen-Arbeitsplätze sollen gleichzeitig aktiv sein können (nicht nur ein Operator-Client) — Anforderung zusätzlich zum bereits bestehenden Multi-Operator-Modell pro Fahrzeug (`ADR-025`)
+- Jeder Operator kontrolliert jeweils genau ein Fahrzeug gleichzeitig (`ADR-028`)
+
+### Projektstatus
+
+- Ausschreibung ist beauftragt (nicht mehr Angebotsstadium) — Stand 2026-07-13
 
 ---
 

@@ -6,7 +6,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 
 ---
 
-## ADR-Index (27 ADRs)
+## ADR-Index (29 ADRs)
 
 | ADR | Titel | Kernentscheidung |
 |-----|-------|-----------------|
@@ -38,6 +38,8 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | [ADR-025](025-multi-operator.md) | Multi-Operator | ACTIVE_OPERATOR/OBSERVER pro Vehicle; `vehicleController`-Map; WS connect nach `session/start` |
 | [ADR-026](026-multi-vehicle-state-isolation.md) | Multi-Vehicle State Isolation | Pro-Fahrzeug State Machine + Watchdogs (`vehiclecontext.Registry`); SafetyBusWatchdog fächert fleet-weit auf; `GET /vehicles/{id}/state` ergänzt — implementiert + deployed (Sprint 17, 2026-06-16) |
 | [ADR-027](027-fleet-gateway-interface.md) | Fleet Gateway Interface | Abstraktes Interface gegen noch unbestätigte externe ROS2/DDS-Fahrzeugschnittstelle (IBATOUR); Mock jetzt, Adapter nach AP1-Workshop mit Professur Logistik — konkrete Schnittstellenparameter vorläufig |
+| [ADR-028](028-autonomy-first-operator-model.md) | Autonomy-First Operator Model | Flotte fährt autonom als Normalfall; Teleop nur als Notfall-Ausnahme, ausgelöst durch fahrzeugseitig erkannte Probleme via Alert; `NO_OPERATOR→SAFE_MODE`-Regel (ADR-009/011) gilt nur innerhalb aktiver Session, nicht als Dauerzustand für autonome Fahrzeuge; Vehicle-WS bereits heute session-unabhängig (keine Codeänderung) |
+| [ADR-029](029-fleet-vehicle-data-model.md) | Fleet Vehicle Data Model | Neuer Service `fleet-service`; bestehende `vehicles`-Tabelle bleibt Identitäts-Quelle (erweitert um `vehicle_type`), neue Tabellen (vehicle_status/zones/stations/tasks/alerts) per FK verknüpft; Frontend führt beide Services clientseitig zusammen; Indoor+Outdoor beide SVG-basiert, Outdoor geo-referenziert (Leaflet Overlay) |
 
 ---
 
