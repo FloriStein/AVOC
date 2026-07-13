@@ -140,6 +140,20 @@ Topics, Batterie sinkt nachweislich über mehrere echte Ticks, beide Fahrzeugtyp
 `control-server` — nicht angetastet; die Fleet-Simulation lief unabhängig davon trotzdem korrekt,
 da sie nicht an `control-server` hängt.)
 
+**FLEET-04 — Integrationstest-Suite (`tests/integration/`) ✅**
+Auf Nutzerwunsch analog zu FLEET-01/02 dauerhaft in die echte Suite überführt statt nur manuell
+verifiziert zu lassen: `vehicle-mock` in `tests/docker-compose.test.yml` aufgenommen
+(`FLEET_VEHICLES` mit zwei Test-Fahrzeugen), neuer Test
+`TestIntegration_FleetSimulation_PublishesRealMQTTMessages` (erste MQTT-basierte Prüfung in
+`tests/integration/`, bisher gab es dafür kein Muster) — verbindet sich als echter MQTT-Client
+zum realen Mosquitto-Container, abonniert `fleet/+/status`, wartet auf ≥2 Nachrichten pro
+Fahrzeug, prüft Struktur (Batterie 0–100, Position gesetzt, `autonomous`-Modus, Timestamp) und
+verifiziert, dass sich die Batterie über echte Ticks hinweg tatsächlich ändert (kein statischer
+Mock-Wert). 2x hintereinander gelaufen (identische Laufzeit, 5,51s) — kein Flackern.
+
+Volle Suite (`make test-integration`, jetzt 6 Services inkl. `vehicle-mock` + `fleet-service`)
+läuft grün durch.
+
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
 ---
