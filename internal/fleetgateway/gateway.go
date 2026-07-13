@@ -11,27 +11,28 @@ import "time"
 // VehicleStatusEvent is a live telemetry update from a vehicle (position, battery, autonomy
 // mode) — inbound direction (vehicle -> Leitstelle). Field shape intentionally mirrors
 // internal/fleetservice.VehicleStatus but is kept as a separate type: this package must stay
-// stable even if the persistence schema changes.
+// stable even if the persistence schema changes. JSON tags double as the MQTT wire format
+// (FLEET-04/05) — the concrete stand-in for the still-unspecified ROS2/DDS transport.
 type VehicleStatusEvent struct {
-	VehicleID      string
-	BatteryPct     *float64
-	Speed          *float64
-	PositionLat    *float64
-	PositionLon    *float64
-	PositionZoneID *string
-	AutonomyMode   string // "autonomous" | "teleoperated" | "manual"
-	CurrentTaskID  *string
-	Timestamp      time.Time
+	VehicleID      string    `json:"vehicle_id"`
+	BatteryPct     *float64  `json:"battery_pct,omitempty"`
+	Speed          *float64  `json:"speed,omitempty"`
+	PositionLat    *float64  `json:"position_lat,omitempty"`
+	PositionLon    *float64  `json:"position_lon,omitempty"`
+	PositionZoneID *string   `json:"position_zone_id,omitempty"`
+	AutonomyMode   string    `json:"autonomy_mode"` // "autonomous" | "teleoperated" | "manual"
+	CurrentTaskID  *string   `json:"current_task_id,omitempty"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // VehicleAlertEvent is a problem the vehicle detected on its own and cannot resolve without
 // operator intervention (ADR-028 Notfall-Trigger-Modell) — distinct from threshold-based alerts
 // that fleet-service computes itself from VehicleStatusEvent (FLEET-07).
 type VehicleAlertEvent struct {
-	VehicleID string
-	Severity  string // "info" | "warning" | "critical"
-	Message   string
-	Timestamp time.Time
+	VehicleID string    `json:"vehicle_id"`
+	Severity  string    `json:"severity"` // "info" | "warning" | "critical"
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // TaskAssignment is dispatched to a vehicle when an operator or fleet-service assigns it a new

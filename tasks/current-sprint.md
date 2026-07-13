@@ -18,7 +18,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-01 | DB-Migration: `vehicle_type` Spalte zu `vehicles` (`ADR-029`); neue Tabellen `vehicle_status`, `zones`, `stations`, `tasks`, `alerts` mit FK auf `vehicles.id` | S | ✅ |
 | FLEET-02 | `fleet-service` Skeleton — neuer Go-Service nach bestehendem Muster (`cmd/fleet-service/main.go`, `/health`, eigener DB-Connection-Pool auf `avoc`), Docker-Integration (`docker-compose.yml`, `Makefile` GO_SERVICES) | M | ✅ |
 | FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | ✅ |
-| FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | 🔲 |
+| FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | ✅ |
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | 🔲 |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | 🔲 |
 | FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | 🔲 |
@@ -112,6 +112,33 @@ Races bei gleichzeitigem Subscribe+Simulate), Simulationsloop (produziert Events
 Batterie sinkt nachweislich über Zeit, bleibt im 0–100-Bereich, `Stop()` beendet den Loop
 tatsächlich, `Stop()` ohne vorherigen `Start()` crasht nicht). `go build`/`go vet`/`gofmt` für
 das gesamte Repo sauber.
+
+**FLEET-04 — Multi-Vehicle-Simulation ✅**
+Architekturentscheidung vorab: `vehicle-mock` läuft als eigener Container/Prozess, getrennt von
+`fleet-service` — der In-Process-`MockGateway` aus FLEET-03 kann also nicht direkt genutzt
+werden, es braucht einen echten Transport über Prozessgrenzen. Passend zur Annahme aus `ADR-027`
+("MQTT für WAN") und weil Mosquitto bereits im Stack läuft: `vehicle-mock` publiziert jetzt JSON
+(`fleetgateway.VehicleStatusEvent`/`VehicleAlertEvent`, JSON-Tags direkt im Interface-Typ) auf
+`fleet/{id}/status` und `fleet/{id}/alert` (`internal/fleetgateway/mqtt_topics.go` — gemeinsamer
+Vertrag für den künftigen Subscriber in FLEET-05).
+
+Neue testbare Simulationslogik (`cmd/vehicle-mock/fleet_simulator.go`, getrennt von der
+bestehenden, nicht unit-getesteten `main.go`): pro simuliertem Fahrzeug Bewegung zwischen zwei
+Demo-Stationen (Platzhalter-Koordinaten — echte Zonen/Stationen folgen erst mit FLEET-05s
+REST-API, siehe Backlog), Batterie sinkt während der Fahrt und lädt beim Stehen unter 30 %,
+seltene fahrzeug-initiierte Alerts (`ADR-028`). `lastenzug` bewusst langsamer mit größerer
+Batteriekapazität (relativ langsamerer Verbrauch/Ladevorgang) als `lastenrad`. Neuer
+`FLEET_VEHICLES`-Env-Var (`docker-compose.yml`, Format `id:typ,id:typ`) — Default im Dev-Stack:
+`lastenzug-01`, `lastenrad-01`, unabhängig vom bestehenden Direct-Teleop-Fahrzeug.
+
+9 Unit-Tests für die reine Simulationslogik (Bewegung Richtung Ziel, Batterie-Grenzen 0–100,
+Lade-/Fahrverhalten je nach Batteriestand, Typ-Unterschiede). Zusätzlich end-to-end gegen den
+echten Mosquitto-Broker verifiziert (nicht nur Unit-Tests): `vehicle-mock`-Container gestartet,
+über `mosquitto_sub` von außen mitgelesen — korrekt formatierte JSON-Nachrichten auf beiden
+Topics, Batterie sinkt nachweislich über mehrere echte Ticks, beide Fahrzeugtypen liefen parallel.
+(Ein unabhängiger Java-Prozess auf dem Host blockierte währenddessen Port 8080 für
+`control-server` — nicht angetastet; die Fleet-Simulation lief unabhängig davon trotzdem korrekt,
+da sie nicht an `control-server` hängt.)
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 

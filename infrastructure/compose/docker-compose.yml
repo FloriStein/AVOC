@@ -253,6 +253,10 @@ services:
       CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"
       JWT_SECRET: ${JWT_SECRET}
       MQTT_BROKER: "mosquitto:1883"
+      # FLEET-04: zusätzliche autonome Flottenfahrzeuge (ADR-029), unabhängig vom
+      # Direct-Teleop-Fahrzeug oben — Format "id:typ,id:typ", publizieren über MQTT
+      # (fleet/{id}/status|alert, siehe internal/fleetgateway).
+      FLEET_VEHICLES: "lastenzug-01:lastenzug,lastenrad-01:lastenrad"
     depends_on:
       - control-server
       - mosquitto

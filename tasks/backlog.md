@@ -236,6 +236,7 @@ sobald die Architektur final abgestimmt ist.
 | FLEET-01 | Handshake-basierte Autonomie-Rückgabe (statt einfachem `endSession()`) | M | 🔲 Backlog | `ADR-028` — bewusst zurückgestellt; Risiko: Fahrzeug könnte Kontrolle zurückerhalten, bevor es sicher verarbeitet ist. `endSession()` reicht für den Anfang |
 | FLEET-02 | Persistenzform für gefahrene Route (Historie) — Zeitreihen-DB vs. einfache Tabelle | M | 🔲 Backlog | `ADR-029` — noch nicht entschieden, betrifft Karten-Route-Darstellung (Historie-Linie) |
 | FLEET-03 | Bestehende `POST /vehicles`/`DELETE /vehicles/{id}` in `control-server` vs. neue `fleet-service`-Admin-API — Ablösung oder Koexistenz | S | 🔲 Backlog | `ADR-029` — kein Bruch im aktuellen Schritt, aber langfristig vermutlich durch reichhaltigere Fleet-Admin-API abgelöst |
+| FLEET-04 | `vehicle-mock`s Fleet-Simulation nutzt hartcodierte Demo-Stationskoordinaten (`cmd/vehicle-mock/fleet_simulator.go`) statt echter Zonen/Stationen | S | 🔲 Backlog | Sprint 21 (FLEET-04) — vehicle-mock hat keinen DB-Zugriff; sobald `fleet-service`s REST-API (FLEET-05) Zonen/Stationen liefert, könnte die Simulation echte Daten abfragen statt sie zu erfinden |
 
 ---
 

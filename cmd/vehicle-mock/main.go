@@ -64,6 +64,11 @@ func main() {
 	mqttClient := connectMQTT(mqttBroker, vehicleID)
 	defer mqttClient.Disconnect(250)
 
+	// FLEET-04: independent fleet vehicles (Lastenrad/Lastenzug, ADR-029) simulated on the same
+	// MQTT connection — separate from the single Direct-Teleop vehicle above, which keeps its
+	// existing WS+MQTT behavior unchanged. See docs/adr/027-fleet-gateway-interface.md.
+	startFleetSimulation(mqttClient, os.Getenv("FLEET_VEHICLES"))
+
 	st := &state{battery: 85.0}
 
 	sig := make(chan os.Signal, 1)
