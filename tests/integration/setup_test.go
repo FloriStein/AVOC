@@ -1,6 +1,7 @@
 // Package integration tests all services in the Docker test stack (TEST-03, ADR-006).
 // Run via: make test-integration (starts/stops docker-compose.test.yml automatically).
-// Requires the test stack to be running: ports 18080 (control), 18081 (auth), 18082 (safety).
+// Requires the test stack to be running: ports 18080 (control), 18081 (auth), 18082 (safety),
+// 18085 (fleet).
 package integration_test
 
 import (
@@ -12,6 +13,7 @@ const (
 	controlURL = "http://localhost:18080"
 	authURL    = "http://localhost:18081"
 	safetyURL  = "http://localhost:18082"
+	fleetURL   = "http://localhost:18085"
 	jwtSecret  = "test-secret-integration"
 )
 

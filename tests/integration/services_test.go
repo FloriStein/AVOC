@@ -23,6 +23,18 @@ func getJSON(t *testing.T, url string) map[string]any {
 	return m
 }
 
+// getJSONList is getJSON's counterpart for endpoints returning a JSON array (e.g. GET /vehicles).
+func getJSONList(t *testing.T, url string) []any {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err, "GET %s", url)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode, "GET %s", url)
+	var list []any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
+	return list
+}
+
 func postJSON(t *testing.T, url string, body any) *http.Response {
 	t.Helper()
 	b, err := json.Marshal(body)
@@ -63,6 +75,51 @@ func TestIntegration_AuthService_Healthy(t *testing.T) {
 func TestIntegration_SafetyService_Healthy(t *testing.T) {
 	m := getJSON(t, safetyURL+"/health")
 	assert.Equal(t, "ok", m["status"])
+}
+
+func TestIntegration_FleetService_Healthy(t *testing.T) {
+	m := getJSON(t, fleetURL+"/health")
+	assert.Equal(t, "ok", m["status"])
+	assert.Equal(t, "fleet-service", m["service"])
+}
+
+// TestIntegration_FleetService_CoexistsWithControlServer_VehicleRegistration verifies the
+// ADR-029 coexistence claim in the real multi-service network — not just the isolated Go test
+// in internal/fleetservice/integration_test.go. control-server and fleet-service start against
+// the same Postgres DB with no explicit ordering between them (docker-compose.test.yml: both
+// only depend_on postgres). Registering a vehicle via control-server's real HTTP API must keep
+// working and remain visible after fleet-service has also initialized its schema (ALTER TABLE
+// vehicles ADD COLUMN vehicle_type) against the same table.
+func TestIntegration_FleetService_CoexistsWithControlServer_VehicleRegistration(t *testing.T) {
+	// fleet-service must be up (proves its schema-init against the shared vehicles table
+	// already ran/is running concurrently with control-server in this stack).
+	fm := getJSON(t, fleetURL+"/health")
+	require.Equal(t, "ok", fm["status"])
+
+	resp := postJSON(t, authURL+"/auth/operator/login",
+		map[string]string{"username": "admin", "password": "admin_test_secret"})
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	token := body["token"].(string)
+
+	resp2 := postJSONAuth(t, controlURL+"/vehicles", token, map[string]string{
+		"id": "vehicle-fleet-coexist-1", "display_name": "Fleet Coexist Test Vehicle",
+	})
+	defer resp2.Body.Close()
+	// 201 on first run, 409 if a previous run already registered it — both prove the vehicles
+	// table (extended by fleet-service) is still fully functional via control-server's own API.
+	assert.Contains(t, []int{201, 409}, resp2.StatusCode)
+
+	vehicles := getJSONList(t, controlURL+"/vehicles")
+	found := false
+	for _, v := range vehicles {
+		if vm, ok := v.(map[string]any); ok && vm["id"] == "vehicle-fleet-coexist-1" {
+			found = true
+		}
+	}
+	assert.True(t, found, "vehicle registered via control-server must remain visible after fleet-service extended the shared vehicles table")
 }
 
 // --- Auth Service ---

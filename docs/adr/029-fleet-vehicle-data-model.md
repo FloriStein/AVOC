@@ -64,6 +64,16 @@ ALTER TABLE vehicles ADD COLUMN vehicle_type TEXT; -- 'lastenrad' | 'lastenzug'
 um `vehicle_type`. Kein neues `online` — das bleibt live-berechnet in `control-server`, wird nicht
 in die DB geschrieben (unverändert aus `ADR-022`).
 
+> **Update (2026-07-13, FLEET-02):** `fleet-service` und `control-server` haben in
+> `docker-compose.yml`/`docker-compose.test.yml` bewusst kein `depends_on` zueinander — beide
+> hängen nur an Postgres. Ein `ALTER TABLE vehicles ...` allein reicht deshalb nicht: startet
+> `fleet-service` zuerst, existiert `vehicles` noch gar nicht, und die Migration schlägt fehl
+> (gefunden über `tests/integration`, nicht vorab erkannt). Fix: `fleet-service` legt die
+> Basistabelle selbst per `CREATE TABLE IF NOT EXISTS` an (identisch zu `vehicleregistry`s
+> Schema), bevor es sie erweitert — dadurch ist die Startreihenfolge tatsächlich beliebig, nicht
+> nur behauptet. Regressionstest:
+> `internal/fleetservice/integration_test.go::TestNewPostgresFleetStore_SucceedsWhenVehiclesTableDoesNotExistYet`.
+
 ### Neue, von `fleet-service` besessene Tabellen (alle mit `vehicle_id REFERENCES vehicles(id)`, wo zutreffend)
 
 ```

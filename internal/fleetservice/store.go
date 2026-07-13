@@ -13,8 +13,22 @@ import (
 	"avoc/pkg/ulid"
 )
 
-// vehicleTypeColumn extends the existing `vehicles` table (owned by control-server/
-// vehicleregistry) with the fleet-specific vehicle_type column (ADR-029). Using
+// vehicleBaseTable mirrors internal/vehicleregistry's schema exactly (CREATE TABLE IF NOT
+// EXISTS is a no-op if control-server already created it). Without this, fleet-service starting
+// before control-server would fail: `ALTER TABLE vehicles ...` errors if the table doesn't
+// exist yet, and docker-compose only orders both services after Postgres, not after each other
+// (found via tests/integration — fleet-service and control-server have no depends_on between
+// them, so either start order must work, ADR-029).
+const vehicleBaseTable = `
+CREATE TABLE IF NOT EXISTS vehicles (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`
+
+// vehicleTypeColumn extends the `vehicles` table (owned by control-server/vehicleregistry for
+// id/display_name) with the fleet-specific vehicle_type column (ADR-029). Using
 // ADD COLUMN IF NOT EXISTS keeps this idempotent regardless of which service starts first.
 const vehicleTypeColumn = `ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_type TEXT;`
 
@@ -143,6 +157,9 @@ type PostgresFleetStore struct {
 }
 
 func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
+	if _, err := db.Exec(vehicleBaseTable); err != nil {
+		return nil, fmt.Errorf("fleetservice: create base vehicles table: %w", err)
+	}
 	if _, err := db.Exec(vehicleTypeColumn); err != nil {
 		return nil, fmt.Errorf("fleetservice: extend vehicles table: %w", err)
 	}

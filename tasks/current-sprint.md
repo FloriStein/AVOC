@@ -70,6 +70,28 @@ Container-Start korrekt gegen die **bereits von `control-server`/`auth-service` 
 FK-Constraints aktiv). Das ist der in `ADR-029` behauptete Koexistenz-Fall jetzt auch im echten
 Deployment bestätigt, nicht nur im isolierten Test.
 
+**FLEET-02 — Integrationstest-Suite (`tests/integration/`) ✅**
+Auf Nutzerwunsch analog zu FLEET-01 vertieft: `fleet-service` in `tests/docker-compose.test.yml`
+aufgenommen (Port 18085, Healthcheck), `fleetURL`-Konstante in `setup_test.go`, zwei neue Tests
+in `services_test.go` (`TestIntegration_FleetService_Healthy`,
+`TestIntegration_FleetService_CoexistsWithControlServer_VehicleRegistration` — Fahrzeug-
+Registrierung über `control-server`s echte HTTP-API bleibt funktionsfähig, während
+`fleet-service` im selben Netzwerk läuft).
+
+**Dabei einen echten Bug gefunden und behoben:** `fleet-service` und `control-server` haben im
+Test-Stack (wie im Dev-Stack) bewusst kein `depends_on` zueinander — beide hängen nur an Postgres.
+Startet `fleet-service` zuerst, existierte `vehicles` noch nicht, und `ALTER TABLE vehicles ADD
+COLUMN` schlug fehl (`relation "vehicles" does not exist`) — die in `ADR-029` behauptete
+"Startreihenfolge ist egal"-Eigenschaft war schlicht nie getestet worden. Fix in
+`internal/fleetservice/store.go`: `fleet-service` legt die Basistabelle jetzt selbst per
+`CREATE TABLE IF NOT EXISTS` an (identisch zu `vehicleregistry`s Schema), bevor es sie erweitert.
+Dauerhafter Regressionstest ergänzt (`TestNewPostgresFleetStore_SucceedsWhenVehiclesTableDoesNotExistYet`,
+isolierte Postgres-Schema-Simulation einer wirklich leeren DB). `ADR-029` mit einem datierten
+Update-Hinweis korrigiert statt stillschweigend umgeschrieben.
+
+Volle Suite (`make test-integration`, alle Services inkl. `fleet-service`) und die komplette
+`internal/fleetservice`-Testsuite (10 Testfunktionen) laufen nach dem Fix durch.
+
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
 ---
