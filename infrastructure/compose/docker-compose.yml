@@ -147,6 +147,24 @@ services:
     networks:
       - avoc-net
 
+  # ─── Fleet Service (Fleet-Domäne — Zonen/Stationen/Tasks/Alerts, ADR-027/028/029) ─────────
+  fleet-service:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/go-service.Dockerfile
+      args:
+        SERVICE_NAME: fleet-service
+    ports:
+      - "8085:8085"
+    environment:
+      FLEET_PORT: "8085"
+      DATABASE_URL: "postgres://avoc:${DB_PASSWORD:-avoc_dev_secret}@postgres:5432/avoc?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - avoc-net
+
   # ─── MediaMTX — WHIP/WHEP Router (ADR-020) ───────────────────────────────
   # network_mode: host — MediaMTX läuft direkt im Host-Netzwerk (Linux only).
   # Kein Docker-NAT, kein Hairpin-Problem, WebRTC ICE funktioniert stabil.

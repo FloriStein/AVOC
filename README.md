@@ -31,6 +31,7 @@ docker compose -f infrastructure/compose/docker-compose.yml --env-file .env up -
 | http://localhost:8082 | Safety Service |
 | http://localhost:8083 | Telemetry Service |
 | http://localhost:8084 | WebRTC SFU (passiv, Session-Events) |
+| http://localhost:8085 | Fleet Service (Zonen/Stationen/Tasks/Alerts — IBATOUR) |
 | http://localhost:8889 | MediaMTX WHIP/WHEP (Fahrzeug → Browser) |
 | http://localhost:3001 | Grafana (Log-Dashboard) |
 | http://localhost:3100 | Loki (Log-Aggregation API) |

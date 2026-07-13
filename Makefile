@@ -6,7 +6,7 @@ DOCKER_USERNAME ?= $(shell cat .docker-username 2>/dev/null)
 REGISTRY        := docker.io/$(DOCKER_USERNAME)
 VERSION         ?= latest
 PLATFORM        := linux/amd64
-GO_SERVICES     := control-server auth-service safety-service telemetry-service webrtc-sfu
+GO_SERVICES     := control-server auth-service safety-service telemetry-service webrtc-sfu fleet-service
 
 # Proto code generation (Go + TypeScript)
 proto-gen:
@@ -41,7 +41,7 @@ dev-frontend:
 
 # Build all Go services
 build:
-	@for svc in control-server auth-service safety-service telemetry-service webrtc-sfu; do \
+	@for svc in control-server auth-service safety-service telemetry-service webrtc-sfu fleet-service; do \
 		echo "Building $$svc..."; \
 		go build -o bin/$$svc ./cmd/$$svc; \
 	done

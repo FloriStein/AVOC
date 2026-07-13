@@ -16,7 +16,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | ID | Task | Typ | Status |
 |----|------|-----|--------|
 | FLEET-01 | DB-Migration: `vehicle_type` Spalte zu `vehicles` (`ADR-029`); neue Tabellen `vehicle_status`, `zones`, `stations`, `tasks`, `alerts` mit FK auf `vehicles.id` | S | ✅ |
-| FLEET-02 | `fleet-service` Skeleton — neuer Go-Service nach bestehendem Muster (`cmd/fleet-service/main.go`, `/health`, eigener DB-Connection-Pool auf `avoc`), Docker-Integration (`docker-compose.yml`, `Makefile` GO_SERVICES) | M | 🔲 |
+| FLEET-02 | `fleet-service` Skeleton — neuer Go-Service nach bestehendem Muster (`cmd/fleet-service/main.go`, `/health`, eigener DB-Connection-Pool auf `avoc`), Docker-Integration (`docker-compose.yml`, `Makefile` GO_SERVICES) | M | ✅ |
 | FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | 🔲 |
 | FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | 🔲 |
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | 🔲 |
@@ -55,6 +55,20 @@ Auf Nutzerwunsch vertieft, bevor es weiterging:
 
 9 Testfunktionen, alle grün, 2x hintereinander wiederholt (Wiederholbarkeit auf geteilter
 Dev-DB bestätigt), `gofmt`/`go vet`/`go build` sauber.
+
+**FLEET-02 — fleet-service Skeleton ✅**
+`cmd/fleet-service/main.go` nach `auth-service`-Muster (DB-Connection via `pkg/db`, `WaitForReady`
+gegen Crash-Restart-Race, `/health`). Docker-Integration: neuer Service-Block in
+`docker-compose.yml` (Port 8085, `DATABASE_URL` gegen `avoc`), `fleet-service` zu `GO_SERVICES`
+in `Makefile` ergänzt (Variable + `build`-Target-Duplikat — beide Stellen, da im Makefile bisher
+nicht über eine gemeinsame Quelle gepflegt), README-Serviceliste ergänzt.
+
+Verifiziert im echten laufenden Docker-Stack (nicht nur `go build`): Container gebaut und
+gestartet, `GET /health` → `200 {"status":"ok"}`, und — wichtiger — das Schema wurde beim echten
+Container-Start korrekt gegen die **bereits von `control-server`/`auth-service` genutzte**
+`vehicles`-Tabelle initialisiert (`vehicle_type`-Spalte ergänzt, alle 5 neuen Tabellen angelegt,
+FK-Constraints aktiv). Das ist der in `ADR-029` behauptete Koexistenz-Fall jetzt auch im echten
+Deployment bestätigt, nicht nur im isolierten Test.
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
