@@ -5,9 +5,9 @@ Ziel: Das in `ADR-027/028/029` entworfene Fleet-Backend real aufsetzen, damit AP
 Bewusst kein Frontend-Task in diesem Sprint — Backend-Fundament zuerst, Dashboard-UI folgt in
 Sprint 22.
 
-Datum: 2026-07-14 | **Status: Geplant 🔲**
+Datum: 2026-07-14 | **Status: In Bearbeitung 🔄**
 Vorgänger: Sprint 20 ✅
-Branch: noch nicht angelegt — Vorschlag `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
+Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 
 ---
 
@@ -15,7 +15,7 @@ Branch: noch nicht angelegt — Vorschlag `feature/fleet-service-foundation` (Ba
 
 | ID | Task | Typ | Status |
 |----|------|-----|--------|
-| FLEET-01 | DB-Migration: `vehicle_type` Spalte zu `vehicles` (`ADR-029`); neue Tabellen `vehicle_status`, `zones`, `stations`, `tasks`, `alerts` mit FK auf `vehicles.id` | S | 🔲 |
+| FLEET-01 | DB-Migration: `vehicle_type` Spalte zu `vehicles` (`ADR-029`); neue Tabellen `vehicle_status`, `zones`, `stations`, `tasks`, `alerts` mit FK auf `vehicles.id` | S | ✅ |
 | FLEET-02 | `fleet-service` Skeleton — neuer Go-Service nach bestehendem Muster (`cmd/fleet-service/main.go`, `/health`, eigener DB-Connection-Pool auf `avoc`), Docker-Integration (`docker-compose.yml`, `Makefile` GO_SERVICES) | M | 🔲 |
 | FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | 🔲 |
 | FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | 🔲 |
@@ -25,6 +25,18 @@ Branch: noch nicht angelegt — Vorschlag `feature/fleet-service-foundation` (Ba
 | FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔲 |
 
 **Abhängigkeitspfad:** FLEET-01 → FLEET-02 → FLEET-03 → FLEET-04 → FLEET-05 → FLEET-06/FLEET-07 (parallel möglich) → FLEET-08
+
+## Ergebnisse
+
+**FLEET-01 — DB-Migration ✅**
+`internal/fleetservice/store.go`: `ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_type`
+(idempotent) + `CREATE TABLE IF NOT EXISTS` für `zones`, `stations`, `tasks`, `vehicle_status`,
+`alerts` — alle FK-Referenzen wie in `ADR-029` spezifiziert. `PostgresFleetStore` mit
+Basis-CRUD (Zones/Stations/Tasks/VehicleStatus-Upsert/Alerts+Acknowledge). Verifiziert gegen
+echte lokale Postgres-Instanz (nicht nur kompiliert): 3 Durchläufe hintereinander grün, bestätigt
+sowohl Schema-Idempotenz als auch korrektes CRUD/Upsert-Verhalten. `go build ./...`/`go vet ./...`
+für das gesamte Repo sauber. Test: `internal/fleetservice/store_test.go` (Skip ohne
+`DATABASE_URL`, analog bestehendem Integrationstest-Muster).
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
