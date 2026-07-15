@@ -19,7 +19,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-02 | `fleet-service` Skeleton — neuer Go-Service nach bestehendem Muster (`cmd/fleet-service/main.go`, `/health`, eigener DB-Connection-Pool auf `avoc`), Docker-Integration (`docker-compose.yml`, `Makefile` GO_SERVICES) | M | ✅ |
 | FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | ✅ |
 | FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | ✅ |
-| FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | 🔲 |
+| FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | ✅ |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | 🔲 |
 | FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | 🔲 |
 | FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔲 |
@@ -153,6 +153,61 @@ Mock-Wert). 2x hintereinander gelaufen (identische Laufzeit, 5,51s) — kein Fla
 
 Volle Suite (`make test-integration`, jetzt 6 Services inkl. `vehicle-mock` + `fleet-service`)
 läuft grün durch.
+
+**FLEET-05 — MQTT-Konsum, Status/Alert-Persistenz, REST-API ✅**
+`internal/fleetgateway/mqtt.go` (`MQTTGateway`) ist die konkrete `FleetGateway`-Realisierung —
+Gegenstück zu FLEET-04s Publisher: abonniert `StatusTopicWildcard`/`AlertTopicWildcard`, parst
+JSON, reicht an registrierte Callbacks weiter (identisches Verhalten zu `MockGateway` aus Sicht
+der Aufrufer). `cmd/fleet-service/main.go` verdrahtet: Store → `NewMQTTGateway` →
+`SubscribeVehicleStatus`/`SubscribeVehicleAlerts` schreiben in Postgres → `fleetservice.Handler`
+→ REST-Routen. Neue Structs (`Zone`, `Station`, `Task`, `VehicleStatus`, `Alert`, `FleetVehicle`)
+bekamen JSON-Tags (snake_case, konsistent zu `fleetgateway`s Event-Typen) — vorher hätte die API
+Go-Default-Feldnamen (PascalCase) geliefert.
+
+`internal/fleetservice/handler.go`: REST-Handler analog zu `authservice.Handler` (`RequireAuth`
+prüft nur Signatur/Gültigkeit, keine Rollenprüfung — Fleet-Daten sind operator-facing, nicht
+rollenspezifisch wie AP3-Admin-Aktionen). `CreateTask` dispatcht fire-and-forget an die Gateway
+(`ADR-027`: Ack-Semantik der echten Anbindung ist noch offen) — Dispatch-Fehler schlagen die
+Anfrage nicht fehl, der Task bleibt persistiert/sichtbar/wiederholbar über das Dashboard.
+
+Zwei reale Bugs erst bei der End-to-End-Verifikation gegen echte Infrastruktur gefunden (nicht
+durch `go build`/Unit-Tests):
+
+1. **Fleet-Fahrzeuge kamen nie in `vehicles` an.** Direct-Teleop-Fahrzeuge werden von
+   `control-server` bei WS-Connect automatisch registriert (`ADR-029`) — Fleet-Fahrzeuge sprechen
+   aber nur MQTT und stellen nie eine WS-Verbindung her. Ergebnis: jedes Status-/Alert-Event für
+   ein neues Fahrzeug schlug an der FK-Constraint auf `vehicle_status`/`alerts` fehl, live
+   beobachtet gegen den echten Dev-Stack (`docker logs` voller FK-Violation-Warnungen für die
+   simulierten `lastenzug`/`lastenrad`-Fahrzeuge). Fix: neue Store-Methode
+   `EnsureVehicleExists` (`INSERT ... ON CONFLICT DO NOTHING`), aufgerufen vor jedem
+   Status-/Alert-Schreibvorgang — spiegelt `control-server`s eigenes Auto-Register-Verhalten,
+   nur für den MQTT-only-Pfad. Regressionstest:
+   `TestEnsureVehicleExists_UnblocksStatusForNeverConnectedVehicle`.
+2. **Feste MQTT-ClientID.** `MQTTGateway` verband sich immer als `"fleet-service-gateway"` — beim
+   parallelen Testlauf gegen den bereits laufenden echten `fleet-service`-Container kämpften beide
+   Verbindungen um dieselbe Broker-Session (jeder Reconnect kickt den anderen), was
+   `TestMQTTGateway_ReceivesStatusPublishedByExternalClient` reproduzierbar zum Timeout brachte.
+   Fix: ClientID bekommt einen `ulid`-Suffix, damit jede Prozessinstanz eindeutig bleibt.
+
+22 neue/erweiterte Tests in `internal/fleetservice`/`internal/fleetgateway`, gegen echtes
+Postgres + Mosquitto verifiziert — bewusst auch mit einem parallel laufenden echten
+`fleet-service`-Container, um genau den ClientID-Bug oben zu reproduzieren. Manuelle
+E2E-Verifikation zusätzlich über die REST-API selbst (`curl` mit echtem JWT gegen den
+Dev-Stack): Health, 401 ohne Token, Zone/Task-CRUD, Live-Status simulierter Fahrzeuge sichtbar.
+
+**FLEET-05 — Integrationstest-Suite (`tests/integration/`) ✅**
+Neue `tests/integration/fleet_service_test.go`: `TestIntegration_FleetService_RequiresAuth` (401
+ohne Token), `TestIntegration_FleetService_ConsumesRealMQTTStatus_AcrossProcessBoundary` (die
+eigentliche End-to-End-Kette über echte Prozessgrenzen: `vehicle-mock`-Container →
+Mosquitto-Container → `fleet-service`-Container → Postgres → REST — bisherige Tests prüften nur
+Teilstücke davon isoliert), `TestIntegration_FleetService_ZoneStationTaskCRUD` (voller CRUD-Zyklus
+über die echte HTTP-API), `TestIntegration_FleetService_AcknowledgeAlert_UnknownID_Returns404`.
+`tests/docker-compose.test.yml`: `fleet-service` bekam `JWT_SECRET`/`MQTT_BROKER` (fehlten bisher
+— FLEET-02s Skeleton brauchte sie noch nicht) sowie `depends_on: mosquitto`.
+
+Volle Suite (`make test-integration`, jetzt inkl. 4 neuer Fleet-REST-Tests) 2x hintereinander
+gegen frisch gestartete Container gelaufen (`-count=1`, um Gos Test-Cache zu umgehen) — beide
+Male grün, keine Flakiness.
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
 
