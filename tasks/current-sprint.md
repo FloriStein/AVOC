@@ -5,7 +5,7 @@ Ziel: Das in `ADR-027/028/029` entworfene Fleet-Backend real aufsetzen, damit AP
 Bewusst kein Frontend-Task in diesem Sprint — Backend-Fundament zuerst, Dashboard-UI folgt in
 Sprint 22.
 
-Datum: 2026-07-14 | **Status: In Bearbeitung 🔄**
+Datum: 2026-07-14 | **Status: Alle Tasks ✅ (Merge der Branches `feature/fleet-service-foundation` und `feature/fleet-service-foundation-fleet08` steht noch aus)**
 Vorgänger: Sprint 20 ✅
 Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 
@@ -22,7 +22,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | ✅ |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | ✅ |
 | FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | ✅ |
-| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔄 (Schema/API-Handler-Lücken ✅, Alert-Engine-Teil folgt jetzt) |
+| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | ✅ |
 
 **Abhängigkeitspfad:** FLEET-01 → FLEET-02 → FLEET-03 → FLEET-04 → FLEET-05 → FLEET-06/FLEET-07 (parallel möglich) → FLEET-08
 
@@ -438,12 +438,53 @@ Beeinträchtigung der geteilten Dev-DB (nur eigene, per `t.Cleanup` aufgeräumte
 harmloses `db.Close()` auf einer eigenen Verbindung). `gofmt`/`go vet`/`go build` für das gesamte
 Repo sauber.
 
-**Alert-Engine-Teil war zum Zeitpunkt der obigen Schema/API-Handler-Runde noch offen** (FLEET-07
-war zu diesem Zeitpunkt nicht abgeschlossen — `git fetch` auf den GitLab-Remote war in dieser
-Umgebung nicht möglich, lokal auch in keinem Branch/Worktree sichtbar; daher der separate Branch
-`feature/fleet-service-foundation-fleet08`/Worktree `../controlcenter-aws-fleet08`). FLEET-07 ist
-inzwischen fertig (s. oben) und in diesen Branch gemerged — Fortsetzung für den
-Alert-Engine-Testteil folgt direkt im Anschluss.
+**FLEET-08 — Fortsetzung Alert-Engine-Teil ✅ (nach Merge von FLEET-07)**
+Zum Zeitpunkt der obigen Schema/API-Handler-Runde war FLEET-07 noch nicht abgeschlossen (`git
+fetch` auf den GitLab-Remote war in dieser Umgebung nicht möglich, lokal auch in keinem
+Branch/Worktree sichtbar — daher der separate Branch `feature/fleet-service-foundation-fleet08`/
+Worktree `../controlcenter-aws-fleet08`). FLEET-07 wurde inzwischen fertiggestellt und per
+`git merge feature/fleet-service-foundation` in diesen Branch übernommen (Konflikt nur in
+`tasks/current-sprint.md`, inhaltlich aufgelöst — kein Konflikt in Code/Tests).
+
+Gegenstand dieser Runde war erneut eine Lückenanalyse, kein Neuschreiben — und die Analyse fiel
+diesmal kurz aus: FLEET-07 wurde bereits **unter dem neuen `CLAUDE.MD`-Abschnitt-17-Teststandard**
+umgesetzt (der Standard entstand während FLEET-07, siehe Commit `019d5a0`) und in einem eigenen
+Nachtrag (`4d85a03`) rückwirkend gegen dessen komplette Fallgruppen-Checkliste geprüft, bevor
+dieser FLEET-08-Teil überhaupt begann. `internal/fleetservice/alertengine_test.go` deckt bereits:
+Grenzwerte (0 %/100 %/negative Werte/exakte Schwellenwerte mit expliziter `<`-vs-`<=`-Semantik),
+Zustandsübergänge (Tier-Hysterese, direkter Sprung gesund→kritisch, Erholung, Flatter-Test an der
+Grenze), Wiederholungssperre/Idempotenz (mehrere Ticks in derselben Tier), Nebenläufigkeit
+(`-race`), und Isolation zwischen Fahrzeugen (inkl. leerer `VehicleID` als Sonderfall) — 20
+Testfunktionen insgesamt.
+
+Eigener Beitrag dieser Runde: **Verifikation statt Duplikation**. Den bereits gemergten
+Teststand (Schema/API-Handler-Tests aus der ersten FLEET-08-Runde + FLEET-07s Alert-Engine-Tests)
+als Ganzes gegenlaufen lassen, um sicherzustellen, dass beide unabhängig entstandenen
+Testerweiterungen nach dem Merge zusammen funktionieren:
+- `go test ./internal/fleetservice/...` gegen den echten Dev-Stack-Postgres: 2x grün (59
+  Testfunktionen/Subtests, keine Flakiness).
+- `go test ./internal/fleetservice/... -race -count=3` (nativ auf dem Host mit `CGO_ENABLED=1`,
+  nicht im Alpine-Container, da dort kein `cgo` verfügbar ist) für die nebenläufigkeitsrelevanten
+  Pakete (`AlertEngine`, `Hub`): 3x grün, keine Race-Funde.
+- Volle `make test-integration`-Suite (frisch gebauter Teststack, 25 Tests inkl.
+  `TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert`): grün. Die
+  3 übrig bleibenden Skips (`TestIntegration_SessionLifecycle_StartAndEnd` u.a.) sind vorbestehend
+  und dokumentiert erwartet ("WebSocket dial failed (expected in minimal test stack)") — keine
+  Fleet-bezogene Regression.
+- `gofmt`/`go vet`/`go build` für das gesamte Repo weiterhin sauber (die von `gofmt -l` gemeldeten
+  Dateien liegen alle außerhalb von `internal/fleetservice`/`cmd/fleet-service` und sind
+  vorbestehende Formatierungsabweichungen, nicht durch diese Aufgabe verursacht).
+
+Keine zusätzlichen Alert-Engine-Tests ergänzt — die Fallgruppen-Checkliste aus Abschnitt 17 war
+bei Übernahme bereits vollständig abgedeckt, ein weiterer Test hätte nur eine bestehende
+Fallgruppe dupliziert. Der eine bewusst offene Fehlerpfad (`store.CreateAlert` schlägt nach
+`Evaluate` fehl) war bereits in FLEET-07s eigenem Nachtrag (`4d85a03`) als Lücke dokumentiert und
+wird hier nicht erneut aufgegriffen — Begründung dort deckungsgleich mit der Projektkonvention zu
+`main.go`-Verdrahtung.
+
+Damit ist FLEET-08 vollständig: Schema (FLEET-01), API-Handler (FLEET-05/06) und Alert-Engine
+(FLEET-07) haben je eine dedizierte, gegen echte Infrastruktur verifizierte Testabdeckung, dokumentierte bewusste Lücken statt stillschweigender Annahmen, und sind nach dem Merge gemeinsam
+grün.
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint. `GET /fleet/ws` ist ebenfalls noch nicht über `nginx.dev.conf` geroutet — wie schon die `/fleet/*`-REST-Routen aus FLEET-05 (dort ebenfalls nicht ergänzt) bewusst zurückgestellt, bis das Dashboard-Frontend in Sprint 22 tatsächlich einen Browser-Client dagegen braucht. Weitere Schwellenwert-Regeln (z. B. Geschwindigkeit, Zonenverlassen) sind nicht Teil von FLEET-07 — die Aufgabenbeschreibung nennt explizit nur Batterie als Beispiel; `AlertEngine` ist aber bewusst so strukturiert (eigener Tier-Mechanismus pro Regel-Dimension denkbar), dass weitere Regeln später ergänzt werden können, ohne den Aufrufer in `main.go` umzubauen.
 
