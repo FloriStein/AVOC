@@ -239,6 +239,7 @@ Eine Aufgabe ist nur erledigt, wenn die Kriterien ihrer Komplexitätsklasse erf�
 | Kriterium                                         | Typ S |      Typ M       | Typ L |
 | :------------------------------------------------ | :---: | :--------------: | :---: |
 | Code erfüllt Anforderungen & Tests bestehen       |   X   |        X         |   X   |
+| Teststandard erfüllt (Abschnitt 17)               |   –   |        X         |   X   |
 | `done.md` aktualisiert & Sprint-Task geschlossen  |   X   |        X         |   X   |
 | `requirements.md` / `architecture.md` nachgezogen |   –   |        X         |   X   |
 | `CONTEXT.md` / `DECISIONS.md` aktualisiert        |   –   | (nur bei Bedarf) |   X   |
@@ -315,7 +316,46 @@ Verboten:
 
 ---
 
-## 17. Ziel des Systems
+## 17. Teststandard (Sicherheit ohne Codereview)
+
+Grundsatz: Code muss auch für jemanden, der die Implementierung nicht liest, allein durch Tests
+und deren Dokumentation als sicher nachvollziehbar sein. Ergänzt Phase 8 ("Tests") und Abschnitt
+11 ("Definition of Done"). Konkretisiert für dieses Projekt zusätzlich ADR-006 (Testing Strategy).
+
+Gilt verpflichtend für Typ M und Typ L (siehe 1.1). Bei Typ S (reine Kosmetik/Typo-Fixes ohne
+Architektureinfluss) entfällt die volle Checkliste — Fast-Track bleibt in Kraft.
+
+**Pflicht-Fallgruppen pro Logikeinheit** (nicht nur Happy Path):
+
+- Grenzwerte: 0, negative Zahlen, leere Strings/Listen, `nil`/`null`, Maximalwerte
+- Fehlerhafte Eingaben: falsches Format, falscher Typ, zu lang, unerwartetes Encoding
+- Fehlerpfade: DB-/Netzwerk-/Auth-Fehler explizit testen, nicht nur den Erfolgsfall
+- Wiederholung/Idempotenz: gleiche Aktion zweimal ausführen — was ändert sich (oder nicht)?
+- Zustandsübergänge, falls Code Zustand über Zeit hält (Reihenfolge-Abhängigkeit,
+  Schwellwert-Flattern, Races zwischen Zuständen)
+- Nebenläufigkeit, falls geteilter State existiert (Race-Detector, mehrere gleichzeitige
+  Aufrufer)
+- Zugriffsgrenzen, falls zutreffend: kein Token, ungültiges Token, falsche Berechtigung
+
+**Integrationstests gegen echte Abhängigkeiten**, nicht nur In-Memory-Mocks (ADR-006 Teil 2) —
+Mocks verstecken reale Fehlerklassen (Startreihenfolge, Serialisierung, Netzwerk-Timing). Bei
+mehreren zusammenspielenden Services: mindestens ein Test über die echte Prozessgrenze, nicht nur
+isolierte Einzelteile.
+
+**Flakiness ausschließen:** sicherheitsrelevante oder nebenläufige Tests mindestens zweimal
+hintereinander gegen frischen Zustand laufen lassen. Ein einmaliger Durchlauf gilt nicht als
+stabil.
+
+**Ergebnis dokumentieren, nicht behaupten:** am Ende jeder Implementierung eine konkrete Liste,
+was getestet wurde (welche Fälle) und was bewusst nicht abgedeckt ist und warum. Keine pauschale
+Aussage wie "vollständig getestet".
+
+**Bei Unsicherheit über einen Edge Case:** zusätzlichen Test schreiben oder nachfragen — Lücke
+nicht stillschweigend offen lassen.
+
+---
+
+## 18. Ziel des Systems
 
 Dieses Projekt soll:
 

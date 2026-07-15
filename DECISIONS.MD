@@ -9,7 +9,7 @@
 | [ADR-003](docs/adr/003-mqtt-broker.md) | MQTT Broker | Accepted | Eclipse Mosquitto |
 | [ADR-004](docs/adr/004-authentication.md) | Authentifizierung | Accepted | Separater Auth Service (Operator + Vehicle, OAuth-erweiterbar) |
 | [ADR-005](docs/adr/005-session-recording.md) | Session Recording | Accepted | Abstraktes Recording Interface (Persistenz als Folge-ADR offen) |
-| [ADR-006](docs/adr/006-testing-strategy.md) | Testing Strategy | Accepted | testing+testify / Docker / Safety Test Suite / Jest+Playwright / CI Latenz / WebRTC E2E non-blocking |
+| [ADR-006](docs/adr/006-testing-strategy.md) | Testing Strategy | Accepted | testing+testify / Docker / Safety Test Suite / Jest+Playwright / CI Latenz / WebRTC E2E non-blocking. Update 2026-07-15: verpflichtende Fallgruppen-Checkliste pro Task, siehe CLAUDE.MD Abschnitt 17 |
 | [ADR-007](docs/adr/007-system-runtime-topology.md) | System Runtime Topology | Accepted | Hub-and-Spoke (Control Hub ≠ Data Hub); CONTROL HUB > VIDEO HUB; SFU = orthogonaler zweiter Hub |
 | [ADR-008](docs/adr/008-message-protocol.md) | Message Protocol Contract Layer | Accepted | Protobuf (Application Bus); WebRTC Signaling bewusst außerhalb |
 | [ADR-009](docs/adr/009-failure-model.md) | Failure Model & System Behavior under Faults | Accepted | CRITICAL/DEGRADED/OBSERVATION; Video=DEGRADED; Command ACK Timeout=CRITICAL; 3 formale Invarianten |
