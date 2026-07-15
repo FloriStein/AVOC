@@ -20,7 +20,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-03 | `FleetGateway`-Interface + Mock-Implementierung (`ADR-027`) — abstraktes Go-Interface definieren, Mock liefert simulierte Fahrzeugdaten (Position/Batterie/Status/Alerts) | M | ✅ |
 | FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | ✅ |
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | ✅ |
-| FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | 🔲 |
+| FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | ✅ |
 | FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | 🔲 |
 | FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔲 |
 
@@ -209,7 +209,116 @@ Volle Suite (`make test-integration`, jetzt inkl. 4 neuer Fleet-REST-Tests) 2x h
 gegen frisch gestartete Container gelaufen (`-count=1`, um Gos Test-Cache zu umgehen) — beide
 Male grün, keine Flakiness.
 
-**Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint.
+**FLEET-05 — Testlücke nachträglich geschlossen (Nutzerrückfrage während FLEET-06) ✅**
+Auf Nachfrage "ist FLEET-05 vollständig getestet?" geprüft statt geglaubt: `Handler.ListStations`
+und `Handler.ListAlerts` wurden bis dahin **nie** über HTTP aufgerufen (nur die darunterliegenden
+Store-Methoden), `Handler.CreateStation` hatte keinen Validierungstest, und keiner der vier
+POST-Handler (`CreateZone`/`CreateStation`/`CreateTask`/`AcknowledgeAlert`) hatte einen
+malformed-JSON-400-Test — der Decode-Error-Zweig war nur implizit durch den Code, nie durch einen
+Test belegt. Zusätzlich: die Store-Fehlerpfade aus `edgecases_test.go` (PK-Duplikat,
+FK-Verletzung) waren nur auf Store-Ebene verifiziert, nie durch den HTTP-Handler hindurch (bildet
+`store error` korrekt auf 500 ab, statt zu paniken oder die Anfrage fälschlich als Erfolg zu
+melden?).
+
+10 neue Tests in `internal/fleetservice/handler_test.go`: `TestCreateZone_MalformedJSON_Returns400`,
+`TestCreateZone_DuplicateID_Returns500`, `TestCreateStation_MissingFields_Returns400`,
+`TestCreateStation_MalformedJSON_Returns400`, `TestCreateStation_UnknownZoneID_Returns500`,
+`TestCreateStation_Valid_Returns201AndListable`, `TestCreateTask_MalformedJSON_Returns400`,
+`TestListTasks_IncludesCreatedTask`, `TestAcknowledgeAlert_MalformedJSON_Returns400`,
+`TestListAlerts_IncludesCreatedAlert`. Da weder der Dev- noch der Test-Postgres-Container einen
+Host-Port exponiert, gegen den echten laufenden Dev-Stack-Postgres über einen temporären
+`golang:1.23`-Container im selben Docker-Netzwerk (`avoc_avoc-net`) statt direkt vom Host
+verifiziert — 2x gelaufen (zweiter Lauf `-count=1`), beide Male grün, keine Regression in den
+bestehenden ~30 Paket-Tests, keine übrig gebliebenen Testzeilen in Postgres danach (`t.Cleanup`
+greift wie erwartet).
+
+**FLEET-06 — WS-Broadcast für Live-Updates ✅**
+Neuer `Hub` (`internal/fleetservice/broadcast.go`) — fasst jede verbundene Dashboard-Verbindung
+als `wsClient` (gepufferter `send`-Channel + eigener `writePump`, da `gorilla/websocket`-
+Connections keine nebenläufigen Writer erlauben und `Broadcast` sowohl aus den MQTT-Gateway-
+Callbacks als auch aus REST-Handler-Goroutinen aufgerufen wird). Bewusst **kein** Wiederverwenden
+von `internal/controlserver/transport.WSHandler` — geprüft, aber verworfen: das ist ein
+Fahrzeug↔Server-Protobuf-Command-Channel mit Session-Bindung, State-Machine-Kopplung und
+Deadman/ACK-Watchdogs; `fleet-service`s WS ist ein reiner Dashboard-Client↔Server-JSON-Broadcast
+ohne Gegenstück-Semantik. Einziges übernommenes Muster: der `extractToken`-Trick (Token optional
+als `?token=`-Query-Param, da Browser-WebSocket-Clients beim Handshake keinen
+`Authorization`-Header setzen können) — als eigene Kopie in `fleetservice` (`wsToken`), um die
+beiden WS-Schichten nicht zu koppeln.
+
+Neuer Endpoint `GET /fleet/ws` (`Handler.ServeWS`, `internal/fleetservice/handler.go`) — Auth
+über denselben JWT-Secret-Check wie `RequireAuth` (in `validateToken` extrahiert, jetzt von
+beiden geteilt). Vier Broadcast-Auslöser, alle zusätzlich zum bestehenden Store-Write (nicht
+statt dessen):
+- `vehicle_status` — `gw.SubscribeVehicleStatus`-Callback in `cmd/fleet-service/main.go`, nach
+  `UpsertVehicleStatus`
+- `alert_created` — `gw.SubscribeVehicleAlerts`-Callback, nach `CreateAlert` (fahrzeug-initiiert
+  über MQTT)
+- `alert_acknowledged` — `Handler.AcknowledgeAlert`, nach erfolgreichem Store-Update (eigener
+  `AlertAcknowledgedEvent`-Typ statt vollem `Alert`, da `store.AcknowledgeAlert` nur
+  Erfolg/Not-Found zurückgibt, nicht die Zeile — `GET /fleet/alerts` bleibt die autoritative
+  Quelle für den exakten Server-Timestamp)
+- `task_created` — `Handler.CreateTask`, nach erfolgreicher Persistierung (kein `task_updated`,
+  da es aktuell keinen Task-Update-Endpoint gibt — nur Erstellung existiert bislang)
+
+Slow-Consumer-Handling: `Broadcast` sendet non-blocking (`select`+`default`) in den
+32-Element-Puffer jedes Clients — ein hängender Client verliert einzelne Events, blockiert aber
+nie die Zustellung an alle anderen. Kein automatisches Disconnect bei vollem Puffer (bewusst
+einfach gehalten, kein Killer-Client-Mechanismus für diesen ersten Slice).
+
+5 neue Unit-Tests (`internal/fleetservice/broadcast_test.go`, `-race`-sauber, 2x wiederholt):
+Zustellung an einen/mehrere echte WS-Clients (via `httptest.Server` + echtem
+`gorilla/websocket`-Handshake), Unregister bei Disconnect, Slow-Consumer blockiert andere Clients
+nachweislich nicht, `ClientCount()`-Konsistenz inkl. doppeltem Unregister ohne Panic.
+
+Gegen den echten laufenden Dev-Stack verifiziert (Container neu gebaut/gestartet, nicht nur
+kompiliert) — alle vier Broadcast-Pfade einzeln mit einem echten WS-Client (`gorilla/websocket`,
+echtes JWT von `auth-service`) beobachtet:
+1. `vehicle_status` — lief bereits allein durch `vehicle-mock`s Simulationsloop (FLEET-04) an,
+   mehrere Events innerhalb weniger Sekunden empfangen
+2. `task_created` — via echtem `POST /fleet/tasks` ausgelöst, Event mit korrektem Payload
+   empfangen
+3. `alert_acknowledged` — Alert direkt in Postgres eingefügt, via echtem
+   `POST /fleet/alerts/{id}/acknowledge` bestätigt, Event empfangen
+4. `alert_created` — Alert direkt per `mosquitto_pub` auf `fleet/{id}/alert` publiziert (simuliert
+   fahrzeug-initiierten Alert ohne auf den seltenen Zufalls-Alert aus `vehicle-mock` zu warten),
+   Event empfangen
+5. Multi-Workstation-Fanout: zwei gleichzeitige WS-Clients verbunden, beide erhielten denselben
+   `task_created`-Broadcast — die eigentliche Kernanforderung aus `ADR-028`
+6. `GET /fleet/ws` ohne Token → Handshake schlägt fehl (401), wie bei den REST-Endpoints
+
+Dauerhaft in `tests/integration/fleet_service_test.go` überführt (kein rein manueller Test) —
+auf Nutzerrückfrage nachgezogen, nachdem die ersten drei Tests nur `task_created`/`vehicle_status`
+abdeckten und die beiden MQTT-/Alert-Pfade nur manuell (curl/mosquitto_pub) verifiziert waren, was
+der eigenen Verifikationsdisziplin widersprach:
+- `TestIntegration_FleetService_WSBroadcast_RequiresAuth` (kein Token → Handshake schlägt fehl)
+- `TestIntegration_FleetService_WSBroadcast_InvalidToken_Rejected` (Edge Case: syntaktisch
+  vorhandener, aber ungültiger Token — separater Codepfad in `validateToken` als "kein Token")
+- `TestIntegration_FleetService_WSBroadcast_DeliversTaskCreated` (verbindet zuerst per WS, erstellt
+  danach einen Task über die echte REST-API, prüft den empfangenen Broadcast gegen die Task-Daten)
+- `TestIntegration_FleetService_WSBroadcast_MultiWorkstationFanout` (zwei WS-Clients, beide müssen
+  ein `vehicle_status`-Event aus dem laufenden `vehicle-mock`-Simulationsstream empfangen — kein
+  REST-Trigger nötig, deckt den Dauerbetriebs-Fall ab)
+- `TestIntegration_FleetService_WSBroadcast_DeliversAlertCreatedAndAcknowledged` (publiziert einen
+  Alert per echtem MQTT-Client auf `fleet/{id}/alert` — analog zu FLEET-04s
+  `TestIntegration_FleetSimulation_PublishesRealMQTTMessages`s Verbindungsmuster, nur als
+  Publisher statt Subscriber — prüft `alert_created`-Broadcast, quittiert den Alert danach über
+  die echte REST-API und prüft zusätzlich `alert_acknowledged`; damit ist die einzige noch nicht
+  über den REST-/WS-Pfad abgedeckte Kombination geschlossen)
+
+Neuer Test-Helper `readWSEventOfType` (überliest interleavte `vehicle_status`-Rauschen aus dem
+laufenden `vehicle-mock`-Simulationsstream bis zum gesuchten Event-Typ) — von
+`DeliversTaskCreated` und dem neuen Alert-Test gemeinsam genutzt, ersetzt eine anfangs pro Test
+duplizierte Skip-Schleife.
+
+Volle Suite (`make test-integration`, jetzt 24 Tests, davon 5 neu für FLEET-06) 2x hintereinander
+gegen frisch gestartete Container gelaufen (zweiter Lauf mit `-count=1`, um Gos Test-Cache zu
+umgehen) — beide Male grün, keine Flakiness.
+
+Kein echter Bug bei der Infrastruktur-Verifikation gefunden (anders als FLEET-01/02/05) — die
+Wiederverwendung von `EnsureVehicleExists`/`CreateAlert`s Rückgabewert aus FLEET-05 hat den
+FK-/Timing-Fall hier bereits sauber abgedeckt.
+
+**Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint. `GET /fleet/ws` ist ebenfalls noch nicht über `nginx.dev.conf` geroutet — wie schon die `/fleet/*`-REST-Routen aus FLEET-05 (dort ebenfalls nicht ergänzt) bewusst zurückgestellt, bis das Dashboard-Frontend in Sprint 22 tatsächlich einen Browser-Client dagegen braucht.
 
 ---
 

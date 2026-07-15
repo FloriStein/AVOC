@@ -112,7 +112,7 @@ func doRequest(handler http.HandlerFunc, method, path, token string, body any) *
 // ─── Health (no DB required) ───────────────────────────────────────────────────
 
 func TestHealth_ReturnsOKWithoutAuth(t *testing.T) {
-	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.Health, http.MethodGet, "/health", "", nil)
 
@@ -124,7 +124,7 @@ func TestHealth_ReturnsOKWithoutAuth(t *testing.T) {
 // ─── RequireAuth middleware (no DB required) ───────────────────────────────────
 
 func TestRequireAuth_NoToken_Returns401(t *testing.T) {
-	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
 	protected := h.RequireAuth(h.Health)
 
 	rr := doRequest(protected, http.MethodGet, "/fleet/vehicles", "", nil)
@@ -135,7 +135,7 @@ func TestRequireAuth_NoToken_Returns401(t *testing.T) {
 }
 
 func TestRequireAuth_InvalidToken_Returns401(t *testing.T) {
-	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
 	protected := h.RequireAuth(h.Health)
 
 	rr := doRequest(protected, http.MethodGet, "/fleet/vehicles", "not.a.jwt", nil)
@@ -146,7 +146,7 @@ func TestRequireAuth_InvalidToken_Returns401(t *testing.T) {
 }
 
 func TestRequireAuth_WrongSecret_Returns401(t *testing.T) {
-	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
 	protected := h.RequireAuth(h.Health)
 
 	token := mintToken(t, "a-completely-different-secret!!")
@@ -158,7 +158,7 @@ func TestRequireAuth_WrongSecret_Returns401(t *testing.T) {
 }
 
 func TestRequireAuth_ValidToken_PassesThrough(t *testing.T) {
-	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
 	protected := h.RequireAuth(h.Health)
 
 	token := mintToken(t, testSecret)
@@ -173,7 +173,7 @@ func TestRequireAuth_ValidToken_PassesThrough(t *testing.T) {
 
 func TestCreateZone_MissingFields_Returns400(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", map[string]string{"name": "Missing ID"})
 
@@ -184,7 +184,7 @@ func TestCreateZone_MissingFields_Returns400(t *testing.T) {
 
 func TestCreateZone_InvalidEnvironment_Returns400(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", map[string]string{
 		"id": "handler-test-zone", "name": "Bad Env", "environment": "underwater",
@@ -197,7 +197,7 @@ func TestCreateZone_InvalidEnvironment_Returns400(t *testing.T) {
 
 func TestCreateZone_Valid_Returns201AndListable(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", map[string]string{
 		"id": "handler-test-zone", "name": "Test Zone", "environment": "indoor",
@@ -222,11 +222,114 @@ func TestCreateZone_Valid_Returns201AndListable(t *testing.T) {
 	}
 }
 
+func TestCreateZone_MalformedJSON_Returns400(t *testing.T) {
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
+	req := httptest.NewRequest(http.MethodPost, "/fleet/zones", bytes.NewBufferString("{not valid json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.CreateZone(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+// TestCreateZone_DuplicateID_Returns500 confirms the handler surfaces a store-level failure
+// (here: the PK uniqueness violation edgecases_test.go already proves at the store layer, see
+// TestEdgeCases_PrimaryKeyDuplicates) as a 500 through the HTTP layer instead of panicking or
+// silently succeeding twice.
+func TestCreateZone_DuplicateID_Returns500(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	body := map[string]string{"id": "handler-test-zone", "name": "Test Zone", "environment": "indoor"}
+	first := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first create to return 201, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", body)
+	if second.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 on duplicate id, got %d: %s", second.Code, second.Body.String())
+	}
+}
+
+// ─── Stations (Postgres required) ──────────────────────────────────────────────
+
+func TestCreateStation_MissingFields_Returns400(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.CreateStation, http.MethodPost, "/fleet/stations", "", map[string]string{"name": "Missing ID and zone"})
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestCreateStation_MalformedJSON_Returns400(t *testing.T) {
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
+	req := httptest.NewRequest(http.MethodPost, "/fleet/stations", bytes.NewBufferString("not json at all"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.CreateStation(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+// TestCreateStation_UnknownZoneID_Returns500 mirrors TestCreateZone_DuplicateID_Returns500 for
+// the FK-violation case (edgecases_test.go's TestEdgeCases_ForeignKeyViolations proves this at
+// the store layer; this proves the HTTP handler surfaces it correctly too).
+func TestCreateStation_UnknownZoneID_Returns500(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.CreateStation, http.MethodPost, "/fleet/stations", "", map[string]string{
+		"id": "handler-test-station-orphan", "zone_id": "does-not-exist", "name": "Orphan",
+	})
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for unknown zone_id, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateStation_Valid_Returns201AndListable(t *testing.T) {
+	store := requirePostgresStore(t)
+	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.CreateStation, http.MethodPost, "/fleet/stations", "", map[string]string{
+		"id": "handler-test-station-a", "zone_id": "handler-test-zone", "name": "A",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	rr = doRequest(h.ListStations, http.MethodGet, "/fleet/stations", "", nil)
+	var stations []fleetservice.Station
+	if err := json.NewDecoder(rr.Body).Decode(&stations); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, st := range stations {
+		if st.ID == "handler-test-station-a" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("created station not present in ListStations")
+	}
+}
+
 // ─── Tasks (Postgres required) — dispatch wiring ───────────────────────────────
 
 func TestCreateTask_MissingFields_Returns400(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]string{"vehicle_id": "handler-test-vehicle"})
 
@@ -248,7 +351,7 @@ func TestCreateTask_Valid_PersistsAndDispatchesToGateway(t *testing.T) {
 	}
 
 	dispatcher := &stubDispatcher{}
-	h := fleetservice.NewHandler(testSecret, store, dispatcher)
+	h := fleetservice.NewHandler(testSecret, store, dispatcher, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]any{
 		"vehicle_id": "handler-test-vehicle", "from_station_id": "handler-test-station-a",
@@ -287,7 +390,7 @@ func TestCreateTask_DispatchFails_TaskStillPersistedAndReturns201(t *testing.T) 
 	}
 
 	dispatcher := &stubDispatcher{err: errors.New("mqtt: broker unreachable")}
-	h := fleetservice.NewHandler(testSecret, store, dispatcher)
+	h := fleetservice.NewHandler(testSecret, store, dispatcher, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]any{
 		"vehicle_id": "handler-test-vehicle", "from_station_id": "handler-test-station-a",
@@ -317,11 +420,61 @@ func TestCreateTask_DispatchFails_TaskStillPersistedAndReturns201(t *testing.T) 
 	}
 }
 
+func TestCreateTask_MalformedJSON_Returns400(t *testing.T) {
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
+	req := httptest.NewRequest(http.MethodPost, "/fleet/tasks", bytes.NewBufferString("{"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.CreateTask(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+// TestListTasks_IncludesCreatedTask exercises Handler.ListTasks directly — previously only
+// store.ListTasks() was exercised (via TestCreateTask_DispatchFails...), never the HTTP handler
+// itself.
+func TestListTasks_IncludesCreatedTask(t *testing.T) {
+	store := requirePostgresStore(t)
+	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	if err := store.AddStation(fleetservice.Station{ID: "handler-test-station-a", ZoneID: "handler-test-zone", Name: "A"}); err != nil {
+		t.Fatalf("AddStation A: %v", err)
+	}
+	if err := store.AddStation(fleetservice.Station{ID: "handler-test-station-b", ZoneID: "handler-test-zone", Name: "B"}); err != nil {
+		t.Fatalf("AddStation B: %v", err)
+	}
+	created, err := store.CreateTask(fleetservice.Task{
+		VehicleID: "handler-test-vehicle", FromStationID: "handler-test-station-a", ToStationID: "handler-test-station-b",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.ListTasks, http.MethodGet, "/fleet/tasks", "", nil)
+	var tasks []fleetservice.Task
+	if err := json.NewDecoder(rr.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, task := range tasks {
+		if task.ID == created.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("created task not present in ListTasks")
+	}
+}
+
 // ─── Alerts (Postgres required) ────────────────────────────────────────────────
 
 func TestAcknowledgeAlert_NotFound_Returns404(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", h.AcknowledgeAlert)
@@ -339,7 +492,7 @@ func TestAcknowledgeAlert_NotFound_Returns404(t *testing.T) {
 
 func TestAcknowledgeAlert_MissingAcknowledgedBy_Returns400(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", h.AcknowledgeAlert)
@@ -356,7 +509,7 @@ func TestAcknowledgeAlert_MissingAcknowledgedBy_Returns400(t *testing.T) {
 
 func TestAcknowledgeAlert_Valid_Returns204(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	alert, err := store.CreateAlert(fleetservice.Alert{VehicleID: "handler-test-vehicle", Severity: "warning", Message: "Low battery"})
 	if err != nil {
@@ -377,11 +530,55 @@ func TestAcknowledgeAlert_Valid_Returns204(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeAlert_MalformedJSON_Returns400(t *testing.T) {
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", h.AcknowledgeAlert)
+
+	req := httptest.NewRequest(http.MethodPost, "/fleet/alerts/whatever/acknowledge", bytes.NewBufferString("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+// TestListAlerts_IncludesCreatedAlert exercises Handler.ListAlerts directly — until now nothing
+// called it via HTTP; alerts were only ever read back through store.ListAlerts() in tests.
+func TestListAlerts_IncludesCreatedAlert(t *testing.T) {
+	store := requirePostgresStore(t)
+	created, err := store.CreateAlert(fleetservice.Alert{VehicleID: "handler-test-vehicle", Severity: "critical", Message: "Obstacle detected"})
+	if err != nil {
+		t.Fatalf("CreateAlert: %v", err)
+	}
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.ListAlerts, http.MethodGet, "/fleet/alerts", "", nil)
+	var alerts []fleetservice.Alert
+	if err := json.NewDecoder(rr.Body).Decode(&alerts); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, a := range alerts {
+		if a.ID == created.ID {
+			found = true
+			if a.Severity != "critical" || a.Message != "Obstacle detected" {
+				t.Fatalf("unexpected alert fields: %+v", a)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("created alert not present in ListAlerts")
+	}
+}
+
 // ─── Vehicles (Postgres required) ──────────────────────────────────────────────
 
 func TestListVehicles_IncludesSeededVehicleWithNilStatus(t *testing.T) {
 	store := requirePostgresStore(t)
-	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{})
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.ListVehicles, http.MethodGet, "/fleet/vehicles", "", nil)
 	if rr.Code != http.StatusOK {

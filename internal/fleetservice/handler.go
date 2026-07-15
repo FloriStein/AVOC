@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/websocket"
 
 	"avoc/internal/fleetgateway"
 )
+
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(_ *http.Request) bool { return true },
+}
 
 // Dispatcher is the subset of fleetgateway.FleetGateway the HTTP layer needs — narrow interface
 // so Handler doesn't depend on the whole gateway (Subscribe* is main.go's concern, not the
@@ -19,15 +25,17 @@ type Dispatcher interface {
 }
 
 // Handler is fleet-service's REST API (AP2 Web-Dashboard, first slice of AP3 Admin-Konsole
-// CRUD) — mirrors internal/authservice.Handler's shape (secret + store).
+// CRUD) — mirrors internal/authservice.Handler's shape (secret + store). hub fans live updates
+// out to Dashboard clients connected via ServeWS (FLEET-06).
 type Handler struct {
 	secret []byte
 	store  *PostgresFleetStore
 	gw     Dispatcher
+	hub    *Hub
 }
 
-func NewHandler(secret string, store *PostgresFleetStore, gw Dispatcher) *Handler {
-	return &Handler{secret: []byte(secret), store: store, gw: gw}
+func NewHandler(secret string, store *PostgresFleetStore, gw Dispatcher, hub *Hub) *Handler {
+	return &Handler{secret: []byte(secret), store: store, gw: gw, hub: hub}
 }
 
 // RequireAuth gates all /fleet/* endpoints behind a valid JWT (issued by auth-service, same
@@ -41,18 +49,50 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		token, err := jwt.Parse(strings.TrimPrefix(authHeader, "Bearer "), func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-			}
-			return h.secret, nil
-		})
-		if err != nil || !token.Valid {
+		if !h.validateToken(strings.TrimPrefix(authHeader, "Bearer ")) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next(w, r)
 	}
+}
+
+func (h *Handler) validateToken(tokenStr string) bool {
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return h.secret, nil
+	})
+	return err == nil && token.Valid
+}
+
+// ServeWS upgrades to a Dashboard-facing WebSocket and streams live fleet events (FLEET-06,
+// ADR-028: alerts are the signal an operator reacts to, so every connected workstation must
+// receive state changes without polling). Can't reuse RequireAuth as-is — browser WebSocket
+// clients cannot set a custom Authorization header on the handshake request, so the token may
+// also arrive as a query parameter (mirrors control-server's vehicle-facing
+// transport.extractToken, kept as a separate copy here since the two WS layers deliberately
+// don't share code — different connection kind, different participants).
+func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
+	tokenStr := wsToken(r)
+	if tokenStr == "" || !h.validateToken(tokenStr) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	h.hub.Connect(conn)
+}
+
+func wsToken(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return r.URL.Query().Get("token")
 }
 
 // ─── Vehicles ───────────────────────────────────────────────────────────────
@@ -163,6 +203,8 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		FromStationID: created.FromStationID, ToStationID: created.ToStationID, Priority: created.Priority,
 	})
 
+	h.hub.Broadcast("task_created", created)
+
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, created)
 }
@@ -195,7 +237,21 @@ func (h *Handler) AcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	h.hub.Broadcast("alert_acknowledged", AlertAcknowledgedEvent{
+		ID:             id,
+		AcknowledgedBy: req.AcknowledgedBy,
+		AcknowledgedAt: time.Now(),
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// AlertAcknowledgedEvent is the FLEET-06 broadcast payload for an acknowledgement — smaller than
+// the full Alert row (store.AcknowledgeAlert only reports success/not-found, not the row itself;
+// GET /fleet/alerts remains the authoritative source for the exact server-side timestamp).
+type AlertAcknowledgedEvent struct {
+	ID             string    `json:"id"`
+	AcknowledgedBy string    `json:"acknowledged_by"`
+	AcknowledgedAt time.Time `json:"acknowledged_at"`
 }
 
 // ─── Health ─────────────────────────────────────────────────────────────────

@@ -57,6 +57,12 @@ func main() {
 	}
 	defer gw.Close()
 
+	// hub fans every state change out to connected Dashboard clients (FLEET-06, ADR-028 —
+	// multiple operators at different workstations must see alerts/status live, without
+	// polling). Fed from two places below: the MQTT gateway callbacks (vehicle-initiated status/
+	// alerts) and the REST handlers (task creation, alert acknowledgement).
+	hub := fleetservice.NewHub()
+
 	gw.SubscribeVehicleStatus(func(e fleetgateway.VehicleStatusEvent) {
 		// Fleet vehicles never establish a WS connection to control-server, so they never hit
 		// its "Auto-Register bei erstem WS-Connect" path (ADR-029) — without this, every status
@@ -65,7 +71,7 @@ func main() {
 			log.Warn("failed to auto-register vehicle", "vehicle_id", e.VehicleID, "error", err)
 			return
 		}
-		err := store.UpsertVehicleStatus(fleetservice.VehicleStatus{
+		status := fleetservice.VehicleStatus{
 			VehicleID:      e.VehicleID,
 			BatteryPct:     e.BatteryPct,
 			Speed:          e.Speed,
@@ -74,10 +80,13 @@ func main() {
 			PositionZoneID: e.PositionZoneID,
 			AutonomyMode:   e.AutonomyMode,
 			CurrentTaskID:  e.CurrentTaskID,
-		})
-		if err != nil {
-			log.Warn("failed to persist vehicle status", "vehicle_id", e.VehicleID, "error", err)
 		}
+		if err := store.UpsertVehicleStatus(status); err != nil {
+			log.Warn("failed to persist vehicle status", "vehicle_id", e.VehicleID, "error", err)
+			return
+		}
+		status.UpdatedAt = time.Now()
+		hub.Broadcast("vehicle_status", status)
 	})
 	gw.SubscribeVehicleAlerts(func(e fleetgateway.VehicleAlertEvent) {
 		// Same FK gap as SubscribeVehicleStatus above — a vehicle-initiated alert can in
@@ -86,17 +95,19 @@ func main() {
 			log.Warn("failed to auto-register vehicle", "vehicle_id", e.VehicleID, "error", err)
 			return
 		}
-		_, err := store.CreateAlert(fleetservice.Alert{
+		created, err := store.CreateAlert(fleetservice.Alert{
 			VehicleID: e.VehicleID,
 			Severity:  e.Severity,
 			Message:   e.Message,
 		})
 		if err != nil {
 			log.Warn("failed to persist vehicle alert", "vehicle_id", e.VehicleID, "error", err)
+			return
 		}
+		hub.Broadcast("alert_created", created)
 	})
 
-	handler := fleetservice.NewHandler(jwtSecret, store, gw)
+	handler := fleetservice.NewHandler(jwtSecret, store, gw, hub)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health)
@@ -109,6 +120,7 @@ func main() {
 	mux.HandleFunc("POST /fleet/tasks", handler.RequireAuth(handler.CreateTask))
 	mux.HandleFunc("GET /fleet/alerts", handler.RequireAuth(handler.ListAlerts))
 	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", handler.RequireAuth(handler.AcknowledgeAlert))
+	mux.HandleFunc("GET /fleet/ws", handler.ServeWS)
 
 	log.Info("Fleet Service starting", "port", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
