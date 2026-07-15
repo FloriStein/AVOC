@@ -90,64 +90,64 @@ CREATE TABLE IF NOT EXISTS alerts (
 // Zone is an admin-managed spatial area (AP3 "Räumliche Zonenzuweisung") — indoor (SVG-based)
 // or outdoor (geo-referenced SVG overlay, ADR-029).
 type Zone struct {
-	ID          string
-	Name        string
-	Environment string // "indoor" | "outdoor"
-	SVGGeometry string
-	GeoBounds   *string // raw JSON, nil for indoor zones without geo-reference
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Environment string    `json:"environment"` // "indoor" | "outdoor"
+	SVGGeometry string    `json:"svg_geometry,omitempty"`
+	GeoBounds   *string   `json:"geo_bounds,omitempty"` // raw JSON, nil for indoor zones without geo-reference
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Station is a map-anchored point — the endpoint unit for Tasks.
 type Station struct {
-	ID          string
-	ZoneID      string
-	Name        string
-	PositionX   *float64
-	PositionY   *float64
-	PositionLat *float64
-	PositionLon *float64
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	ZoneID      string    `json:"zone_id"`
+	Name        string    `json:"name"`
+	PositionX   *float64  `json:"position_x,omitempty"`
+	PositionY   *float64  `json:"position_y,omitempty"`
+	PositionLat *float64  `json:"position_lat,omitempty"`
+	PositionLon *float64  `json:"position_lon,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Task represents a vehicle moving between two Stations (ADR-029 — first-version task model,
 // no multi-step job/loading model yet).
 type Task struct {
-	ID            string
-	VehicleID     string
-	FromStationID string
-	ToStationID   string
-	Status        string // "pending" | "in_progress" | "completed" | "cancelled"
-	Priority      int
-	CreatedAt     time.Time
-	CompletedAt   *time.Time
+	ID            string     `json:"id"`
+	VehicleID     string     `json:"vehicle_id"`
+	FromStationID string     `json:"from_station_id"`
+	ToStationID   string     `json:"to_station_id"`
+	Status        string     `json:"status"` // "pending" | "in_progress" | "completed" | "cancelled"
+	Priority      int        `json:"priority"`
+	CreatedAt     time.Time  `json:"created_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 // VehicleStatus is the live fleet telemetry for one vehicle — separate from the vehicles
 // identity table because it's updated at high frequency (ADR-029).
 type VehicleStatus struct {
-	VehicleID      string
-	BatteryPct     *float64
-	Speed          *float64
-	PositionLat    *float64
-	PositionLon    *float64
-	PositionZoneID *string
-	AutonomyMode   string // "autonomous" | "teleoperated" | "manual"
-	CurrentTaskID  *string
-	UpdatedAt      time.Time
+	VehicleID      string    `json:"vehicle_id"`
+	BatteryPct     *float64  `json:"battery_pct,omitempty"`
+	Speed          *float64  `json:"speed,omitempty"`
+	PositionLat    *float64  `json:"position_lat,omitempty"`
+	PositionLon    *float64  `json:"position_lon,omitempty"`
+	PositionZoneID *string   `json:"position_zone_id,omitempty"`
+	AutonomyMode   string    `json:"autonomy_mode"` // "autonomous" | "teleoperated" | "manual"
+	CurrentTaskID  *string   `json:"current_task_id,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Alert is a fleet-service-generated or vehicle-initiated notification (ADR-028: two sources,
 // same table/shape — threshold-based from fleet-service, or forwarded verbatim from a
 // vehicle-initiated "needs intervention" event).
 type Alert struct {
-	ID             string
-	VehicleID      string
-	Severity       string // "info" | "warning" | "critical"
-	Message        string
-	CreatedAt      time.Time
-	AcknowledgedAt *time.Time
-	AcknowledgedBy *string
+	ID             string     `json:"id"`
+	VehicleID      string     `json:"vehicle_id"`
+	Severity       string     `json:"severity"` // "info" | "warning" | "critical"
+	Message        string     `json:"message"`
+	CreatedAt      time.Time  `json:"created_at"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy *string    `json:"acknowledged_by,omitempty"`
 }
 
 // PostgresFleetStore persists the Fleet domain in the shared `avoc` Postgres database
@@ -167,6 +167,22 @@ func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 		return nil, fmt.Errorf("fleetservice: create schema: %w", err)
 	}
 	return &PostgresFleetStore{db: db}, nil
+}
+
+// EnsureVehicleExists auto-registers a bare vehicle identity row (id + a display_name defaulted
+// to id) the first time fleet-service sees a vehicle — mirroring control-server's own
+// "Auto-Register bei erstem WS-Connect" pattern (ADR-029), but for vehicles that only ever speak
+// MQTT and never establish a WS connection to control-server. ON CONFLICT DO NOTHING: an admin
+// (or control-server) may have already set a friendlier display_name, which this must not clobber.
+func (s *PostgresFleetStore) EnsureVehicleExists(id string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO vehicles (id, display_name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("fleetservice: ensure vehicle exists: %w", err)
+	}
+	return nil
 }
 
 // SetVehicleType sets the fleet-specific vehicle_type column on the shared vehicles table
@@ -316,6 +332,54 @@ func (s *PostgresFleetStore) ListVehicleStatus() ([]VehicleStatus, error) {
 		statuses = append(statuses, vs)
 	}
 	return statuses, rows.Err()
+}
+
+// FleetVehicle is the combined view for the Dashboard's Flottenübersicht (AP2) — vehicle
+// identity (id/display_name/vehicle_type, owned by control-server/fleet-service respectively,
+// ADR-029) joined with live status. A vehicle that has never reported status yet (no
+// vehicle_status row) still appears, with all status fields nil — LEFT JOIN, not INNER.
+type FleetVehicle struct {
+	ID              string     `json:"id"`
+	DisplayName     string     `json:"display_name"`
+	VehicleType     *string    `json:"vehicle_type,omitempty"`
+	BatteryPct      *float64   `json:"battery_pct,omitempty"`
+	Speed           *float64   `json:"speed,omitempty"`
+	PositionLat     *float64   `json:"position_lat,omitempty"`
+	PositionLon     *float64   `json:"position_lon,omitempty"`
+	PositionZoneID  *string    `json:"position_zone_id,omitempty"`
+	AutonomyMode    *string    `json:"autonomy_mode,omitempty"`
+	CurrentTaskID   *string    `json:"current_task_id,omitempty"`
+	StatusUpdatedAt *time.Time `json:"status_updated_at,omitempty"`
+}
+
+// ListVehiclesWithStatus is fleet-service's primary read for the Web-Dashboard Flottenübersicht
+// (AP2) — joins the shared vehicles table (control-server's `online` is deliberately not
+// included here: it's live-computed in control-server's process, not persisted, ADR-022/029;
+// the frontend combines both services' data client-side per ADR-029).
+func (s *PostgresFleetStore) ListVehiclesWithStatus() ([]FleetVehicle, error) {
+	rows, err := s.db.Query(`
+		SELECT v.id, v.display_name, v.vehicle_type,
+		       vs.battery_pct, vs.speed, vs.position_lat, vs.position_lon,
+		       vs.position_zone_id, vs.autonomy_mode, vs.current_task_id, vs.updated_at
+		FROM vehicles v
+		LEFT JOIN vehicle_status vs ON vs.vehicle_id = v.id
+		ORDER BY v.created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("fleetservice: list vehicles with status: %w", err)
+	}
+	defer rows.Close()
+
+	var vehicles []FleetVehicle
+	for rows.Next() {
+		var v FleetVehicle
+		if err := rows.Scan(&v.ID, &v.DisplayName, &v.VehicleType,
+			&v.BatteryPct, &v.Speed, &v.PositionLat, &v.PositionLon,
+			&v.PositionZoneID, &v.AutonomyMode, &v.CurrentTaskID, &v.StatusUpdatedAt); err != nil {
+			return nil, err
+		}
+		vehicles = append(vehicles, v)
+	}
+	return vehicles, rows.Err()
 }
 
 // CreateAlert inserts either a threshold-based (fleet-service-generated) or vehicle-initiated

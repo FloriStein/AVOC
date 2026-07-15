@@ -38,11 +38,11 @@ type VehicleAlertEvent struct {
 // TaskAssignment is dispatched to a vehicle when an operator or fleet-service assigns it a new
 // route between two stations — outbound direction (Leitstelle -> vehicle).
 type TaskAssignment struct {
-	TaskID        string
-	VehicleID     string
-	FromStationID string
-	ToStationID   string
-	Priority      int
+	TaskID        string `json:"task_id"`
+	VehicleID     string `json:"vehicle_id"`
+	FromStationID string `json:"from_station_id"`
+	ToStationID   string `json:"to_station_id"`
+	Priority      int    `json:"priority"`
 }
 
 // FleetGateway is the abstraction boundary described in ADR-027. Implementations: MockGateway

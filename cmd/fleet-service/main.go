@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 
+	"avoc/internal/fleetgateway"
 	"avoc/internal/fleetservice"
 	pkgdb "avoc/pkg/db"
 	"avoc/pkg/logger"
@@ -13,14 +14,16 @@ import (
 var log = logger.New("fleet-service")
 
 func main() {
-	port := os.Getenv("FLEET_PORT")
-	if port == "" {
-		port = "8085"
-	}
+	port := envOr("FLEET_PORT", "8085")
+	mqttBroker := envOr("MQTT_BROKER", "mosquitto:1883")
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL environment variable is required")
+	}
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
 	}
 
 	db, err := pkgdb.Open(databaseURL)
@@ -44,17 +47,94 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to initialize fleet store", "error", err)
 	}
-	_ = store // REST API wiring (GET /fleet/vehicles etc.) is FLEET-05
+
+	// MQTTGateway is the concrete FleetGateway realization (FLEET-04/05) — same Mosquitto broker
+	// vehicle-mock's fleet simulation publishes to. Retried like pkgdb.WaitForReady: mosquitto
+	// and fleet-service have no depends_on between them either.
+	gw, err := connectGatewayWithRetry(mqttBroker)
+	if err != nil {
+		log.Fatal("failed to connect to MQTT broker", "broker", mqttBroker, "error", err)
+	}
+	defer gw.Close()
+
+	gw.SubscribeVehicleStatus(func(e fleetgateway.VehicleStatusEvent) {
+		// Fleet vehicles never establish a WS connection to control-server, so they never hit
+		// its "Auto-Register bei erstem WS-Connect" path (ADR-029) — without this, every status
+		// event for a not-yet-provisioned vehicle silently fails the FK constraint below.
+		if err := store.EnsureVehicleExists(e.VehicleID); err != nil {
+			log.Warn("failed to auto-register vehicle", "vehicle_id", e.VehicleID, "error", err)
+			return
+		}
+		err := store.UpsertVehicleStatus(fleetservice.VehicleStatus{
+			VehicleID:      e.VehicleID,
+			BatteryPct:     e.BatteryPct,
+			Speed:          e.Speed,
+			PositionLat:    e.PositionLat,
+			PositionLon:    e.PositionLon,
+			PositionZoneID: e.PositionZoneID,
+			AutonomyMode:   e.AutonomyMode,
+			CurrentTaskID:  e.CurrentTaskID,
+		})
+		if err != nil {
+			log.Warn("failed to persist vehicle status", "vehicle_id", e.VehicleID, "error", err)
+		}
+	})
+	gw.SubscribeVehicleAlerts(func(e fleetgateway.VehicleAlertEvent) {
+		// Same FK gap as SubscribeVehicleStatus above — a vehicle-initiated alert can in
+		// principle arrive before that vehicle's first status event.
+		if err := store.EnsureVehicleExists(e.VehicleID); err != nil {
+			log.Warn("failed to auto-register vehicle", "vehicle_id", e.VehicleID, "error", err)
+			return
+		}
+		_, err := store.CreateAlert(fleetservice.Alert{
+			VehicleID: e.VehicleID,
+			Severity:  e.Severity,
+			Message:   e.Message,
+		})
+		if err != nil {
+			log.Warn("failed to persist vehicle alert", "vehicle_id", e.VehicleID, "error", err)
+		}
+	})
+
+	handler := fleetservice.NewHandler(jwtSecret, store, gw)
 
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "fleet-service"})
-	})
+	mux.HandleFunc("GET /health", handler.Health)
+	mux.HandleFunc("GET /fleet/vehicles", handler.RequireAuth(handler.ListVehicles))
+	mux.HandleFunc("GET /fleet/zones", handler.RequireAuth(handler.ListZones))
+	mux.HandleFunc("POST /fleet/zones", handler.RequireAuth(handler.CreateZone))
+	mux.HandleFunc("GET /fleet/stations", handler.RequireAuth(handler.ListStations))
+	mux.HandleFunc("POST /fleet/stations", handler.RequireAuth(handler.CreateStation))
+	mux.HandleFunc("GET /fleet/tasks", handler.RequireAuth(handler.ListTasks))
+	mux.HandleFunc("POST /fleet/tasks", handler.RequireAuth(handler.CreateTask))
+	mux.HandleFunc("GET /fleet/alerts", handler.RequireAuth(handler.ListAlerts))
+	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", handler.RequireAuth(handler.AcknowledgeAlert))
 
 	log.Info("Fleet Service starting", "port", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal("Fleet Service failed", "error", err)
 	}
+}
+
+// connectGatewayWithRetry mirrors pkgdb.WaitForReady's retry shape for the MQTT broker
+// dependency — mosquitto has no depends_on ordering guarantee relative to fleet-service either.
+func connectGatewayWithRetry(broker string) (*fleetgateway.MQTTGateway, error) {
+	var lastErr error
+	for i := 0; i < pkgdb.DefaultConnectRetries; i++ {
+		gw, err := fleetgateway.NewMQTTGateway("tcp://" + broker)
+		if err == nil {
+			return gw, nil
+		}
+		lastErr = err
+		log.Warn("MQTT broker not reachable yet, retrying", "broker", broker, "error", err)
+		time.Sleep(pkgdb.DefaultConnectRetryDelay)
+	}
+	return nil, lastErr
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

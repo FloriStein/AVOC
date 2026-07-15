@@ -130,6 +130,74 @@ func TestFleetserviceAndVehicleregistry_CoexistOnSharedTable(t *testing.T) {
 	}
 }
 
+// TestEnsureVehicleExists_UnblocksStatusForNeverConnectedVehicle is a regression test for a real
+// bug found via manual E2E verification (docker-compose dev stack, FLEET-05): a fleet vehicle
+// that only ever speaks MQTT (never establishes the WS connection control-server auto-registers
+// on, ADR-029) had every single status/alert event silently rejected by the vehicle_status FK
+// constraint — UpsertVehicleStatus for an unknown vehicle_id always failed. Fixed by having
+// fleet-service auto-register the bare identity itself before writing status/alerts.
+func TestEnsureVehicleExists_UnblocksStatusForNeverConnectedVehicle(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set — skipping Postgres integration test")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS vehicles (
+		id TEXT PRIMARY KEY, display_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+		t.Fatalf("create base vehicles table: %v", err)
+	}
+	store, err := fleetservice.NewPostgresFleetStore(db)
+	if err != nil {
+		t.Fatalf("NewPostgresFleetStore: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vehicle_status WHERE vehicle_id = 'itg-mqtt-only-vehicle'`)
+		db.Exec(`DELETE FROM vehicles WHERE id = 'itg-mqtt-only-vehicle'`)
+	})
+
+	// Before the fix, this UpsertVehicleStatus call fails with a FK violation because
+	// 'itg-mqtt-only-vehicle' has never been inserted into `vehicles` by anyone.
+	battery := 55.0
+	if err := store.UpsertVehicleStatus(fleetservice.VehicleStatus{VehicleID: "itg-mqtt-only-vehicle", BatteryPct: &battery, AutonomyMode: "autonomous"}); err == nil {
+		t.Fatal("expected FK violation before EnsureVehicleExists is called — test setup invalid if this passes")
+	}
+
+	if err := store.EnsureVehicleExists("itg-mqtt-only-vehicle"); err != nil {
+		t.Fatalf("EnsureVehicleExists: %v", err)
+	}
+	// Idempotent — a second call (e.g. from a later status event) must not error or clobber.
+	if err := store.EnsureVehicleExists("itg-mqtt-only-vehicle"); err != nil {
+		t.Fatalf("EnsureVehicleExists (second call): %v", err)
+	}
+
+	if err := store.UpsertVehicleStatus(fleetservice.VehicleStatus{VehicleID: "itg-mqtt-only-vehicle", BatteryPct: &battery, AutonomyMode: "autonomous"}); err != nil {
+		t.Fatalf("UpsertVehicleStatus after EnsureVehicleExists: %v", err)
+	}
+
+	vehicles, err := store.ListVehiclesWithStatus()
+	if err != nil {
+		t.Fatalf("ListVehiclesWithStatus: %v", err)
+	}
+	found := false
+	for _, v := range vehicles {
+		if v.ID == "itg-mqtt-only-vehicle" {
+			found = true
+			if v.BatteryPct == nil || *v.BatteryPct != 55.0 {
+				t.Fatalf("expected battery 55.0, got %+v", v)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("auto-registered vehicle not visible via ListVehiclesWithStatus")
+	}
+}
+
 // TestForeignKeyRestrict_ZoneInUseCannotBeDeleted verifies referential integrity is enforced at
 // the database level (ADR-029 doesn't specify cascade behaviour — RESTRICT is Postgres's
 // default and this test locks that in as the actual, tested behaviour rather than an assumption).
