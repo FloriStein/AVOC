@@ -171,3 +171,53 @@ export async function updateUserRole(token: string, id: number, role: string): P
   })
   if (!res.ok) throw new Error(`updateUserRole failed: ${res.status}`)
 }
+
+// ─── Fleet (fleet-service, ADR-027/028/029) ──────────────────────────────────
+// GET /fleet/vehicles: field-optionality mirrors internal/fleetservice/store.go's FleetVehicle
+// exactly — all `?` fields are Go pointers with `omitempty`, nil until the vehicle has ever
+// reported status (e.g. vehicle-001, the pre-existing Direct-Teleop vehicle, has none of these).
+
+export interface FleetVehicle {
+  id: string
+  display_name: string
+  vehicle_type?: 'lastenrad' | 'lastenzug'
+  battery_pct?: number
+  speed?: number
+  position_lat?: number
+  position_lon?: number
+  position_zone_id?: string
+  autonomy_mode?: 'autonomous' | 'teleoperated' | 'manual'
+  current_task_id?: string
+  status_updated_at?: string
+}
+
+export interface FleetAlert {
+  id: string
+  vehicle_id: string
+  severity: 'info' | 'warning' | 'critical'
+  message: string
+  created_at: string
+  acknowledged_at?: string
+  acknowledged_by?: string
+}
+
+export async function listFleetVehicles(token: string): Promise<FleetVehicle[]> {
+  const res = await fetch('/fleet/vehicles', { headers: { 'Authorization': `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`listFleetVehicles failed: ${res.status}`)
+  return res.json()
+}
+
+export async function listFleetAlerts(token: string): Promise<FleetAlert[]> {
+  const res = await fetch('/fleet/alerts', { headers: { 'Authorization': `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`listFleetAlerts failed: ${res.status}`)
+  return res.json()
+}
+
+export async function acknowledgeFleetAlert(token: string, id: string, acknowledgedBy: string): Promise<void> {
+  const res = await fetch(`/fleet/alerts/${id}/acknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ acknowledged_by: acknowledgedBy }),
+  })
+  if (!res.ok) throw new Error(`acknowledgeFleetAlert failed: ${res.status}`)
+}

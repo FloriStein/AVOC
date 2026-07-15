@@ -15,6 +15,7 @@ services:
       - "host.docker.internal:host-gateway"   # mediamtx läuft mit network_mode: host — kein DNS-Eintrag auf avoc-net
     depends_on:
       - control-server
+      - fleet-service
     networks:
       - avoc-net
 

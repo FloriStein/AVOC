@@ -80,3 +80,29 @@ einem komplett neuen Zuweisungsmodell (z. B. Queue/Claim-System), das explizit n
 - `ADR-009`/`ADR-011`/`requirements.md` müssen um den Geltungsbereichs-Hinweis ergänzt werden (Dokumentation, keine ADRs überschreiben — Verweis auf dieses ADR ergänzen)
 - Der Handshake-basierte Autonomie-Rückgabe (statt einfachem Session-Ende) bleibt offen — Risiko: Fahrzeug könnte Kontrolle "zurückerhalten", bevor es tatsächlich sicher ist, dies zu verarbeiten. Für den aktuellen Stand akzeptiert, siehe `tasks/backlog.md`
 - Notfall-Alert-Zustellung hängt jetzt vollständig an der noch unspezifizierten FleetGateway-Schnittstelle (`ADR-027`) — kein Notfall-Trigger ohne diese Schnittstelle nutzbar, bis der AP1-Workshop stattgefunden hat
+
+---
+
+## Update (2026-07-15) — Proaktive Übernahme zusätzlich zum Notfall-Trigger
+
+Grill-Me zum Fleet-Overview-Dashboard (Sprint 22) hat den Notfall-Trigger-Fluss oben um einen
+zweiten, gleichberechtigten Auslöser ergänzt: ein Operator darf ein Fahrzeug auch **proaktiv**
+übernehmen — nicht nur als Reaktion auf einen zugestellten Alert —, solange das Fahrzeug aktuell
+**keinen aktiven Operator** hat. Der Alert-Fluss aus der ursprünglichen Entscheidung bleibt
+unverändert das primäre Signal, das einem Operator anzeigt, *welches* Fahrzeug Aufmerksamkeit
+braucht; die proaktive Übernahme ist eine zusätzliche, alertunabhängige Handlungsmöglichkeit
+(z. B. wenn ein Operator im Fleet Overview ohnehin sieht, dass ein Fahrzeug in einer Zone
+feststeckt, ohne dass die Schwellenwert-/Vehicle-Alert-Logik das bereits als Alert erkannt hat).
+
+**Konkretisierung:** "kein aktiver Operator" heißt hier — wie im Rest dieses ADRs — bezogen auf
+den Geltungsbereich der 4-Layer State Machine des Control Servers: der `OPERATOR`-Layer für dieses
+Fahrzeug steht auf `NO_OPERATOR` (kein laufender `session/start`). Der bestehende `session/start`-
+Fluss (unverändert, kein neues Zuweisungsmodell) läuft in beiden Fällen identisch — nur der
+Auslöser unterscheidet sich (Alert-Klick vs. direkter "Teleoperate"-Klick im Fleet Overview auf ein
+Fahrzeug ohne Operator). Die bestehende Ein-Active-Operator-pro-Fahrzeug-Regel gilt unverändert:
+ein Fahrzeug, das bereits einen aktiven Operator hat, kann nicht zusätzlich proaktiv übernommen
+werden (der Button ist für dieses Fahrzeug in diesem Fall nicht verfügbar).
+
+Keine Änderung an der Safety-Architektur, an `session/start`/`endSession()` oder an der
+Handshake-Rückstellung (weiterhin `tasks/backlog.md`) — reine Erweiterung, *wie* eine Session
+ausgelöst werden darf, nicht *was* während einer Session gilt.

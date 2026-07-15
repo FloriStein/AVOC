@@ -3,6 +3,7 @@ import { useSystemState } from "@/hooks/useSystemState";
 import { useSession } from "@/hooks/useSession";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import { useVehicleAck } from "@/hooks/useVehicleAck";
+import { useActiveSessions } from "@/hooks/useActiveSessions";
 import { SafeModeOverlay } from "@/components/SafeModeOverlay";
 import { SafetyPanel } from "@/components/SafetyPanel";
 import { ConnectionPanel } from "@/components/ConnectionPanel";
@@ -12,7 +13,8 @@ import { InputIndicatorPanel } from "@/components/InputIndicatorPanel";
 import { StreamSenderPanel } from "@/components/StreamSenderPanel";
 import LoginPanel from "@/components/LoginPanel";
 import UserManagementPanel from "@/components/UserManagementPanel";
-import { parseTokenRole, listSessions, ActiveSession } from "@/lib/api-client";
+import { FleetOverview } from "@/components/FleetOverview";
+import { parseTokenRole } from "@/lib/api-client";
 import { SessionState } from "@/hooks/useSession";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ function AppContent({ session }: { session: SessionState }) {
   const [showSender, setShowSender] = useState(false);
   const [videoLatency, setVideoLatency] = useState<number | null>(null);
   const [showUserMgmt, setShowUserMgmt] = useState(false);
-  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+  const { activeSessions, hasPolled: hasPolledSessions } = useActiveSessions(session.token);
 
   const isConnected = state.system === "CONNECTED" || state.system === "DEGRADED";
   const isSafeMode = state.system === "SAFE_MODE";
@@ -64,20 +66,6 @@ function AppContent({ session }: { session: SessionState }) {
   const isAdmin = tokenRole === "ADMIN";
   const isObserver = tokenRole === "OBSERVER";
   const canControl = !isObserver && session.role !== 'OBSERVER';
-
-  const hasPolledSessionsRef = useRef(false);
-
-  useEffect(() => {
-    const token = session.token
-    if (!token) return
-    const poll = async () => {
-      try { setActiveSessions((await listSessions(token)) ?? []) } catch { /* ignore */ }
-      finally { hasPolledSessionsRef.current = true }
-    }
-    poll()
-    const id = setInterval(poll, 3000)
-    return () => clearInterval(id)
-  }, [session.token])
 
   // After page reload during an active session: the frontend lost its local context
   // (sessionId/vehicleId) but the server still has the session. Find it via the own
@@ -93,11 +81,11 @@ function AppContent({ session }: { session: SessionState }) {
   const restoreAttemptedRef = useRef(false);
   useEffect(() => {
     if (localSessionId || !operatorId) return
-    if (restoreAttemptedRef.current || !hasPolledSessionsRef.current) return
+    if (restoreAttemptedRef.current || !hasPolledSessions) return
     restoreAttemptedRef.current = true
     const mine = activeSessions.find((s) => s.operator_id === operatorId)
     if (mine) restoreFromServerState(mine.session_id, mine.vehicle_id, mine.role)
-  }, [activeSessions, localSessionId, operatorId, restoreFromServerState])
+  }, [activeSessions, localSessionId, operatorId, restoreFromServerState, hasPolledSessions])
 
   // Multiple vehicles can each have their own ACTIVE_OPERATOR at once (ADR-026) —
   // the admin panel must lock all of them, not just one.
@@ -226,11 +214,20 @@ function AppContent({ session }: { session: SessionState }) {
 
 // App only manages the session token. No data-fetching hooks run here,
 // so the login screen is completely idle — no backend polling before login.
+//
+// Three states, no router needed (only 2 post-login views exist): no token → LoginPanel;
+// token but no active session → FleetOverview (the Sprint 22 landing view — an operator picks a
+// vehicle to teleoperate/observe from here); sessionId set (session.startSession() resolved) →
+// the existing teleop cockpit (AppContent), unchanged.
 export default function App() {
   const session = useSession();
 
   if (!session.token) {
     return <LoginPanel onLogin={session.connect} />;
+  }
+
+  if (!session.sessionId) {
+    return <FleetOverview session={session} />;
   }
 
   return <AppContent session={session} />;
