@@ -63,6 +63,11 @@ func main() {
 	// alerts) and the REST handlers (task creation, alert acknowledgement).
 	hub := fleetservice.NewHub()
 
+	// alertEngine raises threshold-based alerts (FLEET-07, e.g. low battery) from a vehicle's
+	// own reported status — separate from vehicle-initiated alerts below, which a vehicle
+	// detects and reports about itself (ADR-028: two sources, one `alerts` table/shape).
+	alertEngine := fleetservice.NewAlertEngine()
+
 	gw.SubscribeVehicleStatus(func(e fleetgateway.VehicleStatusEvent) {
 		// Fleet vehicles never establish a WS connection to control-server, so they never hit
 		// its "Auto-Register bei erstem WS-Connect" path (ADR-029) — without this, every status
@@ -87,6 +92,15 @@ func main() {
 		}
 		status.UpdatedAt = time.Now()
 		hub.Broadcast("vehicle_status", status)
+
+		if alert := alertEngine.Evaluate(status); alert != nil {
+			created, err := store.CreateAlert(*alert)
+			if err != nil {
+				log.Warn("failed to persist threshold alert", "vehicle_id", e.VehicleID, "error", err)
+				return
+			}
+			hub.Broadcast("alert_created", created)
+		}
 	})
 	gw.SubscribeVehicleAlerts(func(e fleetgateway.VehicleAlertEvent) {
 		// Same FK gap as SubscribeVehicleStatus above — a vehicle-initiated alert can in

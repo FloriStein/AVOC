@@ -357,3 +357,71 @@ func TestIntegration_FleetService_WSBroadcast_DeliversAlertCreatedAndAcknowledge
 	assert.Equal(t, "itg-ws-operator", acked["acknowledged_by"])
 	assert.NotEmpty(t, acked["acknowledged_at"])
 }
+
+// TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert is the real
+// end-to-end proof for FLEET-07: a status event with a critically low battery, published by an
+// independent MQTT client (simulating a real vehicle, not going through vehicle-mock's own
+// simulation), must make fleet-service raise a threshold-based alert on its own — distinct from
+// the vehicle-initiated alert path already covered by
+// TestIntegration_FleetService_WSBroadcast_DeliversAlertCreatedAndAcknowledged (which publishes
+// directly to the alert topic, bypassing AlertEngine entirely). A second low-battery tick for the
+// same vehicle must not raise a second alert (AlertEngine's repeat-suppression, FLEET-07).
+func TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert(t *testing.T) {
+	token := loginAdmin(t)
+	const vehicleID = "itg-alertengine-vehicle"
+
+	conn, err := dialWS(t, fleetWSURL(token))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	mqttClient := mqtt.NewClient(mqtt.NewClientOptions().
+		AddBroker(mqttTestBroker).
+		SetClientID("integration-test-fleet-alertengine-pub").
+		SetConnectTimeout(5 * time.Second))
+	connToken := mqttClient.Connect()
+	require.True(t, connToken.WaitTimeout(5*time.Second), "MQTT connect timed out")
+	require.NoError(t, connToken.Error(), "MQTT connect failed")
+	defer mqttClient.Disconnect(250)
+
+	publishBattery := func(pct float64) {
+		t.Helper()
+		battery := pct
+		payload, err := json.Marshal(fleetgateway.VehicleStatusEvent{
+			VehicleID: vehicleID, BatteryPct: &battery, AutonomyMode: "autonomous", Timestamp: time.Now(),
+		})
+		require.NoError(t, err)
+		pubToken := mqttClient.Publish(fleetgateway.StatusTopic(vehicleID), 1, false, payload)
+		require.True(t, pubToken.WaitTimeout(5*time.Second), "MQTT publish timed out")
+		require.NoError(t, pubToken.Error(), "MQTT publish failed")
+	}
+
+	publishBattery(5.0)
+
+	alert := readWSEventOfType(t, conn, "alert_created", 15*time.Second)
+	assert.Equal(t, vehicleID, alert["vehicle_id"])
+	assert.Equal(t, "critical", alert["severity"])
+	assert.Contains(t, alert["message"], "kritisch")
+
+	alerts := getJSONListAuth(t, fleetURL+"/fleet/alerts", token)
+	found := 0
+	for _, a := range alerts {
+		if am, ok := a.(map[string]any); ok && am["vehicle_id"] == vehicleID {
+			found++
+		}
+	}
+	assert.Equal(t, 1, found, "expected exactly one persisted alert for %s", vehicleID)
+
+	// A second tick at (an even lower) still-critical battery must not raise a second alert —
+	// AlertEngine only alerts on crossing into a worse tier, not on every status update.
+	publishBattery(3.0)
+	time.Sleep(1 * time.Second)
+
+	alertsAfter := getJSONListAuth(t, fleetURL+"/fleet/alerts", token)
+	foundAfter := 0
+	for _, a := range alertsAfter {
+		if am, ok := a.(map[string]any); ok && am["vehicle_id"] == vehicleID {
+			foundAfter++
+		}
+	}
+	assert.Equal(t, 1, foundAfter, "expected no repeat alert for a second low-battery tick")
+}
