@@ -5,7 +5,7 @@ Ziel: Das in `ADR-027/028/029` entworfene Fleet-Backend real aufsetzen, damit AP
 Bewusst kein Frontend-Task in diesem Sprint — Backend-Fundament zuerst, Dashboard-UI folgt in
 Sprint 22.
 
-Datum: 2026-07-14 | **Status: In Bearbeitung 🔄**
+Datum: 2026-07-14 | **Status: Alle Tasks ✅ (Merge der Branches `feature/fleet-service-foundation` und `feature/fleet-service-foundation-fleet08` steht noch aus)**
 Vorgänger: Sprint 20 ✅
 Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 
@@ -22,7 +22,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | ✅ |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | ✅ |
 | FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | ✅ |
-| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔲 |
+| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | ✅ |
 
 **Abhängigkeitspfad:** FLEET-01 → FLEET-02 → FLEET-03 → FLEET-04 → FLEET-05 → FLEET-06/FLEET-07 (parallel möglich) → FLEET-08
 
@@ -383,6 +383,108 @@ zu unit-testen (dafür sorgen die Integrationstests für den Erfolgsfall); ein D
 diesem Moment zu erzwingen wäre nur mit Aufwand deutlich über das reguläre Test-Setup hinaus
 möglich und stand in keinem Verhältnis zum Risiko (identisches Verhalten wie der bereits
 akzeptierte Nachbar-Pfad).
+
+**FLEET-08 — Unit-Tests fleet-service: Lückenanalyse Schema/API-Handler ✅ (Alert-Engine-Teil offen)**
+Gegenstand war eine Lückenanalyse, kein Neuschreiben — der bestehende Teststand
+(`store_test.go`, `handler_test.go`, `broadcast_test.go`, `edgecases_test.go`, `integration_test.go`,
+`lifecycle_test.go`, insgesamt bereits ~30 Testfunktionen aus FLEET-01/02/05/06) deckte Schema/CRUD/
+FK-Constraints/Auth/CRUD-über-HTTP bereits weitgehend ab. Style-Hinweis aus der Aufgabenstellung
+("`testing`+`testify`") bewusst nicht befolgt: die bestehenden Tests in `internal/fleetservice`
+nutzen durchgängig reine `testing`-Stdlib (`t.Fatalf`), nicht `testify` — neue Tests bleiben
+konsistent zum bereits etablierten Paketstil statt eine zweite Test-Bibliothek einzuführen.
+
+Sechs neue Tests geschlossen die von der Aufgabenstellung benannten Kandidaten:
+- `TestListMethods_DBConnectionClosed_ReturnsError` (`edgecases_test.go`) — Fehlerpfad aller sechs
+  Store-Lesemethoden (`ListZones`/`ListStations`/`ListTasks`/`ListAlerts`/`ListVehicleStatus`/
+  `ListVehiclesWithStatus`) bei einer geschlossenen DB-Verbindung; bisher war nur der Erfolgsfall
+  getestet. Bewusst per `db.Close()` reproduziert statt z.B. eine Tabelle zu droppen — Letzteres
+  hätte die geteilte Dev-Postgres-Instanz beeinträchtigt, an der die parallele FLEET-07-Session
+  gerade arbeitet.
+- `TestCreateTask_UnknownVehicleID_Returns500` / `TestCreateTask_UnknownStationID_Returns500`
+  (`handler_test.go`) — `edgecases_test.go` bewies die FK-Verletzung bisher nur auf Store-Ebene;
+  jetzt auch über den HTTP-Handler bestätigt: aktuelles Ist-Verhalten ist ein generischer 500
+  ("store error"), wie bei `CreateStation`/unbekannter `zone_id` (FLEET-05). Bewusst kein Fix auf
+  aussagekräftigere 400/404 — das ist die gleiche, bereits in FLEET-05 getroffene
+  Design-Entscheidung (Scope klein halten), hier nur zusätzlich für `CreateTask` als Ist-Verhalten
+  festgeschrieben statt nur für `CreateStation`.
+- `TestAcknowledgeAlert_AlreadyAcknowledged_SecondCallSucceedsAndOverwrites` (`handler_test.go`) —
+  dokumentiert das bisher unverifizierte Ist-Verhalten: ein zweites `AcknowledgeAlert` auf denselben
+  Alert wird nicht abgelehnt, sondern überschreibt `acknowledged_by`/`acknowledged_at` mit dem
+  Wert des zweiten Aufrufs (die UPDATE-Query matched über `id`, unabhängig vom bisherigen
+  Quittierungsstatus). Kein Bug — es gibt aktuell keine Anforderung für
+  Idempotenzschutz/First-Writer-Wins —, aber bisher nur implizit durchs Code, nie durch einen Test
+  belegt.
+
+Zwei von der Aufgabenstellung genannte Kandidaten wurden geprüft und bewusst **nicht** in einen
+neuen Test überführt:
+- **nil vs. leeres Array bei `List*`:** Code-Inspektion bestätigt, dass alle `List*`-Methoden
+  (`store.go`) das Muster `var x []T` ohne Vorinitialisierung nutzen — bei null Zeilen bleibt die
+  Slice `nil`, was `encoding/json` als `null` statt `[]` serialisiert (Standardverhalten von Go,
+  kein Bug in diesem Paket). Nicht mit einem eigenen Test gegen die echte Dev-DB verifiziert: keine
+  der fünf Fleet-Tabellen ist in der geteilten Dev-Postgres-Instanz je zuverlässig leer (andere
+  Tests/`vehicle-mock`s Simulationsloop schreiben kontinuierlich), und ein künstliches Leeren
+  (`DELETE`/`TRUNCATE`) hätte die parallele FLEET-07-Session riskiert. **Für Sprint 22 (Dashboard-
+  Frontend) festgehalten:** `GET /fleet/zones` etc. können `null` statt `[]` liefern, wenn keine
+  Zeilen existieren — das Frontend darf sich nicht auf ein Array verlassen, ohne das zu behandeln.
+- **main.go-Wiring (fehlendes `JWT_SECRET`/`DATABASE_URL`):** `cmd/fleet-service/main.go` beendet
+  den Prozess bei fehlenden Env-Vars über `log.Fatal` (→ `os.Exit`), was ohne Umbau von `main()` in
+  eine testbare Funktion (z.B. Extraktion der Konfigurationsvalidierung) nicht sinnvoll unit-testbar
+  ist — analog zur bestehenden Konvention in diesem Repo, `main()` nicht künstlich für Tests zu
+  verbiegen. Bewusste Lücke, hier dokumentiert statt stillschweigend ignoriert.
+
+6 neue Tests, 2x hintereinander gegen den echten laufenden Dev-Stack-Postgres verifiziert (zweiter
+Lauf `-count=1`, um Gos Test-Cache zu umgehen) — beide Male grün, keine Flakiness, keine
+Beeinträchtigung der geteilten Dev-DB (nur eigene, per `t.Cleanup` aufgeräumte Testdaten plus ein
+harmloses `db.Close()` auf einer eigenen Verbindung). `gofmt`/`go vet`/`go build` für das gesamte
+Repo sauber.
+
+**FLEET-08 — Fortsetzung Alert-Engine-Teil ✅ (nach Merge von FLEET-07)**
+Zum Zeitpunkt der obigen Schema/API-Handler-Runde war FLEET-07 noch nicht abgeschlossen (`git
+fetch` auf den GitLab-Remote war in dieser Umgebung nicht möglich, lokal auch in keinem
+Branch/Worktree sichtbar — daher der separate Branch `feature/fleet-service-foundation-fleet08`/
+Worktree `../controlcenter-aws-fleet08`). FLEET-07 wurde inzwischen fertiggestellt und per
+`git merge feature/fleet-service-foundation` in diesen Branch übernommen (Konflikt nur in
+`tasks/current-sprint.md`, inhaltlich aufgelöst — kein Konflikt in Code/Tests).
+
+Gegenstand dieser Runde war erneut eine Lückenanalyse, kein Neuschreiben — und die Analyse fiel
+diesmal kurz aus: FLEET-07 wurde bereits **unter dem neuen `CLAUDE.MD`-Abschnitt-17-Teststandard**
+umgesetzt (der Standard entstand während FLEET-07, siehe Commit `019d5a0`) und in einem eigenen
+Nachtrag (`4d85a03`) rückwirkend gegen dessen komplette Fallgruppen-Checkliste geprüft, bevor
+dieser FLEET-08-Teil überhaupt begann. `internal/fleetservice/alertengine_test.go` deckt bereits:
+Grenzwerte (0 %/100 %/negative Werte/exakte Schwellenwerte mit expliziter `<`-vs-`<=`-Semantik),
+Zustandsübergänge (Tier-Hysterese, direkter Sprung gesund→kritisch, Erholung, Flatter-Test an der
+Grenze), Wiederholungssperre/Idempotenz (mehrere Ticks in derselben Tier), Nebenläufigkeit
+(`-race`), und Isolation zwischen Fahrzeugen (inkl. leerer `VehicleID` als Sonderfall) — 20
+Testfunktionen insgesamt.
+
+Eigener Beitrag dieser Runde: **Verifikation statt Duplikation**. Den bereits gemergten
+Teststand (Schema/API-Handler-Tests aus der ersten FLEET-08-Runde + FLEET-07s Alert-Engine-Tests)
+als Ganzes gegenlaufen lassen, um sicherzustellen, dass beide unabhängig entstandenen
+Testerweiterungen nach dem Merge zusammen funktionieren:
+- `go test ./internal/fleetservice/...` gegen den echten Dev-Stack-Postgres: 2x grün (59
+  Testfunktionen/Subtests, keine Flakiness).
+- `go test ./internal/fleetservice/... -race -count=3` (nativ auf dem Host mit `CGO_ENABLED=1`,
+  nicht im Alpine-Container, da dort kein `cgo` verfügbar ist) für die nebenläufigkeitsrelevanten
+  Pakete (`AlertEngine`, `Hub`): 3x grün, keine Race-Funde.
+- Volle `make test-integration`-Suite (frisch gebauter Teststack, 25 Tests inkl.
+  `TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert`): grün. Die
+  3 übrig bleibenden Skips (`TestIntegration_SessionLifecycle_StartAndEnd` u.a.) sind vorbestehend
+  und dokumentiert erwartet ("WebSocket dial failed (expected in minimal test stack)") — keine
+  Fleet-bezogene Regression.
+- `gofmt`/`go vet`/`go build` für das gesamte Repo weiterhin sauber (die von `gofmt -l` gemeldeten
+  Dateien liegen alle außerhalb von `internal/fleetservice`/`cmd/fleet-service` und sind
+  vorbestehende Formatierungsabweichungen, nicht durch diese Aufgabe verursacht).
+
+Keine zusätzlichen Alert-Engine-Tests ergänzt — die Fallgruppen-Checkliste aus Abschnitt 17 war
+bei Übernahme bereits vollständig abgedeckt, ein weiterer Test hätte nur eine bestehende
+Fallgruppe dupliziert. Der eine bewusst offene Fehlerpfad (`store.CreateAlert` schlägt nach
+`Evaluate` fehl) war bereits in FLEET-07s eigenem Nachtrag (`4d85a03`) als Lücke dokumentiert und
+wird hier nicht erneut aufgegriffen — Begründung dort deckungsgleich mit der Projektkonvention zu
+`main.go`-Verdrahtung.
+
+Damit ist FLEET-08 vollständig: Schema (FLEET-01), API-Handler (FLEET-05/06) und Alert-Engine
+(FLEET-07) haben je eine dedizierte, gegen echte Infrastruktur verifizierte Testabdeckung, dokumentierte bewusste Lücken statt stillschweigender Annahmen, und sind nach dem Merge gemeinsam
+grün.
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint. `GET /fleet/ws` ist ebenfalls noch nicht über `nginx.dev.conf` geroutet — wie schon die `/fleet/*`-REST-Routen aus FLEET-05 (dort ebenfalls nicht ergänzt) bewusst zurückgestellt, bis das Dashboard-Frontend in Sprint 22 tatsächlich einen Browser-Client dagegen braucht. Weitere Schwellenwert-Regeln (z. B. Geschwindigkeit, Zonenverlassen) sind nicht Teil von FLEET-07 — die Aufgabenbeschreibung nennt explizit nur Batterie als Beispiel; `AlertEngine` ist aber bewusst so strukturiert (eigener Tier-Mechanismus pro Regel-Dimension denkbar), dass weitere Regeln später ergänzt werden können, ohne den Aufrufer in `main.go` umzubauen.
 

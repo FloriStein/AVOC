@@ -203,3 +203,47 @@ func TestEdgeCases_NullableFieldsAndUnicode(t *testing.T) {
 		}
 	})
 }
+
+// TestListMethods_DBConnectionClosed_ReturnsError covers the error branch of every List* method
+// — until now only the success path was ever exercised (rows.Scan and the happy loop), never a
+// real query failure. Closing the *sql.DB out from under the store deterministically reproduces
+// a query-level error ("sql: database is closed") without touching any shared table data, unlike
+// e.g. dropping a table, which would affect the parallel session working on FLEET-07 against the
+// same dev database.
+func TestListMethods_DBConnectionClosed_ReturnsError(t *testing.T) {
+	db, store := openTestStore(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	t.Run("ListZones", func(t *testing.T) {
+		if _, err := store.ListZones(); err == nil {
+			t.Fatal("expected error from ListZones on closed connection, got nil")
+		}
+	})
+	t.Run("ListStations", func(t *testing.T) {
+		if _, err := store.ListStations(); err == nil {
+			t.Fatal("expected error from ListStations on closed connection, got nil")
+		}
+	})
+	t.Run("ListTasks", func(t *testing.T) {
+		if _, err := store.ListTasks(); err == nil {
+			t.Fatal("expected error from ListTasks on closed connection, got nil")
+		}
+	})
+	t.Run("ListAlerts", func(t *testing.T) {
+		if _, err := store.ListAlerts(); err == nil {
+			t.Fatal("expected error from ListAlerts on closed connection, got nil")
+		}
+	})
+	t.Run("ListVehicleStatus", func(t *testing.T) {
+		if _, err := store.ListVehicleStatus(); err == nil {
+			t.Fatal("expected error from ListVehicleStatus on closed connection, got nil")
+		}
+	})
+	t.Run("ListVehiclesWithStatus", func(t *testing.T) {
+		if _, err := store.ListVehiclesWithStatus(); err == nil {
+			t.Fatal("expected error from ListVehiclesWithStatus on closed connection, got nil")
+		}
+	})
+}
