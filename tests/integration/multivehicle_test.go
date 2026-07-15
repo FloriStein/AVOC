@@ -150,3 +150,91 @@ func TestIntegration_MultiVehicle_UnknownVehicleState_IsFreshIdle(t *testing.T) 
 	assert.Equal(t, "IDLE", state["system"])
 	assert.Equal(t, "NO_OPERATOR", state["operator"])
 }
+
+// 5. POST /session/end WITHOUT session_id (the legacy fleet-wide path) must reset
+// EVERY active vehicle to IDLE, not just one resolved via
+// sessionMgr.GetCurrentSession(). Found live during manual two-operator testing:
+// the old code reset only one vehicle's Machine before EndSession() wiped every
+// session's bookkeeping — any other active vehicle was left stranded in its last
+// state (observed: SAFE_MODE) with no session left to reset it, recoverable only
+// by restarting the process.
+func TestIntegration_MultiVehicle_LegacySessionEnd_ResetsAllActiveVehicles(t *testing.T) {
+	token := loginAdmin(t)
+	conn1 := connectVehicle(t, "vehicle-mv-legacyend-1")
+	defer conn1.Close()
+	conn2 := connectVehicle(t, "vehicle-mv-legacyend-2")
+	defer conn2.Close()
+
+	resp1 := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": "vehicle-mv-legacyend-1", "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
+	})
+	resp1.Body.Close()
+	resp2 := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": "vehicle-mv-legacyend-2", "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
+	})
+	resp2.Body.Close()
+
+	require.Equal(t, "CONNECTED", vehicleState(t, "vehicle-mv-legacyend-1")["system"])
+	require.Equal(t, "CONNECTED", vehicleState(t, "vehicle-mv-legacyend-2")["system"])
+
+	// Legacy path: no session_id in the body.
+	endResp := postJSONAuth(t, controlURL+"/session/end", token, nil)
+	endResp.Body.Close()
+	assert.Equal(t, 204, endResp.StatusCode)
+
+	state1 := vehicleState(t, "vehicle-mv-legacyend-1")
+	state2 := vehicleState(t, "vehicle-mv-legacyend-2")
+	assert.Equal(t, "IDLE", state1["system"], "vehicle-mv-legacyend-1 must be reset to IDLE")
+	assert.Equal(t, "IDLE", state2["system"], "vehicle-mv-legacyend-2 must also be reset to IDLE, not stranded")
+}
+
+// 6. POST /media/event scoped to vehicle_id — regression test for a bug where
+// this endpoint resolved "the current session" via sessionMgr.GetCurrentSession()
+// (an arbitrary ACTIVE_OPERATOR session, not necessarily the reporting vehicle's
+// own) instead of the vehicle_id in the request. With two vehicles active, a
+// MEDIA_FAILED report for vehicle-1 must degrade only vehicle-1.
+func TestIntegration_MultiVehicle_MediaEvent_OnlyAffectsTargetVehicle(t *testing.T) {
+	token := loginAdmin(t)
+	conn1 := connectVehicle(t, "vehicle-mv-media-1")
+	defer conn1.Close()
+	conn2 := connectVehicle(t, "vehicle-mv-media-2")
+	defer conn2.Close()
+	startVehicleSession(t, token, "vehicle-mv-media-1")
+	startVehicleSession(t, token, "vehicle-mv-media-2")
+
+	resp := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{
+		"vehicle_id": "vehicle-mv-media-1", "state": "MEDIA_FAILED",
+	})
+	resp.Body.Close()
+	assert.Equal(t, 202, resp.StatusCode)
+
+	state1 := vehicleState(t, "vehicle-mv-media-1")
+	state2 := vehicleState(t, "vehicle-mv-media-2")
+	assert.Equal(t, "DEGRADED", state1["system"], "vehicle-mv-media-1 must degrade on its own MEDIA_FAILED")
+	assert.Equal(t, "CONNECTED", state2["system"], "vehicle-mv-media-2 must be unaffected by vehicle-1's media event")
+}
+
+// 7. POST /internal/media/auth (MediaMTX's WHEP-read auth hook) scoped to the
+// requested vehicle path — regression test for a bug where the "read" branch
+// only checked sessionMgr.GetCurrentSession() ("does ANY active session exist
+// anywhere"), which would have granted WHEP video-read access to a vehicle the
+// caller has no session for at all, once a second vehicle was active elsewhere.
+func TestIntegration_MultiVehicle_WHEPAuth_ScopedToVehicleWithSession(t *testing.T) {
+	token := loginAdmin(t)
+	conn1 := connectVehicle(t, "vehicle-mv-whep-1")
+	defer conn1.Close()
+	startVehicleSession(t, token, "vehicle-mv-whep-1")
+	// vehicle-mv-whep-2 deliberately has no session at all.
+
+	respOwn := postJSON(t, controlURL+"/internal/media/auth", map[string]string{
+		"action": "read", "path": "vehicle-mv-whep-1", "token": token,
+	})
+	defer respOwn.Body.Close()
+	assert.Equal(t, 200, respOwn.StatusCode, "WHEP read must be allowed for a vehicle with an active session")
+
+	respOther := postJSON(t, controlURL+"/internal/media/auth", map[string]string{
+		"action": "read", "path": "vehicle-mv-whep-2", "token": token,
+	})
+	defer respOther.Body.Close()
+	assert.Equal(t, 401, respOther.StatusCode, "WHEP read must be rejected for a vehicle with no active session")
+}

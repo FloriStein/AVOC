@@ -11,28 +11,28 @@ interface Props {
   systemState: string
   sessionId: string | null
   vehicleId: string | null
+  operatorId: string | null
   wsClient: WSClient | null
   token: string | null
 }
 
-const OPERATOR_ID = 'operator-1'
-
-export function SafetyPanel({ systemState, sessionId, vehicleId, wsClient, token }: Props) {
+export function SafetyPanel({ systemState, sessionId, vehicleId, operatorId, wsClient, token }: Props) {
   const isConnected = systemState === 'CONNECTED' || systemState === 'DEGRADED'
   const isSafeMode = systemState === 'SAFE_MODE'
+  const resolvedOperatorId = operatorId ?? 'unknown-operator'
 
   const deadman = useDeadmanSwitch(
     wsClient,
     sessionId,
     vehicleId ?? '',
-    OPERATOR_ID,
+    resolvedOperatorId,
     isConnected,
   )
 
   const handleEmergencyStop = async () => {
     if (isSafeMode || !token) return
     logEvent(FE_EMERGENCY_STOP, 'Emergency Stop clicked',
-      { sessionId: sessionId ?? '', vehicleId: vehicleId ?? '', operatorId: OPERATOR_ID })
+      { sessionId: sessionId ?? '', vehicleId: vehicleId ?? '', operatorId: resolvedOperatorId })
     try {
       await emergencyStop(sessionId ?? '', vehicleId ?? '', token)
     } catch {

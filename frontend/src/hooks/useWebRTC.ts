@@ -39,10 +39,10 @@ export function useWebRTC(sessionId: string | null, vehicleId: string, token: st
 
   const updateState = useCallback((state: MediaState) => {
     setMediaState(state)
-    if (token) reportMediaState(state, token).catch(() => {})
+    if (token) reportMediaState(state, vehicleId, token).catch(() => {})
     logEvent(FE_WEBRTC_STATE, 'WebRTC media state changed',
       { sessionId: sessionId ?? '', data: { state } })
-  }, [sessionId, token])
+  }, [sessionId, vehicleId, token])
 
   const disconnect = useCallback(() => {
     if (pcRef.current) {

@@ -238,7 +238,7 @@ func TestIntegration_MediaFailed_TriggersDegrade_NeverSafeMode(t *testing.T) {
 	}).Body.Close()
 
 	// MEDIA_FAILED event
-	resp2 := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{"state": "MEDIA_FAILED"})
+	resp2 := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{"state": "MEDIA_FAILED", "vehicle_id": "vehicle-media"})
 	resp2.Body.Close()
 	assert.Equal(t, 202, resp2.StatusCode)
 

@@ -184,6 +184,7 @@ function AppContent({ session }: { session: SessionState }) {
           systemState={state.system}
           sessionId={session.sessionId}
           vehicleId={session.vehicleId}
+          operatorId={session.operatorId}
           wsClient={session.wsClient}
           token={session.token}
         />
@@ -211,6 +212,7 @@ function AppContent({ session }: { session: SessionState }) {
             wsClient={session.wsClient}
             sessionId={session.sessionId}
             vehicleId={session.vehicleId}
+            operatorId={session.operatorId}
             enabled={isConnected && !isUnreachable}
           />
           <InputIndicatorPanel telemetry={telemetry} ack={vehicleAck} />

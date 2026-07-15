@@ -143,13 +143,15 @@ func (m *Manager) ReleaseSession(sessionID string) {
 	delete(m.sessions, sessionID)
 }
 
-// UpdateOperator replaces the active operator — used during Handover (ADR-011/015).
-func (m *Manager) UpdateOperator(operatorID, operatorRole string) {
+// UpdateOperator replaces the active operator for vehicleID — used during
+// Handover (ADR-011/015). Scoped to the given vehicle (ADR-026 follow-up) —
+// previously updated "the first ACTIVE_OPERATOR session found" fleet-wide,
+// which could reassign the wrong vehicle's controller once 2+ vehicles were active.
+func (m *Manager) UpdateOperator(vehicleID, operatorID, operatorRole string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Update the first ACTIVE_OPERATOR session (handover changes the controller).
 	for _, s := range m.sessions {
-		if s.OperatorRole == "ACTIVE_OPERATOR" {
+		if s.VehicleID == vehicleID && s.OperatorRole == "ACTIVE_OPERATOR" {
 			s.OperatorID = operatorID
 			s.OperatorRole = operatorRole
 			return

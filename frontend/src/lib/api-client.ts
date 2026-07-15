@@ -98,11 +98,11 @@ export async function listVehicles(): Promise<VehicleInfo[]> {
 
 // Reports WebRTC MEDIA STATE changes to the Control Server (ADR-009 Invariant 1).
 // MEDIA_FAILED → DEGRADED on server side — never SAFE_MODE.
-export async function reportMediaState(state: string, token: string): Promise<void> {
+export async function reportMediaState(state: string, vehicleId: string, token: string): Promise<void> {
   await fetch('/api/media/event', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    body: JSON.stringify({ state }),
+    body: JSON.stringify({ state, vehicle_id: vehicleId }),
   })
 }
 

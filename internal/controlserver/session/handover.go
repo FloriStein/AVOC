@@ -8,21 +8,26 @@ import (
 	"sync"
 
 	"avoc/internal/controlserver/statemachine"
+	"avoc/internal/controlserver/vehiclecontext"
 	"avoc/pkg/logger"
 )
 
 var svcLog = logger.New("control-server")
 
-// HandoverManager coordinates operator handover (ADR-011/015).
-// Rules: max 1 ACTIVE_OPERATOR, both sides must confirm, current operator retains
-// control during HANDOVER_PENDING, SFU notified immediately on completion.
+// HandoverManager coordinates operator handover (ADR-011/015), isolated per vehicle
+// (ADR-026 follow-up, MV-11): resolves each vehicle's own State Machine via the
+// shared vehiclecontext.Registry instead of a disconnected standalone Machine, so a
+// handover in progress on one vehicle can never block or leak into another's.
+// Rules: max 1 ACTIVE_OPERATOR per vehicle, both sides must confirm, current
+// operator retains control during HANDOVER_PENDING, SFU notified immediately on
+// completion.
 type HandoverManager struct {
 	mu         sync.Mutex
-	sm         *statemachine.Machine
+	vehicles   *vehiclecontext.Registry
 	sessions   *Manager
 	authURL    string
 	httpClient *http.Client
-	pending    *pendingHandover
+	pending    map[string]*pendingHandover // vehicleID -> pending
 }
 
 type pendingHandover struct {
@@ -30,84 +35,91 @@ type pendingHandover struct {
 	toOperatorID   string
 }
 
-func NewHandoverManager(sm *statemachine.Machine, sessions *Manager, authURL string) *HandoverManager {
+func NewHandoverManager(vehicles *vehiclecontext.Registry, sessions *Manager, authURL string) *HandoverManager {
 	return &HandoverManager{
-		sm:         sm,
+		vehicles:   vehicles,
 		sessions:   sessions,
 		authURL:    authURL,
 		httpClient: &http.Client{},
+		pending:    make(map[string]*pendingHandover),
 	}
 }
 
-// RequestHandover initiates a handover — transitions OPERATOR STATE to HANDOVER_PENDING.
-// The current operator retains control until ConfirmHandover is called (ADR-011).
-func (h *HandoverManager) RequestHandover(fromOperatorID, toOperatorID string) error {
+// RequestHandover initiates a handover for vehicleID — transitions its OPERATOR
+// STATE to HANDOVER_PENDING. The current operator retains control until
+// ConfirmHandover is called (ADR-011).
+func (h *HandoverManager) RequestHandover(vehicleID, fromOperatorID, toOperatorID string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	_, _, _, opState := h.sm.Get()
+	vc := h.vehicles.Get(vehicleID)
+	_, _, _, opState := vc.SM.Get()
 	if opState != statemachine.OpActive {
 		return fmt.Errorf("handover requires ACTIVE_OPERATOR state, got %s", opState)
 	}
 
-	h.pending = &pendingHandover{
+	h.pending[vehicleID] = &pendingHandover{
 		fromOperatorID: fromOperatorID,
 		toOperatorID:   toOperatorID,
 	}
 
-	h.sm.TransitionOperator(statemachine.OpHandoverPending)
+	vc.SM.TransitionOperator(statemachine.OpHandoverPending)
 	svcLog.Info("handover requested",
-		"from_operator", fromOperatorID, "to_operator", toOperatorID)
+		"vehicle_id", vehicleID, "from_operator", fromOperatorID, "to_operator", toOperatorID)
 	return nil
 }
 
-// ConfirmHandover completes the handover — target becomes ACTIVE_OPERATOR.
-// Issues a new ACTIVE_OPERATOR token via Auth Service and notifies the SFU (ADR-015).
-func (h *HandoverManager) ConfirmHandover(confirmingOperatorID string) error {
+// ConfirmHandover completes the handover for vehicleID — target becomes
+// ACTIVE_OPERATOR. Issues a new ACTIVE_OPERATOR token via Auth Service and
+// notifies the SFU (ADR-015).
+func (h *HandoverManager) ConfirmHandover(vehicleID, confirmingOperatorID string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.pending == nil {
-		return fmt.Errorf("no handover pending")
+	pending, ok := h.pending[vehicleID]
+	if !ok {
+		return fmt.Errorf("no handover pending for vehicle %s", vehicleID)
 	}
-	if confirmingOperatorID != h.pending.toOperatorID {
+	if confirmingOperatorID != pending.toOperatorID {
 		return fmt.Errorf("confirming operator %s is not the handover target %s",
-			confirmingOperatorID, h.pending.toOperatorID)
+			confirmingOperatorID, pending.toOperatorID)
 	}
 
-	if err := h.issueHandoverToken(h.pending.toOperatorID); err != nil {
+	if err := h.issueHandoverToken(pending.toOperatorID); err != nil {
 		return fmt.Errorf("handover token issuance failed: %w", err)
 	}
 
-	h.sessions.UpdateOperator(h.pending.toOperatorID, string(statemachine.OpActive))
-	h.sm.TransitionOperator(statemachine.OpActive)
+	h.sessions.UpdateOperator(vehicleID, pending.toOperatorID, string(statemachine.OpActive))
+	h.vehicles.Get(vehicleID).SM.TransitionOperator(statemachine.OpActive)
 	h.sessions.PushSFUEvent("OPERATOR_HANDOVER")
 
 	svcLog.Event(logger.EventOperatorHandover, "handover confirmed",
-		"new_active_operator", h.pending.toOperatorID)
-	h.pending = nil
+		"vehicle_id", vehicleID, "new_active_operator", pending.toOperatorID)
+	delete(h.pending, vehicleID)
 	return nil
 }
 
-// CancelHandover aborts the handover — current operator retains control.
-func (h *HandoverManager) CancelHandover() {
+// CancelHandover aborts the handover for vehicleID — current operator retains control.
+func (h *HandoverManager) CancelHandover(vehicleID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.pending == nil {
+	pending, ok := h.pending[vehicleID]
+	if !ok {
 		return
 	}
 	svcLog.Info("handover cancelled",
-		"from_operator", h.pending.fromOperatorID, "to_operator", h.pending.toOperatorID)
-	h.pending = nil
-	h.sm.TransitionOperator(statemachine.OpActive)
+		"vehicle_id", vehicleID, "from_operator", pending.fromOperatorID, "to_operator", pending.toOperatorID)
+	delete(h.pending, vehicleID)
+	h.vehicles.Get(vehicleID).SM.TransitionOperator(statemachine.OpActive)
 }
 
-// IsPending returns true if a handover is currently in progress.
-func (h *HandoverManager) IsPending() bool {
+// IsPending returns true if a handover is currently in progress for vehicleID.
+func (h *HandoverManager) IsPending(vehicleID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.pending != nil
+	_, ok := h.pending[vehicleID]
+	return ok
 }
 
 func (h *HandoverManager) issueHandoverToken(targetOperatorID string) error {

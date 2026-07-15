@@ -268,6 +268,26 @@ services:
       - avoc-net
     restart: unless-stopped
 
+  # Zweites Direct-Teleop-Fahrzeug, damit sich "mehrere Fahrzeuge gleichzeitig
+  # steuerbar" (zwei Operatoren, zwei Sessions, ADR-026-Folgefix) lokal mit zwei
+  # Browser-Sessions durchspielen lässt. Kein FLEET_VEHICLES hier — die Flotten-
+  # Simulation aus vehicle-mock oben reicht bereits für den Fleet-Teil aus.
+  vehicle-mock-2:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/vehicle-mock.Dockerfile
+    environment:
+      VEHICLE_ID: "vehicle-002"
+      CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"
+      JWT_SECRET: ${JWT_SECRET}
+      MQTT_BROKER: "mosquitto:1883"
+    depends_on:
+      - control-server
+      - mosquitto
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
 networks:
   avoc-net:
     driver: bridge

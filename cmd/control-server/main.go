@@ -95,11 +95,10 @@ func main() {
 		csafety.DefaultDeadmanTimeout, csafety.DefaultACKTimeout, csafety.DefaultVehicleACKTimeout, safetyPub,
 	).WithAuditWriter(auditWriter)
 
-	// HandoverManager only tracks the OPERATOR layer (not System/Control/Media),
-	// so it keeps its own dedicated, single-instance Machine for now — multi-vehicle
-	// handover is explicitly out of scope for ADR-026 (tracked as a backlog follow-up).
-	handoverSM := statemachine.New()
-	handoverMgr := session.NewHandoverManager(handoverSM, sessionMgr, authURL)
+	// HandoverManager resolves each vehicle's own State Machine via the same
+	// per-vehicle registry as everything else (ADR-026 follow-up, MV-11) — no
+	// longer a disconnected standalone Machine shared across all vehicles.
+	handoverMgr := session.NewHandoverManager(vehicleContexts, sessionMgr, authURL)
 	recorder := recording.NewMemoryRecorder()
 	vehicleRegistry := vehicleconnection.NewRegistry()
 	vehicleAckStore := vehicleconnection.NewAckStore()
@@ -235,11 +234,21 @@ func main() {
 				}
 			}
 		} else {
-			// Legacy path: end the current ACTIVE_OPERATOR session.
-			if sess, ok := sessionMgr.GetCurrentSession(); ok {
+			// Legacy path (no session_id): ends ALL active sessions fleet-wide, so
+			// every active vehicle must be reset to IDLE — not just one resolved via
+			// sessionMgr.GetCurrentSession() (an arbitrary ACTIVE_OPERATOR session).
+			// Previously only that one vehicle's Machine was reset before
+			// EndSession() wiped every session's bookkeeping — any other active
+			// vehicle was left stranded in its last state (e.g. SAFE_MODE) with no
+			// session left to reset it, recoverable only by restarting the process.
+			for _, vehicleID := range sessionMgr.ActiveVehicleIDs() {
+				sess, ok := sessionMgr.GetSessionByVehicle(vehicleID)
+				if !ok {
+					continue
+				}
 				recorder.EndSession(sess.ID)
-				log.Event(logger.EventSessionEnded, "session ended", "session_id", sess.ID)
-				vc := vehicleContexts.Get(sess.VehicleID)
+				log.Event(logger.EventSessionEnded, "session ended", "session_id", sess.ID, "vehicle_id", vehicleID)
+				vc := vehicleContexts.Get(vehicleID)
 				vc.Deadman.Stop()
 				vc.VehicleACKWatchdog.Stop()
 				vc.SM.TransitionSystem(statemachine.StateIdle)
@@ -262,9 +271,10 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	// Operator Handover (BE-12)
+	// Operator Handover (BE-12), scoped per vehicle (ADR-026 follow-up, MV-11).
 	mux.HandleFunc("POST /handover/request", auth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			VehicleID      string `json:"vehicle_id"`
 			FromOperatorID string `json:"from_operator_id"`
 			ToOperatorID   string `json:"to_operator_id"`
 		}
@@ -272,7 +282,11 @@ func main() {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := handoverMgr.RequestHandover(req.FromOperatorID, req.ToOperatorID); err != nil {
+		if req.VehicleID == "" {
+			http.Error(w, "vehicle_id required", http.StatusBadRequest)
+			return
+		}
+		if err := handoverMgr.RequestHandover(req.VehicleID, req.FromOperatorID, req.ToOperatorID); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -281,43 +295,60 @@ func main() {
 
 	mux.HandleFunc("POST /handover/confirm", auth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			VehicleID  string `json:"vehicle_id"`
 			OperatorID string `json:"operator_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := handoverMgr.ConfirmHandover(req.OperatorID); err != nil {
+		if req.VehicleID == "" {
+			http.Error(w, "vehicle_id required", http.StatusBadRequest)
+			return
+		}
+		if err := handoverMgr.ConfirmHandover(req.VehicleID, req.OperatorID); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	mux.HandleFunc("POST /handover/cancel", auth(func(w http.ResponseWriter, _ *http.Request) {
-		handoverMgr.CancelHandover()
+	mux.HandleFunc("POST /handover/cancel", auth(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			VehicleID string `json:"vehicle_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.VehicleID == "" {
+			http.Error(w, "vehicle_id required", http.StatusBadRequest)
+			return
+		}
+		handoverMgr.CancelHandover(req.VehicleID)
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	// MEDIA STATE update (ADR-009/011 Invariant 1)
 	mux.HandleFunc("POST /media/event", auth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			State string `json:"state"`
+			VehicleID string `json:"vehicle_id"`
+			State     string `json:"state"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		// Media events are reported by the operator's own browser for their
-		// current ACTIVE_OPERATOR session — same single-session scoping as
-		// before ADR-026 (no vehicle_id in the request), just now resolved
-		// through the per-vehicle registry instead of a global machine.
-		sess, ok := sessionMgr.GetCurrentSession()
-		if !ok {
-			w.WriteHeader(http.StatusAccepted)
+		if req.VehicleID == "" {
+			http.Error(w, "vehicle_id required", http.StatusBadRequest)
 			return
 		}
-		vc := vehicleContexts.Get(sess.VehicleID)
+		// Media events are reported by the operator's own browser for its own
+		// vehicle — resolved directly through the per-vehicle registry, not via
+		// sessionMgr.GetCurrentSession() (which used to return an arbitrary
+		// ACTIVE_OPERATOR session and could misattribute media state between
+		// concurrently active vehicles, ADR-026 follow-up).
+		vc := vehicleContexts.Get(req.VehicleID)
 		switch req.State {
 		case "MEDIA_NEGOTIATING":
 			vc.SM.TransitionMedia(statemachine.MediaNegotiating)
@@ -455,14 +486,18 @@ func main() {
 			log.Info("media auth: WHIP publish allowed", "path", req.Path)
 		case "read":
 			// WHEP: Operator-Browser authentifiziert sich mit JWT
-			// Prüfung: Token nicht leer + aktive Session vorhanden
+			// Prüfung: Token nicht leer + aktive Session für GENAU dieses Fahrzeug
+			// (req.Path ist die Vehicle-ID, MediaMTX-Pfadregex "~^vehicle-.*").
+			// Vorher: sessionMgr.GetCurrentSession() prüfte nur "irgendeine aktive
+			// Session existiert", was mit 2 Fahrzeugen Video-Lesezugriff auf ein
+			// fremdes Fahrzeug ohne eigene Session erlaubt hätte (ADR-026 follow-up).
 			if req.Token == "" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			_, hasSession := sessionMgr.GetCurrentSession()
+			_, hasSession := sessionMgr.GetSessionByVehicle(req.Path)
 			if !hasSession {
-				log.Warn("media auth: WHEP read rejected — no active session", "path", req.Path)
+				log.Warn("media auth: WHEP read rejected — no active session for vehicle", "path", req.Path)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}

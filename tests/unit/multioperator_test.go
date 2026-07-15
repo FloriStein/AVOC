@@ -545,12 +545,12 @@ func TestMultiOp_SessionIDs_UniqueAcrossStartAndCreate(t *testing.T) {
 // ── Regression — existing safety tests still pass with new Manager ────────────
 
 func TestMultiOp_Regression_GetCurrentSession_CompatWithHandover(t *testing.T) {
-	// The handover manager calls UpdateOperator + GetCurrentSession.
-	// Verify these still work after the multi-session refactor.
+	// The handover manager calls UpdateOperator (vehicle-scoped, ADR-026 follow-up)
+	// + GetCurrentSession. Verify these still work after the multi-session refactor.
 	mgr := newMgr(t)
 	mgr.StartSession("vehicle-001", "alice")
 
-	mgr.UpdateOperator("bob", "ACTIVE_OPERATOR")
+	mgr.UpdateOperator("vehicle-001", "bob", "ACTIVE_OPERATOR")
 
 	sess, ok := mgr.GetCurrentSession()
 	require.True(t, ok)

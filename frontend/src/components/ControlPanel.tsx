@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import { useControls } from '@/hooks/useControls'
 import type { WSClient } from '@/lib/ws-client'
 
-const OPERATOR_ID = 'operator-1'
 const JOY_RADIUS = 55
 const JOY_TRAVEL = 43
 
@@ -10,6 +9,7 @@ interface Props {
   wsClient: WSClient | null
   sessionId: string | null
   vehicleId: string | null
+  operatorId: string | null
   enabled: boolean
 }
 
@@ -45,10 +45,10 @@ const MODE_COLOR: Record<string, string> = {
   gamepad: 'text-green-400',
 }
 
-export function ControlPanel({ wsClient, sessionId, vehicleId, enabled }: Props) {
+export function ControlPanel({ wsClient, sessionId, vehicleId, operatorId, enabled }: Props) {
   const [speed, setSpeed] = useState(1.0)
   const { steer, throttle, activeMode, gamepadConnected, joyPos, setJoystick } = useControls(
-    wsClient, sessionId, vehicleId ?? '', OPERATOR_ID, enabled, speed,
+    wsClient, sessionId, vehicleId ?? '', operatorId ?? 'unknown-operator', enabled, speed,
   )
 
   const isDragging = useRef(false)

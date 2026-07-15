@@ -9,6 +9,7 @@ import (
 	csafety "avoc/internal/controlserver/safety"
 	"avoc/internal/controlserver/session"
 	"avoc/internal/controlserver/statemachine"
+	"avoc/internal/controlserver/vehiclecontext"
 	"avoc/internal/safetyservice"
 	"avoc/tests/unit/mocks"
 
@@ -287,35 +288,54 @@ func TestSafety_SessionID_UniquePerSession(t *testing.T) {
 }
 
 // --- Operator Handover ---
+//
+// These tests wire HandoverManager through a real vehiclecontext.Registry (same
+// type main.go uses, ADR-026 follow-up/MV-11) instead of a standalone Machine —
+// that standalone-Machine setup used to hide a real bug: nothing in the actual
+// request path ever transitioned it to ACTIVE_OPERATOR, so RequestHandover's
+// precondition could never pass outside of a test manually priming it.
+
+// newHandoverTestSetup builds a vehiclecontext.Registry + session.Manager, mirroring
+// main.go's real wiring (see tests/unit/watchdog_test.go's newBusWatchdogSetup for
+// the same pattern used for SafetyBusWatchdog).
+func newHandoverTestSetup(sfuPub *mocks.MockSFUPublisher) (*vehiclecontext.Registry, *session.Manager) {
+	pub := &mocks.MockSafetyPublisher{}
+	registry := vehiclecontext.NewRegistry(10*time.Second, 100*time.Millisecond, 1*time.Second, pub)
+	mgr := session.NewManager(sfuPub)
+	return registry, mgr
+}
 
 func TestSafety_Handover_TransitionsToHandoverPending(t *testing.T) {
-	sm, _, sfuPub, mgr := newTestSetup(t)
-	connectSession(t, sm, mgr)
-	sm.TransitionOperator(statemachine.OpActive)
+	sfuPub := &mocks.MockSFUPublisher{}
+	registry, mgr := newHandoverTestSetup(sfuPub)
+	vc := registry.Get("vehicle-1")
+	connectSession(t, vc.SM, mgr)
+	vc.SM.TransitionOperator(statemachine.OpActive)
 
-	handoverMgr := session.NewHandoverManager(sm, mgr, "") // no auth URL in test
+	handoverMgr := session.NewHandoverManager(registry, mgr, "") // no auth URL in test
 
-	err := handoverMgr.RequestHandover("operator-1", "operator-2")
+	err := handoverMgr.RequestHandover("vehicle-1", "operator-1", "operator-2")
 	require.NoError(t, err)
 
-	_, _, _, op := sm.Get()
+	_, _, _, op := vc.SM.Get()
 	assert.Equal(t, statemachine.OpHandoverPending, op)
-	_ = sfuPub
 }
 
 func TestSafety_Handover_ConfirmSwitchesActiveOperator(t *testing.T) {
-	sm, _, sfuPub, mgr := newTestSetup(t)
-	connectSession(t, sm, mgr)
-	sm.TransitionOperator(statemachine.OpActive)
+	sfuPub := &mocks.MockSFUPublisher{}
+	registry, mgr := newHandoverTestSetup(sfuPub)
+	vc := registry.Get("vehicle-1")
+	connectSession(t, vc.SM, mgr)
+	vc.SM.TransitionOperator(statemachine.OpActive)
 
-	handoverMgr := session.NewHandoverManager(sm, mgr, "")
-	require.NoError(t, handoverMgr.RequestHandover("operator-1", "operator-2"))
-	require.NoError(t, handoverMgr.ConfirmHandover("operator-2"))
+	handoverMgr := session.NewHandoverManager(registry, mgr, "")
+	require.NoError(t, handoverMgr.RequestHandover("vehicle-1", "operator-1", "operator-2"))
+	require.NoError(t, handoverMgr.ConfirmHandover("vehicle-1", "operator-2"))
 
-	_, _, _, op := sm.Get()
+	_, _, _, op := vc.SM.Get()
 	assert.Equal(t, statemachine.OpActive, op)
 
-	sess, ok := mgr.GetCurrentSession()
+	sess, ok := mgr.GetSessionByVehicle("vehicle-1")
 	require.True(t, ok)
 	assert.Equal(t, "operator-2", sess.OperatorID)
 
@@ -332,15 +352,57 @@ func TestSafety_Handover_ConfirmSwitchesActiveOperator(t *testing.T) {
 }
 
 func TestSafety_Handover_CancelRestoresActiveOperator(t *testing.T) {
-	sm, _, _, mgr := newTestSetup(t)
-	connectSession(t, sm, mgr)
-	sm.TransitionOperator(statemachine.OpActive)
+	sfuPub := &mocks.MockSFUPublisher{}
+	registry, mgr := newHandoverTestSetup(sfuPub)
+	vc := registry.Get("vehicle-1")
+	connectSession(t, vc.SM, mgr)
+	vc.SM.TransitionOperator(statemachine.OpActive)
 
-	handoverMgr := session.NewHandoverManager(sm, mgr, "")
-	require.NoError(t, handoverMgr.RequestHandover("operator-1", "operator-2"))
-	handoverMgr.CancelHandover()
+	handoverMgr := session.NewHandoverManager(registry, mgr, "")
+	require.NoError(t, handoverMgr.RequestHandover("vehicle-1", "operator-1", "operator-2"))
+	handoverMgr.CancelHandover("vehicle-1")
 
-	_, _, _, op := sm.Get()
+	_, _, _, op := vc.SM.Get()
 	assert.Equal(t, statemachine.OpActive, op)
-	assert.False(t, handoverMgr.IsPending())
+	assert.False(t, handoverMgr.IsPending("vehicle-1"))
+}
+
+// TestSafety_Handover_TwoVehicles_IndependentHandovers is the MV-11 regression test:
+// a handover pending on one vehicle must never block or leak into another's. Before
+// the per-vehicle fix, HandoverManager held one process-wide standalone Machine, so
+// vehicle-2's RequestHandover would have failed with "got HANDOVER_PENDING" while
+// vehicle-1's handover was still in progress.
+func TestSafety_Handover_TwoVehicles_IndependentHandovers(t *testing.T) {
+	sfuPub := &mocks.MockSFUPublisher{}
+	registry, mgr := newHandoverTestSetup(sfuPub)
+
+	vc1 := registry.Get("vehicle-1")
+	connectSession(t, vc1.SM, mgr)
+	vc1.SM.TransitionOperator(statemachine.OpActive)
+
+	vc2 := registry.Get("vehicle-2")
+	vc2.SM.TransitionSystem(statemachine.StateConnecting)
+	vc2.SM.TransitionSystem(statemachine.StateAuthenticated)
+	require.True(t, vc2.SM.TransitionToConnected())
+	mgr.CreateSession("vehicle-2", "operator-3", "ACTIVE_OPERATOR")
+	vc2.SM.TransitionOperator(statemachine.OpActive)
+
+	handoverMgr := session.NewHandoverManager(registry, mgr, "")
+
+	require.NoError(t, handoverMgr.RequestHandover("vehicle-1", "operator-1", "operator-2"))
+	assert.True(t, handoverMgr.IsPending("vehicle-1"))
+	assert.False(t, handoverMgr.IsPending("vehicle-2"), "vehicle-2 must not see vehicle-1's pending handover")
+
+	// The actual regression: this must succeed even while vehicle-1's handover is pending.
+	err := handoverMgr.RequestHandover("vehicle-2", "operator-3", "operator-4")
+	require.NoError(t, err, "handover on vehicle-2 must not be blocked by vehicle-1's pending handover")
+
+	_, _, _, op1 := vc1.SM.Get()
+	_, _, _, op2 := vc2.SM.Get()
+	assert.Equal(t, statemachine.OpHandoverPending, op1)
+	assert.Equal(t, statemachine.OpHandoverPending, op2)
+
+	require.NoError(t, handoverMgr.ConfirmHandover("vehicle-2", "operator-4"))
+	_, _, _, op1After := vc1.SM.Get()
+	assert.Equal(t, statemachine.OpHandoverPending, op1After, "confirming vehicle-2's handover must not affect vehicle-1")
 }
