@@ -22,7 +22,7 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | ✅ |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | ✅ |
 | FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | 🔲 |
-| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔲 |
+| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔄 (Schema/API-Handler-Lücken ✅, Alert-Engine-Teil wartet auf FLEET-07) |
 
 **Abhängigkeitspfad:** FLEET-01 → FLEET-02 → FLEET-03 → FLEET-04 → FLEET-05 → FLEET-06/FLEET-07 (parallel möglich) → FLEET-08
 
@@ -317,6 +317,69 @@ umgehen) — beide Male grün, keine Flakiness.
 Kein echter Bug bei der Infrastruktur-Verifikation gefunden (anders als FLEET-01/02/05) — die
 Wiederverwendung von `EnsureVehicleExists`/`CreateAlert`s Rückgabewert aus FLEET-05 hat den
 FK-/Timing-Fall hier bereits sauber abgedeckt.
+
+**FLEET-08 — Unit-Tests fleet-service: Lückenanalyse Schema/API-Handler ✅ (Alert-Engine-Teil offen)**
+Gegenstand war eine Lückenanalyse, kein Neuschreiben — der bestehende Teststand
+(`store_test.go`, `handler_test.go`, `broadcast_test.go`, `edgecases_test.go`, `integration_test.go`,
+`lifecycle_test.go`, insgesamt bereits ~30 Testfunktionen aus FLEET-01/02/05/06) deckte Schema/CRUD/
+FK-Constraints/Auth/CRUD-über-HTTP bereits weitgehend ab. Style-Hinweis aus der Aufgabenstellung
+("`testing`+`testify`") bewusst nicht befolgt: die bestehenden Tests in `internal/fleetservice`
+nutzen durchgängig reine `testing`-Stdlib (`t.Fatalf`), nicht `testify` — neue Tests bleiben
+konsistent zum bereits etablierten Paketstil statt eine zweite Test-Bibliothek einzuführen.
+
+Sechs neue Tests geschlossen die von der Aufgabenstellung benannten Kandidaten:
+- `TestListMethods_DBConnectionClosed_ReturnsError` (`edgecases_test.go`) — Fehlerpfad aller sechs
+  Store-Lesemethoden (`ListZones`/`ListStations`/`ListTasks`/`ListAlerts`/`ListVehicleStatus`/
+  `ListVehiclesWithStatus`) bei einer geschlossenen DB-Verbindung; bisher war nur der Erfolgsfall
+  getestet. Bewusst per `db.Close()` reproduziert statt z.B. eine Tabelle zu droppen — Letzteres
+  hätte die geteilte Dev-Postgres-Instanz beeinträchtigt, an der die parallele FLEET-07-Session
+  gerade arbeitet.
+- `TestCreateTask_UnknownVehicleID_Returns500` / `TestCreateTask_UnknownStationID_Returns500`
+  (`handler_test.go`) — `edgecases_test.go` bewies die FK-Verletzung bisher nur auf Store-Ebene;
+  jetzt auch über den HTTP-Handler bestätigt: aktuelles Ist-Verhalten ist ein generischer 500
+  ("store error"), wie bei `CreateStation`/unbekannter `zone_id` (FLEET-05). Bewusst kein Fix auf
+  aussagekräftigere 400/404 — das ist die gleiche, bereits in FLEET-05 getroffene
+  Design-Entscheidung (Scope klein halten), hier nur zusätzlich für `CreateTask` als Ist-Verhalten
+  festgeschrieben statt nur für `CreateStation`.
+- `TestAcknowledgeAlert_AlreadyAcknowledged_SecondCallSucceedsAndOverwrites` (`handler_test.go`) —
+  dokumentiert das bisher unverifizierte Ist-Verhalten: ein zweites `AcknowledgeAlert` auf denselben
+  Alert wird nicht abgelehnt, sondern überschreibt `acknowledged_by`/`acknowledged_at` mit dem
+  Wert des zweiten Aufrufs (die UPDATE-Query matched über `id`, unabhängig vom bisherigen
+  Quittierungsstatus). Kein Bug — es gibt aktuell keine Anforderung für
+  Idempotenzschutz/First-Writer-Wins —, aber bisher nur implizit durchs Code, nie durch einen Test
+  belegt.
+
+Zwei von der Aufgabenstellung genannte Kandidaten wurden geprüft und bewusst **nicht** in einen
+neuen Test überführt:
+- **nil vs. leeres Array bei `List*`:** Code-Inspektion bestätigt, dass alle `List*`-Methoden
+  (`store.go`) das Muster `var x []T` ohne Vorinitialisierung nutzen — bei null Zeilen bleibt die
+  Slice `nil`, was `encoding/json` als `null` statt `[]` serialisiert (Standardverhalten von Go,
+  kein Bug in diesem Paket). Nicht mit einem eigenen Test gegen die echte Dev-DB verifiziert: keine
+  der fünf Fleet-Tabellen ist in der geteilten Dev-Postgres-Instanz je zuverlässig leer (andere
+  Tests/`vehicle-mock`s Simulationsloop schreiben kontinuierlich), und ein künstliches Leeren
+  (`DELETE`/`TRUNCATE`) hätte die parallele FLEET-07-Session riskiert. **Für Sprint 22 (Dashboard-
+  Frontend) festgehalten:** `GET /fleet/zones` etc. können `null` statt `[]` liefern, wenn keine
+  Zeilen existieren — das Frontend darf sich nicht auf ein Array verlassen, ohne das zu behandeln.
+- **main.go-Wiring (fehlendes `JWT_SECRET`/`DATABASE_URL`):** `cmd/fleet-service/main.go` beendet
+  den Prozess bei fehlenden Env-Vars über `log.Fatal` (→ `os.Exit`), was ohne Umbau von `main()` in
+  eine testbare Funktion (z.B. Extraktion der Konfigurationsvalidierung) nicht sinnvoll unit-testbar
+  ist — analog zur bestehenden Konvention in diesem Repo, `main()` nicht künstlich für Tests zu
+  verbiegen. Bewusste Lücke, hier dokumentiert statt stillschweigend ignoriert.
+
+6 neue Tests, 2x hintereinander gegen den echten laufenden Dev-Stack-Postgres verifiziert (zweiter
+Lauf `-count=1`, um Gos Test-Cache zu umgehen) — beide Male grün, keine Flakiness, keine
+Beeinträchtigung der geteilten Dev-DB (nur eigene, per `t.Cleanup` aufgeräumte Testdaten plus ein
+harmloses `db.Close()` auf einer eigenen Verbindung). `gofmt`/`go vet`/`go build` für das gesamte
+Repo sauber.
+
+**Alert-Engine-Teil (Schwellenwert-Logik) noch offen:** FLEET-07 war zum Zeitpunkt dieser Arbeit
+noch nicht abgeschlossen (`git fetch` auf den GitLab-Remote war in dieser Umgebung nicht möglich —
+Netzwerk nicht erreichbar; lokal auch in keinem Branch/Worktree sichtbar). Aus diesem Grund musste
+für FLEET-08 ein eigener Branch (`feature/fleet-service-foundation-fleet08`, eigener Worktree
+`../controlcenter-aws-fleet08`) vom Stand nach FLEET-06 abgezweigt werden, da der Hauptcheckout
+bereits `feature/fleet-service-foundation` ausgecheckt hatte (Nutzerentscheidung). Sobald FLEET-07
+vorliegt, folgt eine zweite FLEET-08-Runde mit Unit-Tests für die Alert-Engine analog zum obigen
+Muster — bis dahin bleibt FLEET-08 als 🔄 markiert, nicht ✅.
 
 **Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint. `GET /fleet/ws` ist ebenfalls noch nicht über `nginx.dev.conf` geroutet — wie schon die `/fleet/*`-REST-Routen aus FLEET-05 (dort ebenfalls nicht ergänzt) bewusst zurückgestellt, bis das Dashboard-Frontend in Sprint 22 tatsächlich einen Browser-Client dagegen braucht.
 

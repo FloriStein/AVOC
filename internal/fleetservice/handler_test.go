@@ -420,6 +420,46 @@ func TestCreateTask_DispatchFails_TaskStillPersistedAndReturns201(t *testing.T) 
 	}
 }
 
+// TestCreateTask_UnknownVehicleID_Returns500 mirrors TestCreateStation_UnknownZoneID_Returns500
+// for CreateTask's vehicle_id FK — edgecases_test.go's TestEdgeCases_ForeignKeyViolations only
+// proved this at the store layer, never through the HTTP handler.
+func TestCreateTask_UnknownVehicleID_Returns500(t *testing.T) {
+	store := requirePostgresStore(t)
+	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	if err := store.AddStation(fleetservice.Station{ID: "handler-test-station-a", ZoneID: "handler-test-zone", Name: "A"}); err != nil {
+		t.Fatalf("AddStation A: %v", err)
+	}
+	if err := store.AddStation(fleetservice.Station{ID: "handler-test-station-b", ZoneID: "handler-test-zone", Name: "B"}); err != nil {
+		t.Fatalf("AddStation B: %v", err)
+	}
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]any{
+		"vehicle_id": "does-not-exist", "from_station_id": "handler-test-station-a", "to_station_id": "handler-test-station-b",
+	})
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for unknown vehicle_id, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateTask_UnknownStationID_Returns500 mirrors the above for from_station_id/to_station_id
+// — same store-level proof already exists (TestEdgeCases_ForeignKeyViolations), never through HTTP.
+func TestCreateTask_UnknownStationID_Returns500(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]any{
+		"vehicle_id": "handler-test-vehicle", "from_station_id": "does-not-exist", "to_station_id": "also-missing",
+	})
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for unknown station_id, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCreateTask_MalformedJSON_Returns400(t *testing.T) {
 	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
 	req := httptest.NewRequest(http.MethodPost, "/fleet/tasks", bytes.NewBufferString("{"))
@@ -527,6 +567,58 @@ func TestAcknowledgeAlert_Valid_Returns204(t *testing.T) {
 
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestAcknowledgeAlert_AlreadyAcknowledged_SecondCallSucceedsAndOverwrites documents the current,
+// deliberate behaviour: store.AcknowledgeAlert's UPDATE matches the row by id regardless of
+// whether acknowledged_at is already set, so a second acknowledgement is not rejected — it
+// overwrites acknowledged_by/acknowledged_at with the latest caller's values. Not a bug to fix
+// here (no idempotency-key/first-writer-wins requirement exists yet), but previously unverified
+// behaviour that a future change could silently alter.
+func TestAcknowledgeAlert_AlreadyAcknowledged_SecondCallSucceedsAndOverwrites(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	alert, err := store.CreateAlert(fleetservice.Alert{VehicleID: "handler-test-vehicle", Severity: "warning", Message: "Low battery"})
+	if err != nil {
+		t.Fatalf("CreateAlert: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", h.AcknowledgeAlert)
+
+	ackAs := func(operator string) int {
+		body, _ := json.Marshal(map[string]string{"acknowledged_by": operator})
+		req := httptest.NewRequest(http.MethodPost, "/fleet/alerts/"+alert.ID+"/acknowledge", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	if code := ackAs("operator-1"); code != http.StatusNoContent {
+		t.Fatalf("expected 204 on first acknowledge, got %d", code)
+	}
+	if code := ackAs("operator-2"); code != http.StatusNoContent {
+		t.Fatalf("expected 204 on second acknowledge (current behaviour: not rejected), got %d", code)
+	}
+
+	alerts, err := store.ListAlerts()
+	if err != nil {
+		t.Fatalf("ListAlerts: %v", err)
+	}
+	found := false
+	for _, a := range alerts {
+		if a.ID == alert.ID {
+			found = true
+			if a.AcknowledgedBy == nil || *a.AcknowledgedBy != "operator-2" {
+				t.Fatalf("expected second acknowledge to overwrite acknowledged_by with operator-2, got %v", a.AcknowledgedBy)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("alert not found after double acknowledge")
 	}
 }
 
