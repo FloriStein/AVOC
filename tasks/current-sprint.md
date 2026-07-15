@@ -21,8 +21,8 @@ Branch: `feature/fleet-service-foundation` (Basis: `docs/ibatour-pivot`)
 | FLEET-04 | Multi-Vehicle-Simulation — `vehicle-mock` erweitern: mehrere simulierte Fahrzeuge gleichzeitig (Typen `lastenrad`/`lastenzug`), bewegen sich zwischen Stationen, Batterie sinkt/lädt, publizieren über `FleetGateway`-Mock | L | ✅ |
 | FLEET-05 | `fleet-service` konsumiert `FleetGateway`-Mock, schreibt `vehicle_status`; REST-API (`GET /fleet/vehicles`, `/fleet/zones`, `/fleet/stations`, `/fleet/tasks`, `/fleet/alerts`) inkl. einfacher Zonen-/Stationen-/Task-CRUD | M | ✅ |
 | FLEET-06 | WS-Broadcast für Live-Updates (Multi-Workstation-Unterstützung, `ADR-028`) — alle verbundenen Dashboard-Clients erhalten Zustandsänderungen ohne Polling | M | ✅ |
-| FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | 🔲 |
-| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔄 (Schema/API-Handler-Lücken ✅, Alert-Engine-Teil wartet auf FLEET-07) |
+| FLEET-07 | Alert-Engine — Schwellenwert-Logik in `fleet-service` (Beispiel: Batterie-Warnung), getrennt von fahrzeug-initiierten Alerts (kommen bereits fertig über `FleetGateway`-Mock) | S | ✅ |
+| FLEET-08 | Unit-Tests `fleet-service` (Schema, API-Handler, Alert-Engine) analog bestehendem Testmuster (`testing`+`testify`) | S | 🔄 (Schema/API-Handler-Lücken ✅, Alert-Engine-Teil folgt jetzt) |
 
 **Abhängigkeitspfad:** FLEET-01 → FLEET-02 → FLEET-03 → FLEET-04 → FLEET-05 → FLEET-06/FLEET-07 (parallel möglich) → FLEET-08
 
@@ -318,6 +318,72 @@ Kein echter Bug bei der Infrastruktur-Verifikation gefunden (anders als FLEET-01
 Wiederverwendung von `EnsureVehicleExists`/`CreateAlert`s Rückgabewert aus FLEET-05 hat den
 FK-/Timing-Fall hier bereits sauber abgedeckt.
 
+**FLEET-07 — Alert-Engine (Batterie-Schwellenwert) ✅**
+Neuer `AlertEngine`-Typ (`internal/fleetservice/alertengine.go`) — bewusst **getrennt** vom
+vehicle-initiierten Alert-Pfad (`gw.SubscribeVehicleAlerts` in `cmd/fleet-service/main.go`, kommt
+unverändert weiter über `FleetGateway`). `AlertEngine.Evaluate` hängt stattdessen im
+`gw.SubscribeVehicleStatus`-Callback, direkt nach `UpsertVehicleStatus`/`hub.Broadcast
+("vehicle_status", ...)` — läuft also bei jedem Status-Tick mit, nicht nur bei Alerts.
+
+Kernproblem, das die Umsetzung eigentlich ausmacht: bei einem Status-Update alle ~2s (FLEET-04s
+Simulationsintervall) würde ein naiver `battery_pct < 20 → Alert` bei jedem einzelnen Tick unter
+der Schwelle einen neuen Alert erzeugen — Spam statt Signal. Gelöst über eine
+Tier-Zustandsmaschine pro Fahrzeug (`normal`/`warning`/`critical`, `map[vehicleID]int` in
+`AlertEngine`, `sync.Mutex`-geschützt) mit **Hysterese**: Eintritt in `warning` bei <20 %,
+Rückkehr zu `normal` erst ab ≥25 %; Eintritt in `critical` bei <10 %, Rückkehr zu `warning` erst
+ab ≥15 %. Ein Alert wird nur beim Überschreiten in eine *schlechtere* Tier ausgelöst — bleibt das
+Fahrzeug in derselben Tier oder erholt es sich, gibt es keinen (weiteren) Alert. Der 5-Prozentpunkte-
+Puffer zwischen Eintritts- und Austrittsschwelle verhindert Flackern exakt an der Grenze (z. B.
+19,8 % → 20,5 % → 19,5 % würde ohne Puffer zwei Alerts erzeugen). Direkter Sprung von gesund auf
+kritisch (ein einzelner Tick) erzeugt korrekt nur den kritischen Alert, keinen zusätzlichen
+Warning-Alert dazwischen.
+
+11 Unit-Tests (`internal/fleetservice/alertengine_test.go`, `-race`-sauber, 3x wiederholt):
+gesunde Batterie kein Alert, `nil`-Batterie kein Alert (Fahrzeug ohne Telemetrie), Warning-/
+Critical-Auslösung, Wiederholungssperre über mehrere Ticks in derselben Tier, direkter
+Sprung gesund→kritisch, stille Erholung (kein Alert), Reset nach voller Erholung (erneuter Abfall
+löst wieder aus), Hysterese-Flatter-Test an der 20-%-Grenze, Erholung critical→warning mit
+erneutem Abfall→critical, Unabhängigkeit zwischen Fahrzeugen, Nebenläufigkeit.
+
+Gegen den echten Dev-Stack verifiziert (nicht nur Unit-Tests) — Status mit `battery_pct: 5.0` per
+`mosquitto_pub` auf `fleet/{id}/status` publiziert (simuliert ein reales Fahrzeug, nicht über
+`vehicle-mock`s eigene Simulation): kritischer Alert "Batterie kritisch (5.0%)" erschien korrekt
+in `GET /fleet/alerts`. Zweiter Tick bei 4.0 % erzeugte nachweislich **keinen** zweiten Alert
+(Wiederholungssperre live bestätigt). Tick auf 90 % (Erholung) erzeugte ebenfalls keinen
+zusätzlichen Alert. Alte Testdaten aus vorherigen Ad-hoc-Verifikationsläufen (`mqtt-test-*`, die
+über den geteilten Dev-Mosquitto versehentlich vom echten `fleet-service`-Container mitgelesen
+und autoregistriert wurden, `EnsureVehicleExists` aus FLEET-05) aus der Dev-DB bereinigt.
+
+Neuer Integrationstest
+`TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert`
+(`tests/integration/fleet_service_test.go`) — publiziert echten Status per MQTT-Client (nicht
+`vehicle-mock`), prüft `alert_created`-WS-Broadcast UND `GET /fleet/alerts`, prüft danach explizit
+die Wiederholungssperre über einen zweiten Tick. Bewusst als eigener Test von
+`TestIntegration_FleetService_WSBroadcast_DeliversAlertCreatedAndAcknowledged` abgegrenzt: der
+bestehende Test publiziert direkt auf den Alert-Topic (vehicle-initiiert, umgeht `AlertEngine`
+komplett) — dieser hier geht über den Status-Topic, den einzigen Weg, `AlertEngine` tatsächlich
+zu treffen. `make test-integration` (jetzt 25 Tests) 2x hintereinander gegen frisch gestartete
+Container gelaufen (`-count=1`) — beide Male grün.
+
+**FLEET-07 — Nachtrag: Audit gegen `CLAUDE.MD` Abschnitt 17 (Teststandard) ✅**
+Nach Einführung des neuen Teststandards rückwirkend gegen die Fallgruppen-Checkliste geprüft.
+9 zusätzliche Grenzwert-Tests ergänzt (`internal/fleetservice/alertengine_test.go`,
+`-race`-sauber, 3x wiederholt): exakte Schwellenwerte (20.0/25.0/10.0/15.0 — sperrt die
+`<`-vs-`<=`-Semantik explizit fest, vorher nur implizit über Werte deutlich über/unter der
+Grenze getestet), 0 % und 100 % Batterie, negative Batteriewerte (physikalisch unmöglich, aber
+kein Absturz/Fehlklassifizierung bei fehlerhaftem Upstream), leere `VehicleID` (gültiger
+Map-Key, keine Zustandsvermischung mit anderen Fahrzeugen).
+
+Ein Fehlerpfad bewusst ungetestet gelassen statt stillschweigend übersehen: schlägt
+`store.CreateAlert` in `cmd/fleet-service/main.go` fehl, nachdem `AlertEngine.Evaluate` einen
+Alert zurückgegeben hat, wird das nur geloggt (`log.Warn`), nicht erneut versucht — analog zum
+bereits bestehenden, ebenfalls ungetesteten Verhalten beim vehicle-initiierten Alert-Pfad
+direkt darüber. Konsistent mit der Projektkonvention, `cmd/*/main.go`-Verdrahtung nicht direkt
+zu unit-testen (dafür sorgen die Integrationstests für den Erfolgsfall); ein DB-Fehler exakt in
+diesem Moment zu erzwingen wäre nur mit Aufwand deutlich über das reguläre Test-Setup hinaus
+möglich und stand in keinem Verhältnis zum Risiko (identisches Verhalten wie der bereits
+akzeptierte Nachbar-Pfad).
+
 **FLEET-08 — Unit-Tests fleet-service: Lückenanalyse Schema/API-Handler ✅ (Alert-Engine-Teil offen)**
 Gegenstand war eine Lückenanalyse, kein Neuschreiben — der bestehende Teststand
 (`store_test.go`, `handler_test.go`, `broadcast_test.go`, `edgecases_test.go`, `integration_test.go`,
@@ -372,16 +438,14 @@ Beeinträchtigung der geteilten Dev-DB (nur eigene, per `t.Cleanup` aufgeräumte
 harmloses `db.Close()` auf einer eigenen Verbindung). `gofmt`/`go vet`/`go build` für das gesamte
 Repo sauber.
 
-**Alert-Engine-Teil (Schwellenwert-Logik) noch offen:** FLEET-07 war zum Zeitpunkt dieser Arbeit
-noch nicht abgeschlossen (`git fetch` auf den GitLab-Remote war in dieser Umgebung nicht möglich —
-Netzwerk nicht erreichbar; lokal auch in keinem Branch/Worktree sichtbar). Aus diesem Grund musste
-für FLEET-08 ein eigener Branch (`feature/fleet-service-foundation-fleet08`, eigener Worktree
-`../controlcenter-aws-fleet08`) vom Stand nach FLEET-06 abgezweigt werden, da der Hauptcheckout
-bereits `feature/fleet-service-foundation` ausgecheckt hatte (Nutzerentscheidung). Sobald FLEET-07
-vorliegt, folgt eine zweite FLEET-08-Runde mit Unit-Tests für die Alert-Engine analog zum obigen
-Muster — bis dahin bleibt FLEET-08 als 🔄 markiert, nicht ✅.
+**Alert-Engine-Teil war zum Zeitpunkt der obigen Schema/API-Handler-Runde noch offen** (FLEET-07
+war zu diesem Zeitpunkt nicht abgeschlossen — `git fetch` auf den GitLab-Remote war in dieser
+Umgebung nicht möglich, lokal auch in keinem Branch/Worktree sichtbar; daher der separate Branch
+`feature/fleet-service-foundation-fleet08`/Worktree `../controlcenter-aws-fleet08`). FLEET-07 ist
+inzwischen fertig (s. oben) und in diesen Branch gemerged — Fortsetzung für den
+Alert-Engine-Testteil folgt direkt im Anschluss.
 
-**Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint. `GET /fleet/ws` ist ebenfalls noch nicht über `nginx.dev.conf` geroutet — wie schon die `/fleet/*`-REST-Routen aus FLEET-05 (dort ebenfalls nicht ergänzt) bewusst zurückgestellt, bis das Dashboard-Frontend in Sprint 22 tatsächlich einen Browser-Client dagegen braucht.
+**Bewusst nicht in diesem Sprint:** Dashboard-Frontend (Fleet Overview, Karten, Task-Management-UI, Alert-UI, "Teleoperate"-Button-Wiring) — das ist Sprint 22, sobald hier eine echte API zum Entwickeln gegen existiert, statt gegen Annahmen zu bauen. Admin-Konsole (AP3, User Management/System-Konfiguration/Maintenance-Tracking) ist ein eigener, späterer Sprint. `GET /fleet/ws` ist ebenfalls noch nicht über `nginx.dev.conf` geroutet — wie schon die `/fleet/*`-REST-Routen aus FLEET-05 (dort ebenfalls nicht ergänzt) bewusst zurückgestellt, bis das Dashboard-Frontend in Sprint 22 tatsächlich einen Browser-Client dagegen braucht. Weitere Schwellenwert-Regeln (z. B. Geschwindigkeit, Zonenverlassen) sind nicht Teil von FLEET-07 — die Aufgabenbeschreibung nennt explizit nur Batterie als Beispiel; `AlertEngine` ist aber bewusst so strukturiert (eigener Tier-Mechanismus pro Regel-Dimension denkbar), dass weitere Regeln später ergänzt werden können, ohne den Aufrufer in `main.go` umzubauen.
 
 ---
 

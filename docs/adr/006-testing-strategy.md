@@ -191,3 +191,15 @@ CI Pipeline:
 - Erhöhter initialer Setupaufwand für Test-Infrastruktur
 - Latenz-Budgets pro Service müssen noch definiert werden (Folge-Task)
 - WebRTC E2E Tests können ICE-Race-Conditions erzeugen — Retry-Logik ist Pflicht
+
+---
+
+## Update (2026-07-15)
+
+`CLAUDE.MD` Abschnitt 17 ("Teststandard — Sicherheit ohne Codereview") konkretisiert diese ADR
+um eine verpflichtende, projektweite Fallgruppen-Checkliste pro Logikeinheit (Grenzwerte,
+Fehlerpfade, Idempotenz, Zustandsübergänge, Nebenläufigkeit, Zugriffsgrenzen) sowie die Pflicht,
+Testergebnisse konkret zu dokumentieren statt pauschal "getestet" zu behaupten. Kein Widerspruch
+zu den hier getroffenen Entscheidungen (Framework-Wahl, Docker-Integrationstests, Safety Suite,
+Latenz-Gates) — reine Ergänzung auf Ebene "was pro Aufgabe mindestens getestet werden muss",
+nicht "mit welchem Tool".
