@@ -344,6 +344,8 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
 | `auth-service` | Go | JWT Ausstellung, Operator-Rollen, Handover-Token |
 | `safety-service` | Go | Safety Event Bus (In-Memory, DDS-ready) |
 | `telemetry-service` | Go | MQTT Bridge / Mosquitto Client |
+| `fleet-service` | Go | Fleet-Domäne (Zonen/Stationen/Tasks/Alerts/Live-Status), eigener Postgres-Pool auf `avoc`, REST + WS-Broadcast (`ADR-027/029`) |
+| `vehicle-mock` | Go | Simuliert Fahrzeuge — Direct-Teleop-Einzelfahrzeug (`ADR-021`) sowie Multi-Vehicle-Fleet-Simulation über MQTT (`ADR-027`) |
 | `mosquitto` | Eclipse Mosquitto | MQTT Broker |
 | `webrtc-sfu` | Go / Pion | Passiver Session-Event-Subscriber (ADR-020); kein Media-Routing |
 | `mediamtx` | bluenviron/mediamtx | WHIP/WHEP Router; Management API :9997 (ADR-020) |

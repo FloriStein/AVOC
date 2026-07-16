@@ -40,6 +40,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | [ADR-027](027-fleet-gateway-interface.md) | Fleet Gateway Interface | Abstraktes Interface gegen noch unbestätigte externe ROS2/DDS-Fahrzeugschnittstelle (IBATOUR); Mock jetzt, Adapter nach AP1-Workshop mit Professur Logistik — konkrete Schnittstellenparameter vorläufig |
 | [ADR-028](028-autonomy-first-operator-model.md) | Autonomy-First Operator Model | Flotte fährt autonom als Normalfall; Teleop nur als Notfall-Ausnahme, ausgelöst durch fahrzeugseitig erkannte Probleme via Alert; `NO_OPERATOR→SAFE_MODE`-Regel (ADR-009/011) gilt nur innerhalb aktiver Session, nicht als Dauerzustand für autonome Fahrzeuge; Vehicle-WS bereits heute session-unabhängig (keine Codeänderung) |
 | [ADR-029](029-fleet-vehicle-data-model.md) | Fleet Vehicle Data Model | Neuer Service `fleet-service`; bestehende `vehicles`-Tabelle bleibt Identitäts-Quelle (erweitert um `vehicle_type`), neue Tabellen (vehicle_status/zones/stations/tasks/alerts) per FK verknüpft; Frontend führt beide Services clientseitig zusammen; Indoor+Outdoor beide SVG-basiert, Outdoor geo-referenziert (Leaflet Overlay) |
+| [ADR-030](030-task-status-lifecycle.md) | Task-Status-Lifecycle & manueller Status-Übergangs-Endpoint | Zustandsmaschine `pending→in_progress→completed`/`cancelled` (beide terminal, sonst 409); `PATCH /fleet/tasks/{id}/status` per atomarem herkunftsbeschränktem UPDATE (race-safe statt read-then-write); `status_changed_by`-Spalte statt volle Audit-Tabelle (bewusste Scope-Entscheidung); Fix des zuvor unbemerkten `vehicle_status.current_task_id`-Staleness-Bugs bei Terminal-Status; Demo-Seed für `zones`/`stations` mit `-taskui`-Namensraum als akzeptiertes Merge-Risiko zur parallelen Sprint-23-Session |
 
 ---
 
@@ -62,6 +63,8 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | GC für `VehicleContext`-Instanzen bei großer Flotte | offen | ADR-026 Folge (MV-10) — aktuell dauerhaft behalten (kleine Flotte) |
 | Multi-Vehicle Handover | offen | ADR-026 Folge (MV-11) — `HandoverManager` nutzt noch eine globale State Machine |
 | `GET /state` final entfernen | offen | ADR-026 Folge (MV-12) — nur noch `latency.js`/`services_test.go` hängen daran |
+| Task-Status-Übergangstabelle dupliziert (Go Backend + TypeScript Frontend) | offen | ADR-030 Folge — Frontend spiegelt die Zustandsmaschine nur für UI-Button-Sichtbarkeit, Backend bleibt autoritativ |
+| Vollständige Task-Status-Audit-Historie (mehrere Übergänge) | offen | ADR-030 Folge — bewusst auf `status_changed_by` (nur letzter Übergang) begrenzt statt eigener Audit-Tabelle |
 
 ---
 

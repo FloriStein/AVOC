@@ -273,6 +273,8 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Konkrete ROS2/DDS-Fahrzeugschnittstelle (IBATOUR) | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1) noch ausstehend; `FleetGateway`-Interface läuft bis dahin gegen Mock/Simulation. Bezug zu ADR-002 (Safety Bus bereits DDS-interface-kompatibel designed) prüfen, sobald die reale Schnittstelle bekannt ist |
 | Handshake-basierte Autonomie-Rückgabe (statt einfachem Session-Ende) | offen | ADR-028 Folge — bewusst zurückgestellt, `endSession()` reicht für den Anfang, siehe `tasks/backlog.md` |
 | Persistenzform für "gefahrene Route" (Historie) | offen | ADR-029 Folge — Zeitreihen-DB vs. einfache Tabelle noch nicht entschieden |
+| Task-Status-Übergangstabelle dupliziert (Go Backend + TypeScript Frontend) | offen | ADR-030 Folge — Frontend spiegelt die Zustandsmaschine nur für UI-Button-Sichtbarkeit, Backend bleibt autoritativ |
+| Vollständige Task-Status-Audit-Historie (mehrere Übergänge, nicht nur der letzte) | offen | ADR-030 Folge — bewusst auf `status_changed_by` (nur letzter Übergang) begrenzt statt eigener `task_status_history`-Tabelle (Scope-Entscheidung, Grill-Me 2026-07-16) |
 
 ---
 

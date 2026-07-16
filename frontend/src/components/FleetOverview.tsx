@@ -6,6 +6,7 @@ import { parseTokenRole } from '@/lib/api-client'
 import { FleetVehicleList } from '@/components/FleetVehicleList'
 import { FleetVehicleDetail } from '@/components/FleetVehicleDetail'
 import { FleetAlertsPanel } from '@/components/FleetAlertsPanel'
+import { FleetTaskPanel } from '@/components/FleetTaskPanel'
 
 interface Props {
   session: SessionState
@@ -17,7 +18,7 @@ interface Props {
 // session list client-side (ADR-029: "Frontend führt Services clientseitig zusammen") to
 // determine per-vehicle operator availability for the Teleoperate/Beobachten gating (ADR-028).
 export function FleetOverview({ session }: Props) {
-  const { vehicles, alerts, loading, error, acknowledgeAlert } = useFleetOverview(
+  const { vehicles, alerts, tasks, loading, error, acknowledgeAlert, createTask, updateTaskStatus } = useFleetOverview(
     session.token,
     session.operatorId,
   )
@@ -71,6 +72,13 @@ export function FleetOverview({ session }: Props) {
             onObserve={session.startSession}
           />
           <FleetAlertsPanel alerts={alerts} onAcknowledge={acknowledgeAlert} />
+          <FleetTaskPanel
+            tasks={tasks}
+            vehicles={vehicles}
+            token={session.token}
+            onCreateTask={createTask}
+            onUpdateStatus={updateTaskStatus}
+          />
         </main>
       )}
     </div>

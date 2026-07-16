@@ -425,3 +425,137 @@ func TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert(t
 	}
 	assert.Equal(t, 1, foundAfter, "expected no repeat alert for a second low-battery tick")
 }
+
+// TestIntegration_FleetService_UpdateTaskStatus_DeliversBroadcastAndPersists is the ADR-030
+// end-to-end proof: create a task via the real REST API, transition it via the real
+// PATCH /fleet/tasks/{id}/status endpoint, and confirm both effects a Dashboard client relies on —
+// the WS "task_status_changed" broadcast (not polling) and the persisted row via GET /fleet/tasks.
+func TestIntegration_FleetService_UpdateTaskStatus_DeliversBroadcastAndPersists(t *testing.T) {
+	token := loginAdmin(t)
+
+	conn, err := dialWS(t, fleetWSURL(token))
+	require.NoError(t, err, "WS handshake with a valid token must succeed")
+	defer conn.Close()
+
+	zoneResp := postJSONAuth(t, fleetURL+"/fleet/zones", token, map[string]string{
+		"id": "itg-status-zone", "name": "Status Transition Zone", "environment": "indoor",
+	})
+	defer zoneResp.Body.Close()
+	require.Equal(t, 201, zoneResp.StatusCode)
+
+	stationAResp := postJSONAuth(t, fleetURL+"/fleet/stations", token, map[string]string{
+		"id": "itg-status-station-a", "zone_id": "itg-status-zone", "name": "A",
+	})
+	defer stationAResp.Body.Close()
+	require.Equal(t, 201, stationAResp.StatusCode)
+
+	stationBResp := postJSONAuth(t, fleetURL+"/fleet/stations", token, map[string]string{
+		"id": "itg-status-station-b", "zone_id": "itg-status-zone", "name": "B",
+	})
+	defer stationBResp.Body.Close()
+	require.Equal(t, 201, stationBResp.StatusCode)
+
+	// test-lastenzug-01 only exists once vehicle-mock's MQTT status has auto-registered it
+	// (FLEET-05, EnsureVehicleExists) — same wait pattern as the other REST/WS tests in this file.
+	var taskResp *http.Response
+	deadline := time.After(20 * time.Second)
+	for {
+		taskResp = postJSONAuth(t, fleetURL+"/fleet/tasks", token, map[string]any{
+			"vehicle_id": "test-lastenzug-01", "from_station_id": "itg-status-station-a",
+			"to_station_id": "itg-status-station-b", "priority": 3,
+		})
+		if taskResp.StatusCode == 201 {
+			break
+		}
+		taskResp.Body.Close()
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for test-lastenzug-01 to be auto-registered via MQTT status")
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	defer taskResp.Body.Close()
+	var created map[string]any
+	require.NoError(t, json.NewDecoder(taskResp.Body).Decode(&created))
+	taskID, _ := created["id"].(string)
+	require.NotEmpty(t, taskID)
+
+	patchResp := patchJSONAuth(t, fleetURL+"/fleet/tasks/"+taskID+"/status", token, map[string]string{
+		"status": "in_progress", "changed_by": "itg-operator-1",
+	})
+	defer patchResp.Body.Close()
+	require.Equal(t, 200, patchResp.StatusCode)
+
+	// Interleaved vehicle_status broadcasts from vehicle-mock's continuous simulation are expected
+	// on this connection — wait specifically for task_status_changed, same pattern as
+	// TestIntegration_FleetService_WSBroadcast_DeliversTaskCreated.
+	data := readWSEventOfType(t, conn, "task_status_changed", 10*time.Second)
+	assert.Equal(t, taskID, data["id"])
+	assert.Equal(t, "in_progress", data["status"])
+	assert.Equal(t, "itg-operator-1", data["status_changed_by"])
+
+	tasks := getJSONListAuth(t, fleetURL+"/fleet/tasks", token)
+	found := false
+	for _, task := range tasks {
+		if tm, ok := task.(map[string]any); ok && tm["id"] == taskID {
+			found = true
+			assert.Equal(t, "in_progress", tm["status"])
+		}
+	}
+	assert.True(t, found, "transitioned task must be listable via REST with its new status")
+}
+
+// TestIntegration_FleetService_UpdateTaskStatus_InvalidTransition_Returns409 proves ADR-030's
+// state machine is enforced through the real HTTP path, not just at the store layer
+// (internal/fleetservice's own tests already cover the store/handler in isolation) — a freshly
+// created task is still "pending", so jumping straight to "completed" must be rejected.
+func TestIntegration_FleetService_UpdateTaskStatus_InvalidTransition_Returns409(t *testing.T) {
+	token := loginAdmin(t)
+
+	zoneResp := postJSONAuth(t, fleetURL+"/fleet/zones", token, map[string]string{
+		"id": "itg-status-conflict-zone", "name": "Status Conflict Zone", "environment": "indoor",
+	})
+	defer zoneResp.Body.Close()
+	require.Equal(t, 201, zoneResp.StatusCode)
+
+	stationAResp := postJSONAuth(t, fleetURL+"/fleet/stations", token, map[string]string{
+		"id": "itg-status-conflict-station-a", "zone_id": "itg-status-conflict-zone", "name": "A",
+	})
+	defer stationAResp.Body.Close()
+	require.Equal(t, 201, stationAResp.StatusCode)
+
+	stationBResp := postJSONAuth(t, fleetURL+"/fleet/stations", token, map[string]string{
+		"id": "itg-status-conflict-station-b", "zone_id": "itg-status-conflict-zone", "name": "B",
+	})
+	defer stationBResp.Body.Close()
+	require.Equal(t, 201, stationBResp.StatusCode)
+
+	var taskResp *http.Response
+	deadline := time.After(20 * time.Second)
+	for {
+		taskResp = postJSONAuth(t, fleetURL+"/fleet/tasks", token, map[string]any{
+			"vehicle_id": "test-lastenrad-01", "from_station_id": "itg-status-conflict-station-a",
+			"to_station_id": "itg-status-conflict-station-b", "priority": 1,
+		})
+		if taskResp.StatusCode == 201 {
+			break
+		}
+		taskResp.Body.Close()
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for test-lastenrad-01 to be auto-registered via MQTT status")
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	defer taskResp.Body.Close()
+	var created map[string]any
+	require.NoError(t, json.NewDecoder(taskResp.Body).Decode(&created))
+	taskID, _ := created["id"].(string)
+	require.NotEmpty(t, taskID)
+
+	patchResp := patchJSONAuth(t, fleetURL+"/fleet/tasks/"+taskID+"/status", token, map[string]string{
+		"status": "completed", "changed_by": "itg-operator-1",
+	})
+	defer patchResp.Body.Close()
+	assert.Equal(t, 409, patchResp.StatusCode, "pending->completed must be rejected (only in_progress->completed is allowed, ADR-030)")
+}

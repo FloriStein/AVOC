@@ -2,19 +2,33 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   listFleetVehicles,
   listFleetAlerts,
+  listFleetTasks,
   acknowledgeFleetAlert,
+  createFleetTask,
+  updateFleetTaskStatus,
   type FleetVehicle,
   type FleetAlert,
+  type Task,
+  type CreateFleetTaskInput,
 } from '@/lib/api-client'
 import { FleetWSClient } from '@/lib/fleet-ws-client'
-import { mergeVehicleStatus, upsertAlert, applyAlertAcknowledged } from '@/lib/fleet-merge'
+import {
+  mergeVehicleStatus,
+  upsertAlert,
+  applyAlertAcknowledged,
+  upsertTask,
+  applyTaskStatusChanged,
+} from '@/lib/fleet-merge'
 
 export interface FleetOverviewState {
   vehicles: FleetVehicle[]
   alerts: FleetAlert[]
+  tasks: Task[]
   loading: boolean
   error: string | null
   acknowledgeAlert: (id: string) => Promise<void>
+  createTask: (input: CreateFleetTaskInput) => Promise<void>
+  updateTaskStatus: (id: string, status: string) => Promise<void>
 }
 
 // Drives the Fleet Overview dashboard: initial REST snapshot, then live deltas via the Fleet
@@ -23,6 +37,7 @@ export interface FleetOverviewState {
 export function useFleetOverview(token: string | null, operatorId: string | null): FleetOverviewState {
   const [vehicles, setVehicles] = useState<FleetVehicle[]>([])
   const [alerts, setAlerts] = useState<FleetAlert[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -38,10 +53,11 @@ export function useFleetOverview(token: string | null, operatorId: string | null
     // error — Fleet Overview is the dashboard's primary content, not a secondary sidebar.
     const fetchSnapshot = async () => {
       try {
-        const [v, a] = await Promise.all([listFleetVehicles(token), listFleetAlerts(token)])
+        const [v, a, t] = await Promise.all([listFleetVehicles(token), listFleetAlerts(token), listFleetTasks(token)])
         if (!active) return
         setVehicles(v)
         setAlerts(a)
+        setTasks(t)
         setError(null)
       } catch {
         if (!active) return
@@ -79,6 +95,14 @@ export function useFleetOverview(token: string | null, operatorId: string | null
             setAlerts((prev) => applyAlertAcknowledged(prev, event.data))
             break
           case 'task_created':
+            // Also applied directly in createTask() below from the REST response, before this
+            // broadcast can arrive — upsertTask is idempotent by id, so this re-application (for
+            // task_created events triggered by *other* Dashboard clients) is harmless here.
+            setTasks((prev) => upsertTask(prev, event.data))
+            break
+          case 'task_status_changed':
+            setTasks((prev) => applyTaskStatusChanged(prev, event.data))
+            break
           case 'unknown':
             break
         }
@@ -114,5 +138,28 @@ export function useFleetOverview(token: string | null, operatorId: string | null
     [token, operatorId],
   )
 
-  return { vehicles, alerts, loading, error, acknowledgeAlert }
+  // Applies the REST response directly (already the real, authoritative row — no need to
+  // synthesize one) rather than waiting on the task_created WS broadcast. Re-throws on failure so
+  // FleetTaskPanel can show inline form feedback (ADR-030).
+  const createTask = useCallback(
+    async (input: CreateFleetTaskInput) => {
+      if (!token) return
+      const created = await createFleetTask(token, input)
+      setTasks((prev) => upsertTask(prev, created))
+    },
+    [token],
+  )
+
+  // Re-throws on failure (in particular the ADR-030 409 for an invalid transition) so
+  // FleetTaskPanel can show inline feedback per task row, matching acknowledgeAlert's convention.
+  const updateTaskStatus = useCallback(
+    async (id: string, status: string) => {
+      if (!token || !operatorId) return
+      const updated = await updateFleetTaskStatus(token, id, status, operatorId)
+      setTasks((prev) => upsertTask(prev, updated))
+    },
+    [token, operatorId],
+  )
+
+  return { vehicles, alerts, tasks, loading, error, acknowledgeAlert, createTask, updateTaskStatus }
 }

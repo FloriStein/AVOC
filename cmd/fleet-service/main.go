@@ -132,6 +132,7 @@ func main() {
 	mux.HandleFunc("POST /fleet/stations", handler.RequireAuth(handler.CreateStation))
 	mux.HandleFunc("GET /fleet/tasks", handler.RequireAuth(handler.ListTasks))
 	mux.HandleFunc("POST /fleet/tasks", handler.RequireAuth(handler.CreateTask))
+	mux.HandleFunc("PATCH /fleet/tasks/{id}/status", handler.RequireAuth(handler.UpdateTaskStatus))
 	mux.HandleFunc("GET /fleet/alerts", handler.RequireAuth(handler.ListAlerts))
 	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", handler.RequireAuth(handler.AcknowledgeAlert))
 	mux.HandleFunc("GET /fleet/ws", handler.ServeWS)
