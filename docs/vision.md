@@ -170,6 +170,7 @@ sie werden hier bewusst offen gehalten statt stillschweigend entschieden:
   Maschinensicherheit/DIN EN ISO 3691-4 für fahrerlose Flurförderzeuge, nicht
   Straßenverkehrsrecht) — und was bedeutet das konkret für Verhalten bei Video-/Verbindungsverlust?
 - **Konkrete ROS2/DDS-Schnittstelle:** Ausstehend, Teil des AP1-Workshops mit der Professur Logistik (`ADR-027`)
-- **Projektstatus:** Ist die Ausschreibung bereits beauftragt oder wird sie noch als Angebot vorbereitet?
+- **Projektstatus:** ~~Ist die Ausschreibung bereits beauftragt oder wird sie noch als Angebot vorbereitet?~~
+  Beantwortet — siehe `requirements.md` §Projektstatus: Ausschreibung ist beauftragt (Stand 2026-07-13).
 
 Siehe auch `CONTEXT.MD` „Offene Fragen" für die technische Fortführung dieser Punkte.

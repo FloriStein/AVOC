@@ -10,6 +10,13 @@ Extrahiert aus der früheren `DOKU.MD` (dort war dies Abschnitt 18) — der Rest
 
 **Datei:** [internal/controlserver/statemachine/state.go](../internal/controlserver/statemachine/state.go)
 
+> **Update (2026-07-16):** Seit `ADR-026` existiert `*Machine` nicht mehr als ein einziges
+> Prozess-Singleton, sondern eine eigene Instanz pro Fahrzeug. Erzeugung/Zugriff läuft über
+> [`vehiclecontext.Registry`](../internal/controlserver/vehiclecontext/registry.go) — siehe
+> Abschnitt 2 unten für das konkrete Lookup-Pattern (`registry.Get(vehicleID).SM`). Die Transition-
+> Logik der `Machine` selbst (Tabelle, `TransitionSystem`, `TransitionMedia`) ist unverändert und
+> unten weiterhin korrekt beschrieben.
+
 Die State Machine ist der Safety-Kern des Systems. Transitionen sind durch eine Tabelle explizit erlaubt oder verboten — ungültige Versuche werden still verworfen.
 
 ```go
@@ -60,18 +67,49 @@ func (m *Machine) TransitionMedia(next MediaState) {
 }
 ```
 
-**Neuer Zustand aus einem bestehenden lesen (Thread-safe):**
+**Neuer Zustand aus einem bestehenden lesen (Thread-safe), heute per Fahrzeug über die Registry:**
 
 ```go
-sm := statemachine.New()
-sysState, ctrlState, mediaState, opState := sm.Get()
+vc := vehicleContexts.Get(vehicleID)  // lazy-create, dauerhaft behalten (ADR-026)
+sysState, ctrlState, mediaState, opState := vc.SM.Get()
 ```
 
 ---
 
-### 2. Safety Watchdogs — DeadmanWatchdog & ACKTimeoutWatcher
+### 2. Safety Watchdogs — Per-Vehicle über `vehiclecontext.Registry` (ADR-026)
 
-**Datei:** [internal/controlserver/safety/detector.go](../internal/controlserver/safety/detector.go)
+**Dateien:** [internal/controlserver/safety/detector.go](../internal/controlserver/safety/detector.go),
+[internal/controlserver/vehiclecontext/registry.go](../internal/controlserver/vehiclecontext/registry.go)
+
+`Registry` bündelt `*statemachine.Machine`, `DeadmanWatchdog`, `ACKTimeoutWatcher` und
+`VehicleACKWatchdog` in einem `VehicleContext` pro Fahrzeug (`map[vehicleID]*VehicleContext`,
+`sync.Mutex`-geschützt, lazy-create beim ersten `Get()`):
+
+```go
+type VehicleContext struct {
+    SM                 *statemachine.Machine
+    Deadman            *csafety.DeadmanWatchdog
+    ACKTimeoutWatcher  *csafety.ACKTimeoutWatcher
+    VehicleACKWatchdog *csafety.VehicleACKWatchdog
+}
+
+func (r *Registry) Get(vehicleID string) *VehicleContext {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if ctx, ok := r.contexts[vehicleID]; ok {
+        return ctx  // Instanzen bleiben für die Prozesslaufzeit bestehen — kein GC
+    }
+    sm := statemachine.New()
+    ctx := &VehicleContext{SM: sm, Deadman: csafety.NewDeadmanWatchdog(r.deadmanTimeout, sm, r.publisher), /* ... */}
+    r.contexts[vehicleID] = ctx
+    return ctx
+}
+```
+
+Vor `ADR-026` waren `Machine` und alle Watchdogs einzelne Prozess-Singletons — ein zweites
+Fahrzeug hätte die Deadman-/ACK-Überwachung des ersten stillschweigend überschrieben. Aufrufer
+(Command Engine, WS-Handler) lösen die per-Fahrzeug-Instanz bei jedem Zugriff über
+`registry.Get(vehicleID)` auf, statt ein injiziertes `sm`/`deadman`-Feld zu halten.
 
 #### DeadmanWatchdog
 
@@ -122,14 +160,16 @@ func (w *ACKTimeoutWatcher) CommandACKed() {
 }
 ```
 
-Im Transport-Layer wird das Muster so verwendet:
+Im Transport-Layer wird das Muster so verwendet — der Watcher kommt aus der per-Fahrzeug
+`VehicleContext`, nicht aus einem Handler-Feld:
 
 ```go
 // websocket.go readLoop — Wrappt jeden Command mit ACK-Tracking
-h.ackWatcher.CommandReceived(sess.ID, sess.VehicleID)
+vc := h.vehicleContexts.Get(sess.VehicleID)
+vc.ACKTimeoutWatcher.CommandReceived(sess.ID, sess.VehicleID)
 ackBytes, err = h.engine.Handle(msg, sess)
 conn.WriteMessage(websocket.BinaryMessage, ackBytes)
-h.ackWatcher.CommandACKed()  // Timer abbrechen — alles gut
+vc.ACKTimeoutWatcher.CommandACKed()  // Timer abbrechen — alles gut
 ```
 
 ---
@@ -138,7 +178,7 @@ h.ackWatcher.CommandACKed()  // Timer abbrechen — alles gut
 
 **Datei:** [internal/controlserver/command/engine.go](../internal/controlserver/command/engine.go)
 
-Der Command Engine parst eingehende Protobuf-Bytes, routet nach `CommandType` und antwortet mit einem `ControlAck`.
+Der Command Engine parst eingehende Protobuf-Bytes, routet nach `CommandType` und antwortet mit einem `ControlAck`. State Machine und Watchdogs werden bei jedem Aufruf per Fahrzeug aus der `vehiclecontext.Registry` geholt (ADR-026) — es gibt kein injiziertes `e.sm`/`e.deadman`-Feld mehr, da zwei Fahrzeuge niemals Safety-State teilen dürfen. Zwei sicherheitsrelevante Zweige, die im vereinfachten Beispiel unten fehlen würden, sind bewusst mit aufgeführt: der **Audit-Eintrag vor der SAFE_MODE-Transition** (ADR-018 — Persistenz muss dem State-Wechsel vorausgehen) und der **OBSERVER-Rollenblock** für Steuerbefehle (ADR-025 — nur `ACTIVE_OPERATOR` darf STEER/THROTTLE/BRAKE/SPEED senden, `EMERGENCY_STOP` bleibt für alle Rollen erlaubt).
 
 ```go
 func (e *Engine) Handle(rawMsg []byte, sess session.Session) ([]byte, error) {
@@ -151,24 +191,53 @@ func (e *Engine) Handle(rawMsg []byte, sess session.Session) ([]byte, error) {
         return e.ack(sess, cmd.Header.EventId, false, "rate limited")
     }
 
+    vc := e.vehicleContexts.Get(sess.VehicleID)  // Per-Fahrzeug Lookup (ADR-026)
+
     switch cmd.Type {
     case controlv1.CommandType_COMMAND_TYPE_DEADMAN_HOLD:
-        e.deadman.Reset()  // Watchdog zurücksetzen
+        vc.Deadman.Reset()  // Watchdog zurücksetzen
 
     case controlv1.CommandType_COMMAND_TYPE_DEADMAN_RELEASE:
         // Bewusst kein Reset — Watchdog läuft ab → SAFE_MODE
 
     case controlv1.CommandType_COMMAND_TYPE_EMERGENCY_STOP:
-        e.sm.TransitionSystem(statemachine.StateSafeMode)
+        // Audit-Eintrag VOR der State-Transition schreiben (ADR-018-Invariante:
+        // SAFE_MODE erst nach garantierter Persistenz). Schreibfehler blockiert
+        // die Transition NICHT — Safety geht vor Audit-Vollständigkeit.
+        if e.auditWriter != nil {
+            sys, ctrl, _, _ := vc.SM.Get()
+            if err := e.auditWriter.WriteSync(audit.SafetyAuditEvent{
+                EventID: ulid.Generate(), SessionID: sess.ID, VehicleID: sess.VehicleID,
+                OperatorID: sess.OperatorID, EventType: logger.EventEmergencyStop,
+                Reason: "operator EMERGENCY_STOP command",
+                SystemState: string(sys), CtrlState: string(ctrl), Timestamp: time.Now(),
+            }); err != nil {
+                svcLog.Error("audit write failed — proceeding to SAFE_MODE", "error", err)
+            }
+        }
+
+        vc.SM.TransitionSystem(statemachine.StateSafeMode)
         e.safetyPub.PublishEvent(safetyservice.SafetyEvent{
+            SessionID: sess.ID, VehicleID: sess.VehicleID,
             Type:   safetyservice.EventEmergencyStop,
             Reason: "operator EMERGENCY_STOP command",
         })
 
     case controlv1.CommandType_COMMAND_TYPE_STEER,
          controlv1.CommandType_COMMAND_TYPE_THROTTLE,
-         controlv1.CommandType_COMMAND_TYPE_BRAKE:
-        // Weiterleitung an Fahrzeug (Vehicle Connection Layer)
+         controlv1.CommandType_COMMAND_TYPE_BRAKE,
+         controlv1.CommandType_COMMAND_TYPE_SPEED:
+        // OBSERVER darf keine Steuerbefehle senden (ADR-025) — EMERGENCY_STOP
+        // oben ist davon bewusst ausgenommen (Safety schlägt Rollenmodell).
+        if sess.OperatorRole == "OBSERVER" {
+            return e.ack(sess, cmd.Header.EventId, false, "observer role: control commands not allowed")
+        }
+        // Weiterleitung an Fahrzeug (Vehicle Connection Layer, ADR-021)
+        if e.vehicleForwarder != nil {
+            if err := e.vehicleForwarder.ForwardCommand(sess.VehicleID, rawMsg); err == nil {
+                vc.VehicleACKWatchdog.CommandForwarded()
+            }
+        }
     }
 
     return e.ack(sess, cmd.Header.EventId, true, "")

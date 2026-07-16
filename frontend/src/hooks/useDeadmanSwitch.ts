@@ -31,7 +31,7 @@ const generateULID = monotonicFactory()
 const DEADMAN_INTERVAL_MS = 1500
 
 // Dead-man Switch — operator must actively hold (spacebar or button).
-// Releasing causes the server-side watchdog to fire SAFE_MODE after 2s (ADR-009).
+// Releasing causes the server-side watchdog to fire SAFE_MODE after 10s (ADR-009).
 export function useDeadmanSwitch(
   wsClient: WSClient | null,
   sessionId: string | null,

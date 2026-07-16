@@ -8,6 +8,12 @@
 
 ADR-025 führte Multi-Operator-Support ein: `session.Manager` verwaltet mehrere parallele Sessions mit `vehicleController map[string]string` (vehicleID → Controller-Session). Auf den ersten Blick erlaubt das bereits, dass Operator A Vehicle-1 steuert während Operator B gleichzeitig Vehicle-2 steuert.
 
+> **Hinweis zur Koexistenz mit ADR-025:** Dieses ADR ersetzt nicht das Rollenmodell
+> (`ACTIVE_OPERATOR`/`OBSERVER`), `session.Manager` oder die Session-Lifecycle-Entscheidungen aus
+> ADR-025 — es ersetzt ausschließlich den darunterliegenden, bis dahin global-singleton
+> `statemachine.Machine` durch eine Instanz pro Fahrzeug (`VehicleContextRegistry`, siehe unten).
+> Beide ADRs gelten weiterhin gemeinsam.
+
 Bei der Prüfung dieser Annahme (Nutzerfrage: *"kann Operator B Fahrzeug 2 steuern, während Operator A Fahrzeug 1 steuert?"*) zeigte sich, dass drei Safety-kritische Komponenten weiterhin als **Singletons pro Prozess** existieren, nicht pro Fahrzeug:
 
 | Komponente | Datei | Problem |
@@ -82,7 +88,12 @@ Betroffen in `cmd/control-server/main.go`:
 GET /vehicles/{id}/state → { system, control, media, operator }  (4-Layer-Snapshot des EINEN Fahrzeugs)
 ```
 
-`GET /state` (ohne ID) entfällt als Polling-Endpunkt. Die zwei bisherigen Nutzungen werden migriert:
+`GET /state` (ohne ID) entfällt als Polling-Endpunkt für die zwei unten migrierten Nutzungen.
+> **Update (2026-07-16):** In der Umsetzung wurde `GET /state` bewusst nicht entfernt, sondern als
+> Compat-Shim beibehalten — noch von `tests/performance/latency.js` und
+> `tests/integration/services_test.go` genutzt, kein Frontend-Konsument mehr (geplante Entfernung:
+> Backlog MV-12). Bereits korrekt dokumentiert in `architecture.md` und `DECISIONS.MD` (Zeile
+> MV-12); dieser Absatz beschrieb nur die ursprüngliche Planung. Die zwei bisherigen Nutzungen wurden migriert:
 
 - **Live-Polling während aktiver Session** (`useSystemState`): sobald `vehicleId` bekannt ist (Session gestartet/wiederhergestellt) → Wechsel auf `GET /vehicles/{id}/state`.
 - **Page-Reload-Recovery** (Sprint 16 BUG-03 — Frontend kennt nach Reload noch keine `vehicleId`): nutzt stattdessen den bereits existierenden `GET /sessions`-Endpoint (Sprint "Observer-Einschränkungen" Sept. 2026-06-14), gefiltert auf `operator_id === eigene JWT-Subject` → liefert `vehicle_id` + `role` der eigenen, evtl. verwaisten Session.

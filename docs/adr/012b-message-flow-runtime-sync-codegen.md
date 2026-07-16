@@ -42,6 +42,13 @@ Diese Entscheidungen blockieren FE-02 (WebSocket Client), BE-04 (Command Routing
 - Build Pipeline stellt sicher, dass Code vor Kompilierung generiert wird
 - Gilt für Go Backend (protoc-gen-go) und Frontend (protoc Plugin)
 
+> **Update (2026-07-16):** In der Umsetzung wurde entgegen der obigen Entscheidung der generierte
+> Go-Code (`gen/go/**/*.pb.go`) doch ins Repository eingecheckt — es gibt keine `gen/`-Regel in
+> `.gitignore`. Grund/Zeitpunkt der Abweichung ist nicht dokumentiert; der Punkt „Verhindert
+> Merge-Konflikte durch generierte Code-Diffs" trifft auf den Ist-Zustand entsprechend nicht mehr
+> zu. Keine Korrektur des Ist-Zustands in dieser Session (reine Doku-Korrektur, kein Refactoring) —
+> falls das `.gitignore`-Ausschluss-Verhalten gewünscht bleibt, ist das ein eigener Folge-Task.
+
 ### Begründung
 - `.proto`-Dateien bleiben Single Source of Truth — kein Drift möglich
 - Verhindert Merge-Konflikte durch generierte Code-Diffs

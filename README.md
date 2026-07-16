@@ -81,7 +81,7 @@ make test-latency       # Go Benchmark ACK-Roundtrip <100ms (ADR-010 Build-Fail)
 make test-k6            # k6 Load Test 10 VU / 30s (benötigt Docker)
 
 # Frontend Tests
-cd frontend && npm test           # Vitest Component-Tests (41 Tests)
+cd frontend && npm test           # Vitest Component-Tests (252 Tests über 25 Dateien)
 cd frontend && npm run test:e2e   # Playwright E2E (benötigt laufenden Stack)
 
 # Stack stoppen
@@ -180,14 +180,17 @@ docker compose -f tests/docker-compose.test.yml down
 ## Projektstruktur
 
 ```
-├── cmd/                    # Go Service Entry Points
+├── cmd/                    # Go Service Entry Points (u. a. fleet-service/, vehicle-mock/)
 ├── internal/               # Go Service-interne Pakete
 │   ├── authservice/
 │   ├── controlserver/
 │   │   ├── safety/         # Safety Decision Module (DeadmanWatchdog, ACKTimeout)
 │   │   ├── session/        # Session Manager (GSA), Handover
 │   │   ├── statemachine/   # 4-Layer State Machine
-│   │   └── transport/      # WebSocket Transport Layer
+│   │   ├── transport/      # WebSocket Transport Layer
+│   │   └── vehiclecontext/ # VehicleContextRegistry — pro Fahrzeug SM + Watchdogs (ADR-026)
+│   ├── fleetservice/       # Fleet-Domäne (Zonen/Stationen/Tasks/Alerts/Live-Status, ADR-027/028/029)
+│   ├── fleetgateway/       # Abstraktes Interface gegen externes ROS2/DDS-Fahrzeugbackend (ADR-027)
 │   ├── safetyservice/      # Safety Event Bus (In-Memory)
 │   ├── vehicleconnection/  # Vehicle WebSocket Handler
 │   └── vehicleregistry/    # Vehicle Registry (ADR-022) — SQLiteVehicleStore, VehicleStore Interface

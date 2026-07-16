@@ -97,9 +97,16 @@ Regel: Max. 1 ACTIVE_OPERATOR. NO_OPERATOR → SYSTEM SAFE_MODE.
 
 | Klasse | Trigger | Reaktion |
 |--------|---------|----------|
-| **CRITICAL** | WS Disconnect, Safety Bus Failure, Dead-man Timeout, Command ACK Timeout, Auth Invalidation, No Active Operator | Channel Close → SAFE_MODE |
+| **CRITICAL** | WS Disconnect, Safety Bus Failure, Dead-man Timeout, **Command ACK Timeout** (`ACKTimeoutWatcher`, 100ms — Server-ACK an Operator bleibt aus), **Vehicle ACK Timeout** (`VehicleACKWatchdog`, 1s — Fahrzeug bestätigt weitergeleiteten Befehl nicht), Auth Invalidation, No Active Operator | Channel Close → SAFE_MODE |
 | **DEGRADED** | Video Lost (MEDIA_FAILED), Video Degraded, Partial Telemetry Loss | DEGRADED State, Warnung im UI, Control möglich |
 | **OBSERVATION** | Auth Service down (bestehende Session) | Neue Sessions blockiert, JWT-Validierung lokal weiter |
+
+**„Command ACK Timeout" ist kein einzelner Mechanismus**, sondern zwei eigenständige Watchdogs mit
+unterschiedlichem Timeout/Trigger (beide Teil des `VehicleContext`, ADR-026):
+- `ACKTimeoutWatcher` (100ms) — überwacht den **Server-internen** ACK-Roundtrip: Command empfangen
+  → `ControlAck` an den Operator zurückgesendet. Bildet das <100ms-Control-Loop-Budget ab.
+- `VehicleACKWatchdog` (1s) — überwacht, ob das **Fahrzeug** einen weitergeleiteten Bewegungsbefehl
+  (`ForwardCommand`) mit einem `VehicleCommandAck` bestätigt (ADR-021).
 
 **Formale Invarianten:**
 ```

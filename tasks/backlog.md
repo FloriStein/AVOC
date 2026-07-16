@@ -370,23 +370,23 @@ Typ S sind Fast-Track (reine Doku-Korrektur). Mittel Typ M/L durchlaufen die vol
 | DRIFT-K4 | „CI Build-Fail" bei >100ms existiert nicht als Pipeline — Grill-Me vor Fix | L | Kritisch | 🔲 Grill-Me ausstehend | Kein CI-System im Repo überhaupt |
 | DRIFT-K5 | WS-ACK-Roundtrip-Benchmark läuft im Standard-Testlauf nicht mit — Grill-Me vor Fix | M/L | Kritisch | 🔲 Grill-Me ausstehend | `b.Skip(...)` liefert zusätzlich stillen False-Positive |
 | DRIFT-K6 | `TestLatencyBudget_DocumentedRequirement` ist tautologisch — Grill-Me vor Fix | S/M | Kritisch | 🔲 Grill-Me ausstehend | Vermutlich zusammen mit K4/K5 zu klären |
-| DRIFT-M01 | `vision.md` §11 veraltete Frage zurückverlinken auf beantworteten `requirements.md`-Stand | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M02 | `ADR-018` datierten Update-Block ergänzen (Verweis auf ADR-023-Postgres-Migration) | S | Mittel | 🔲 Fast-Track | Nicht überschreiben (§6) |
-| DRIFT-M03 | `ADR-011` Verweis auf `ADR-026` (Per-Vehicle-Isolation) ergänzen | S | Mittel | 🔲 Fast-Track | Auch in `requirements.md` (AUDIT-05) |
-| DRIFT-M04 | `ADR-022` Verweis auf `ADR-023` (Postgres-Migration) ergänzen | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M05 | `ADR-021` um Hinweis auf `vehicle-mock`s Fleet-Simulator-Doppelrolle ergänzen | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M06 | `ADR-025`/`ADR-026` Cross-Referenz ergänzen (Koexistenz, kein Rename) | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M07 | `ADR-026` Text „GET /state entfällt" korrigieren (Compat-Shim bleibt bestehen) | S | Mittel | 🔲 Fast-Track | Bereits korrekt in architecture.md/DECISIONS.MD |
-| DRIFT-M08 | `DECISIONS.MD` Status-Spalte ADR-014 auf „Superseded by ADR-020" korrigieren | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M09 | `ADR-012b`-Text zu `.gitignore`-Ausschluss korrigieren (Code ist getrackt) | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M10 | `docs/code-patterns.md` §1–3 auf ADR-026-Registry-Pattern aktualisieren | S | Mittel | 🔲 Fast-Track | Singleton-Beispiel ist überholt |
-| DRIFT-M11 | `docs/code-patterns.md` §3 um Audit-Eintrag/OBSERVER-Block-Zweige ergänzen | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M12 | Kommentar in `useDeadmanSwitch.ts:34` von 2s auf 10s korrigieren | S | Mittel | 🔲 Fast-Track | Code-Verhalten selbst korrekt |
-| DRIFT-M13 | `docs/architecture.md` Frontend-Komponententabelle um `FleetTaskPanel`/Audio-Module ergänzen | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M14 | `docs/architecture.md` Container-Tabelle um `postgres`-Zeile ergänzen | S | Mittel | 🔲 Fast-Track | — |
-| DRIFT-M15 | `CONTEXT.MD` Failure-Classification: `ACKTimeoutWatcher`/`VehicleACKWatchdog` getrennt ausweisen | S | Mittel | 🔲 Fast-Track | Code deckt beide bereits korrekt ab |
-| DRIFT-M16 | `docs/requirements.md` State-Machine-Requirements um Per-Vehicle-Hinweis (ADR-026) ergänzen | S | Mittel | 🔲 Fast-Track | Deckt sich mit M03 |
-| DRIFT-M17 | `README.md`-Projektstruktur-Baum um `fleet-service`/`fleetgateway` ergänzen | S | Mittel | 🔲 Fast-Track | Service-Tabelle im selben Dokument bereits korrekt |
+| DRIFT-M01 | `vision.md` §11 veraltete Frage zurückverlinken auf beantworteten `requirements.md`-Stand | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M02 | `ADR-018` datierten Update-Block ergänzen (Verweis auf ADR-023-Postgres-Migration) | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Nicht überschreiben (§6) |
+| DRIFT-M03 | `ADR-011` Verweis auf `ADR-026` (Per-Vehicle-Isolation) ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Auch in `requirements.md` (AUDIT-05) |
+| DRIFT-M04 | `ADR-022` Verweis auf `ADR-023` (Postgres-Migration) ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M05 | `ADR-021` um Hinweis auf `vehicle-mock`s Fleet-Simulator-Doppelrolle ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M06 | `ADR-025`/`ADR-026` Cross-Referenz ergänzen (Koexistenz, kein Rename) | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M07 | `ADR-026` Text „GET /state entfällt" korrigieren (Compat-Shim bleibt bestehen) | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Bereits korrekt in architecture.md/DECISIONS.MD |
+| DRIFT-M08 | `DECISIONS.MD` Status-Spalte ADR-014 auf „Superseded by ADR-020" korrigieren | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M09 | `ADR-012b`-Text zu `.gitignore`-Ausschluss korrigieren (Code ist getrackt) | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M10 | `docs/code-patterns.md` §1–3 auf ADR-026-Registry-Pattern aktualisieren | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Singleton-Beispiel ist überholt |
+| DRIFT-M11 | `docs/code-patterns.md` §3 um Audit-Eintrag/OBSERVER-Block-Zweige ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M12 | Kommentar in `useDeadmanSwitch.ts:34` von 2s auf 10s korrigieren | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Code-Verhalten selbst korrekt |
+| DRIFT-M13 | `docs/architecture.md` Frontend-Komponententabelle um `FleetTaskPanel`/Audio-Module ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M14 | `docs/architecture.md` Container-Tabelle um `postgres`-Zeile ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-M15 | `CONTEXT.MD` Failure-Classification: `ACKTimeoutWatcher`/`VehicleACKWatchdog` getrennt ausweisen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Code deckt beide bereits korrekt ab |
+| DRIFT-M16 | `docs/requirements.md` State-Machine-Requirements um Per-Vehicle-Hinweis (ADR-026) ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Deckt sich mit M03 |
+| DRIFT-M17 | `README.md`-Projektstruktur-Baum um `fleet-service`/`fleetgateway` ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Service-Tabelle im selben Dokument bereits korrekt |
 | DRIFT-M18 | OBSERVATION-Trigger „Auth-Service-down blockiert neue Sessions" — implementieren oder Doku korrigieren | M | Mittel | 🔲 Backlog | Entscheidung nötig, volle Phasenfolge |
 | DRIFT-M19 | k6-Latenztest auf echten WS-ACK-Roundtrip umstellen (misst aktuell `GET /state`) | M | Mittel | 🔲 Backlog | — |
 | DRIFT-M20 | Video-Latenzziel (100–300ms) — automatisierten Test ergänzen oder Doku als unverifiziert kennzeichnen | S/M | Mittel | 🔲 Backlog | ADR-014: kein Safety-Hartziel |
@@ -395,13 +395,13 @@ Typ S sind Fast-Track (reine Doku-Korrektur). Mittel Typ M/L durchlaufen die vol
 | DRIFT-M23 | Backlog-Task für dokumentierte `CreateAlert`-Fehlerpfad-Testlücke (FLEET-07-Nachtrag) nachtragen | S | Mittel | ✅ hiermit erledigt | Diese Zeile selbst ist der Backlog-Eintrag |
 | DRIFT-M24 | `OperatorRole` als Typ statt Rohstring durchgängig verwenden (`session/manager.go` u. a.) | M | Mittel | 🔲 Backlog | Sicherheitsnah (ADR-025) — volle §17-Testabdeckung bei Umsetzung |
 | DRIFT-M25 | Task-Status in `internal/fleetservice/store.go` als benannten Typ statt Rohstrings führen | M | Mittel | 🔲 Backlog | Vorbild: `statemachine/state.go` |
-| DRIFT-N01 | `docs/adr/README.md` Kopfzeile „29 ADRs" auf 32 korrigieren | S | Niedrig | 🔲 Fast-Track | — |
-| DRIFT-N02 | `ADR-002` Pseudocode-Methodennamen an echten Code (`Subscribe`, 3-Parameter-Signatur) angleichen | S | Niedrig | 🔲 Fast-Track | — |
-| DRIFT-N03 | `ADR-009` Dateipfade (`detector.go` statt `deadman.go`) und Testanzahl (20 statt 18) korrigieren | S | Niedrig | 🔲 Fast-Track | — |
-| DRIFT-N04 | `ADR-017` um `AuditWriter.QueryBySession`-Methode ergänzen | S | Niedrig | 🔲 Fast-Track | — |
-| DRIFT-N05 | `useControls.ts` Magic-Number-Fallbacks (`?? 1/2/3`) als benannte Konstanten führen | S | Niedrig | 🔲 Fast-Track | Nur Edge-Case-Pfad |
-| DRIFT-N06 | `README.md` Testanzahl „41 Tests" auf tatsächliche Zahl (252) korrigieren | S | Niedrig | 🔲 Fast-Track | — |
-| DRIFT-N07 | `docs/requirements.md` Kopfzeilen-Datumsstempel nachziehen | S | Niedrig | 🔲 Fast-Track | — |
+| DRIFT-N01 | `docs/adr/README.md` Kopfzeile „29 ADRs" auf 32 korrigieren | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-N02 | `ADR-002` Pseudocode-Methodennamen an echten Code (`Subscribe`, 3-Parameter-Signatur) angleichen | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-N03 | `ADR-009` Dateipfade (`detector.go` statt `deadman.go`) und Testanzahl (20 statt 18) korrigieren | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-N04 | `ADR-017` um `AuditWriter.QueryBySession`-Methode ergänzen | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-N05 | `useControls.ts` Magic-Number-Fallbacks (`?? 1/2/3`) als benannte Konstanten führen | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Nur Edge-Case-Pfad |
+| DRIFT-N06 | `README.md` Testanzahl „41 Tests" auf tatsächliche Zahl (252) korrigieren | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
+| DRIFT-N07 | `docs/requirements.md` Kopfzeilen-Datumsstempel nachziehen | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
 | DRIFT-AP3 | Neues `## EPIC: AP3` (Admin-Konsole) in diesem Backlog anlegen — Meilenstein ist 0 % begonnen, aber nicht als solcher sichtbar | S | Mittel (strukturell) | 🔲 Backlog | AUDIT-01-Empfehlung, kein Einzel-Drift-Fix |
 
 ---

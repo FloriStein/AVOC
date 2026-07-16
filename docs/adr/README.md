@@ -6,7 +6,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 
 ---
 
-## ADR-Index (29 ADRs)
+## ADR-Index (32 ADRs)
 
 | ADR | Titel | Kernentscheidung |
 |-----|-------|-----------------|

@@ -17,11 +17,11 @@ Sprint 16 hat zwei offene Lücken des ursprünglichen Failure Models implementie
 | Operator WebSocket Disconnect | WS_DISCONNECT | Channel Close → SAFE_MODE | `transport/websocket.go` readLoop defer |
 | Fahrzeug WebSocket Disconnect | WS_DISCONNECT | Channel Close → SAFE_MODE | `vehicleconnection/handler.go` readLoop defer |
 | Safety Event Bus Failure | Safety Bus unreachable | Auto-Stop → SAFE_MODE | **SafetyBusWatchdog** (Sprint 16) |
-| Dead-man Switch Timeout | Kein Heartbeat vom Operator | Auto-Stop → SAFE_MODE | `safety/deadman.go` DeadmanWatchdog |
+| Dead-man Switch Timeout | Kein Heartbeat vom Operator | Auto-Stop → SAFE_MODE | `safety/detector.go` DeadmanWatchdog |
 | Vehicle ACK Timeout | Fahrzeug bestätigt Befehl nicht | Auto-Stop → SAFE_MODE | **VehicleACKWatchdog** (Sprint 16) |
 | Command ACK Timeout | Control ACK zum Operator überschritten | Auto-Stop → SAFE_MODE | `safety/detector.go` ACKTimeoutWatcher |
 | Auth Invalidation | JWT revoked, laufende Session | Auto-Stop → SAFE_MODE | Auth Service (ADR-004) |
-| No Active Operator | OPERATOR_STATE = NO_OPERATOR | Auto-Stop → SAFE_MODE | `session/manager.go` |
+| No Active Operator | OPERATOR_STATE = NO_OPERATOR | Auto-Stop → SAFE_MODE | `statemachine/state.go` (`TransitionOperator(OpNoOperator)`) |
 | Emergency Stop | Operator-Kommando | Sofort → SAFE_MODE | `command/engine.go` |
 
 ### DEGRADED — Warnung, Control bleibt möglich
@@ -157,7 +157,7 @@ INVARIANT 3:
 - Safety Test Suite kann jeden Trigger isoliert testen
 - Klare Recovery-Sequenz implementierbar
 - Alle 9 CRITICAL-Trigger sind als Watchdog/Handler implementiert (Sprint 16)
-- 18 Unit-Tests in `tests/unit/watchdog_test.go` decken alle Edge Cases ab
+- 20 Unit-Tests in `tests/unit/watchdog_test.go` decken alle Edge Cases ab
 
 ### Negativ:
 - Command ACK Timeout als CRITICAL erfordert präzises Timeout-Management im Control Server

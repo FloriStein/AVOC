@@ -46,23 +46,23 @@ Nutzer.
 
 | ID | Befund | Quelle | Status |
 |----|--------|--------|--------|
-| DRIFT-M01 | `vision.md` §11 „Ist die Ausschreibung beauftragt?" ist bereits seit 2026-07-13 in `requirements.md` §Projektstatus beantwortet, aber nicht zurückverlinkt | AUDIT-01 | offen |
-| DRIFT-M02 | `ADR-018` (Status „Accepted") referenziert die spätere PostgreSQL-Migration (`ADR-023`) nirgends — datierter Update-Block nötig (nicht überschreiben, §6) | AUDIT-02 | offen |
-| DRIFT-M03 | `ADR-011` (System State Machine) referenziert `ADR-026` (Per-Vehicle-Isolation) nicht, obwohl `architecture.md`/`CONTEXT.MD` den Wechsel korrekt zeigen | AUDIT-02, AUDIT-05 | offen |
-| DRIFT-M04 | `ADR-022` (Vehicle Registry, SQLite) referenziert `ADR-023` (Postgres-Migration) nicht — Code nutzt bereits vollständig Postgres | AUDIT-02 | offen |
-| DRIFT-M05 | `ADR-021` (Vehicle Connectivity) erwähnt `vehicle-mock`s seit Sprint 21 bestehende Doppelrolle (Single-Vehicle-Mock + Fleet-Simulator) nicht | AUDIT-02 | offen |
-| DRIFT-M06 | `ADR-025` (`vehicleController`-Map) und `ADR-026` (`vehiclecontext.Registry`) ohne Cross-Referenz — Risiko, ADR-026 werde fälschlich als Ablösung von ADR-025 gelesen | AUDIT-02 | offen |
-| DRIFT-M07 | `ADR-026` behauptet, `GET /state` entfalle als Polling-Endpunkt (Zeile 85) — Code behält ihn bewusst als Compat-Shim (`main.go:643`), bereits korrekt in `architecture.md`/`DECISIONS.MD` (MV-12) dokumentiert, nur ADR-026-Text selbst nie korrigiert | AUDIT-02 | offen |
-| DRIFT-M08 | `DECISIONS.MD` führt `ADR-014` als „Accepted", obwohl die ADR-Datei selbst korrekt „Superseded by ADR-020" trägt | AUDIT-02 | offen |
-| DRIFT-M09 | `ADR-012b` behauptet, generierter Protobuf-Code werde per `.gitignore` ausgeschlossen — `gen/go/*.pb.go` sind tatsächlich getrackt, keine `gen/`-Regel in `.gitignore` | AUDIT-02 | offen |
-| DRIFT-M10 | `docs/code-patterns.md` §1–3 zeigt noch das per ADR-026 abgelöste Singleton-Pattern (`Machine`/`DeadmanWatchdog`/`Engine` mit Einzelfeldern) statt der tatsächlichen `VehicleContextRegistry` | AUDIT-03 | offen |
-| DRIFT-M11 | `docs/code-patterns.md` §3 unterschlägt die sicherheitsrelevanten Zweige des echten `Engine.Handle` (Audit-Eintrag vor SAFE_MODE, OBSERVER-Rollenblock) | AUDIT-03 | offen |
-| DRIFT-M12 | Stale Kommentar in `frontend/src/hooks/useDeadmanSwitch.ts:34` nennt 2s Watchdog-Timeout, tatsächlicher Server-Timeout ist 10s (Code selbst korrekt, nur Kommentar falsch) | AUDIT-03 | offen |
-| DRIFT-M13 | `docs/architecture.md` Frontend-Komponententabelle (Sprint 22–23 nachgetragen) führt `FleetTaskPanel.tsx` (Sprint 24) und `fleet-alert-sound.ts`/`useFleetAlertSound.ts` (Sprint 25) nicht | AUDIT-04 | offen |
-| DRIFT-M14 | `docs/architecture.md` Container-Services-Tabelle führt den laufenden `postgres`-Container an keiner Stelle als eigene Zeile | AUDIT-04 | offen |
-| DRIFT-M15 | `CONTEXT.MD` Failure-Classification-Tabelle fasst zwei eigenständige Mechanismen (`ACKTimeoutWatcher` vs. `VehicleACKWatchdog`, unterschiedliche Timeouts/Trigger) fälschlich unter „Command ACK Timeout" zusammen | AUDIT-05 | offen |
-| DRIFT-M16 | `docs/requirements.md` „State Machine Requirements" beschreibt nur die globale State-Machine-Variante, ohne Per-Vehicle-Hinweis (ADR-026) | AUDIT-05 | offen |
-| DRIFT-M17 | `README.md`-Projektstruktur-Baum (Zeilen 182-206) nennt `cmd/fleet-service`/`internal/fleetservice`/`internal/fleetgateway` nicht, obwohl die Service-Tabelle im selben Dokument korrekt ist | AUDIT-07 | offen |
+| DRIFT-M01 | `vision.md` §11 „Ist die Ausschreibung beauftragt?" ist bereits seit 2026-07-13 in `requirements.md` §Projektstatus beantwortet, aber nicht zurückverlinkt | AUDIT-01 | behoben |
+| DRIFT-M02 | `ADR-018` (Status „Accepted") referenziert die spätere PostgreSQL-Migration (`ADR-023`) nirgends — datierter Update-Block nötig (nicht überschreiben, §6) | AUDIT-02 | behoben |
+| DRIFT-M03 | `ADR-011` (System State Machine) referenziert `ADR-026` (Per-Vehicle-Isolation) nicht, obwohl `architecture.md`/`CONTEXT.MD` den Wechsel korrekt zeigen | AUDIT-02, AUDIT-05 | behoben |
+| DRIFT-M04 | `ADR-022` (Vehicle Registry, SQLite) referenziert `ADR-023` (Postgres-Migration) nicht — Code nutzt bereits vollständig Postgres | AUDIT-02 | behoben |
+| DRIFT-M05 | `ADR-021` (Vehicle Connectivity) erwähnt `vehicle-mock`s seit Sprint 21 bestehende Doppelrolle (Single-Vehicle-Mock + Fleet-Simulator) nicht | AUDIT-02 | behoben |
+| DRIFT-M06 | `ADR-025` (`vehicleController`-Map) und `ADR-026` (`vehiclecontext.Registry`) ohne Cross-Referenz — Risiko, ADR-026 werde fälschlich als Ablösung von ADR-025 gelesen | AUDIT-02 | behoben |
+| DRIFT-M07 | `ADR-026` behauptet, `GET /state` entfalle als Polling-Endpunkt (Zeile 85) — Code behält ihn bewusst als Compat-Shim (`main.go:643`), bereits korrekt in `architecture.md`/`DECISIONS.MD` (MV-12) dokumentiert, nur ADR-026-Text selbst nie korrigiert | AUDIT-02 | behoben |
+| DRIFT-M08 | `DECISIONS.MD` führt `ADR-014` als „Accepted", obwohl die ADR-Datei selbst korrekt „Superseded by ADR-020" trägt | AUDIT-02 | behoben |
+| DRIFT-M09 | `ADR-012b` behauptet, generierter Protobuf-Code werde per `.gitignore` ausgeschlossen — `gen/go/*.pb.go` sind tatsächlich getrackt, keine `gen/`-Regel in `.gitignore` | AUDIT-02 | behoben |
+| DRIFT-M10 | `docs/code-patterns.md` §1–3 zeigt noch das per ADR-026 abgelöste Singleton-Pattern (`Machine`/`DeadmanWatchdog`/`Engine` mit Einzelfeldern) statt der tatsächlichen `VehicleContextRegistry` | AUDIT-03 | behoben |
+| DRIFT-M11 | `docs/code-patterns.md` §3 unterschlägt die sicherheitsrelevanten Zweige des echten `Engine.Handle` (Audit-Eintrag vor SAFE_MODE, OBSERVER-Rollenblock) | AUDIT-03 | behoben |
+| DRIFT-M12 | Stale Kommentar in `frontend/src/hooks/useDeadmanSwitch.ts:34` nennt 2s Watchdog-Timeout, tatsächlicher Server-Timeout ist 10s (Code selbst korrekt, nur Kommentar falsch) | AUDIT-03 | behoben |
+| DRIFT-M13 | `docs/architecture.md` Frontend-Komponententabelle (Sprint 22–23 nachgetragen) führt `FleetTaskPanel.tsx` (Sprint 24) und `fleet-alert-sound.ts`/`useFleetAlertSound.ts` (Sprint 25) nicht | AUDIT-04 | behoben |
+| DRIFT-M14 | `docs/architecture.md` Container-Services-Tabelle führt den laufenden `postgres`-Container an keiner Stelle als eigene Zeile | AUDIT-04 | behoben |
+| DRIFT-M15 | `CONTEXT.MD` Failure-Classification-Tabelle fasst zwei eigenständige Mechanismen (`ACKTimeoutWatcher` vs. `VehicleACKWatchdog`, unterschiedliche Timeouts/Trigger) fälschlich unter „Command ACK Timeout" zusammen | AUDIT-05 | behoben |
+| DRIFT-M16 | `docs/requirements.md` „State Machine Requirements" beschreibt nur die globale State-Machine-Variante, ohne Per-Vehicle-Hinweis (ADR-026) | AUDIT-05 | behoben |
+| DRIFT-M17 | `README.md`-Projektstruktur-Baum (Zeilen 182-206) nennt `cmd/fleet-service`/`internal/fleetservice`/`internal/fleetgateway` nicht, obwohl die Service-Tabelle im selben Dokument korrekt ist | AUDIT-07 | behoben |
 
 ## Mittel — Typ M/L (Code ⇄ Doku, eigener Task durch volle Phasenfolge)
 
@@ -83,13 +83,13 @@ Nutzer.
 
 | ID | Befund | Quelle | Status |
 |----|--------|--------|--------|
-| DRIFT-N01 | `docs/adr/README.md` Kopfzeile nennt „29 ADRs", tatsächlich 32 Tabellenzeilen | AUDIT-02 | offen |
-| DRIFT-N02 | `ADR-002` Pseudocode-Methodennamen (`SubscribeSafetyEvents`/`TriggerEmergencyStop(reason)`) vom tatsächlichen Code (`Subscribe`, 3 Parameter) abgedriftet | AUDIT-02 | offen |
-| DRIFT-N03 | `ADR-009` nennt falsche Dateipfade für zwei Trigger (`safety/deadman.go` existiert nicht, tatsächlich `detector.go`; „No Active Operator" fälschlich in `session/manager.go` verortet) sowie falsche Testanzahl („18" statt 20) | AUDIT-02 | offen |
-| DRIFT-N04 | `ADR-017` nennt nicht die zusätzliche, bereits im Code vorhandene `AuditWriter`-Methode `QueryBySession` | AUDIT-02 | offen |
-| DRIFT-N05 | `frontend/src/hooks/useControls.ts` Magic-Number-Fallbacks (`CommandType?.STEER ?? 1` usw.) spiegeln Proto-Enum-Ordinalzahlen hart codiert, ohne benannte Konstante (nur Edge-Case-Pfad) | AUDIT-03 | offen |
-| DRIFT-N06 | `README.md:84` „Vitest Component-Tests (41 Tests)" veraltet — tatsächlich 252 Tests über 25 Dateien | AUDIT-07 | offen |
-| DRIFT-N07 | `docs/requirements.md` Kopfzeilen-Datumsstempel („Stand: 2026-07-10") hinkt dem eigenen, laufend aktualisierten Inhalt hinterher (§Projektstatus bereits „Stand 2026-07-13") | AUDIT-07 | offen |
+| DRIFT-N01 | `docs/adr/README.md` Kopfzeile nennt „29 ADRs", tatsächlich 32 Tabellenzeilen | AUDIT-02 | behoben |
+| DRIFT-N02 | `ADR-002` Pseudocode-Methodennamen (`SubscribeSafetyEvents`/`TriggerEmergencyStop(reason)`) vom tatsächlichen Code (`Subscribe`, 3 Parameter) abgedriftet | AUDIT-02 | behoben |
+| DRIFT-N03 | `ADR-009` nennt falsche Dateipfade für zwei Trigger (`safety/deadman.go` existiert nicht, tatsächlich `detector.go`; „No Active Operator" fälschlich in `session/manager.go` verortet) sowie falsche Testanzahl („18" statt 20) | AUDIT-02 | behoben |
+| DRIFT-N04 | `ADR-017` nennt nicht die zusätzliche, bereits im Code vorhandene `AuditWriter`-Methode `QueryBySession` | AUDIT-02 | behoben |
+| DRIFT-N05 | `frontend/src/hooks/useControls.ts` Magic-Number-Fallbacks (`CommandType?.STEER ?? 1` usw.) spiegeln Proto-Enum-Ordinalzahlen hart codiert, ohne benannte Konstante (nur Edge-Case-Pfad) | AUDIT-03 | behoben |
+| DRIFT-N06 | `README.md:84` „Vitest Component-Tests (41 Tests)" veraltet — tatsächlich 252 Tests über 25 Dateien | AUDIT-07 | behoben |
+| DRIFT-N07 | `docs/requirements.md` Kopfzeilen-Datumsstempel („Stand: 2026-07-10") hinkt dem eigenen, laufend aktualisierten Inhalt hinterher (§Projektstatus bereits „Stand 2026-07-13") | AUDIT-07 | behoben |
 
 ---
 

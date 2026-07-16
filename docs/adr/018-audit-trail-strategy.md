@@ -202,3 +202,15 @@ Beide können parallel existieren. Ein Audit-Event löst keinen Recording-Entry 
 - fsync bei jedem Safety Event = leichte Latenz (~1–5ms) — akzeptabel da Safety Events selten sind
 - Kein automatisches Backup (ADR-019 möglich für Backup-Strategie)
 - SQLite skaliert nicht horizontal — für Single-Instance-Betrieb (Docker Compose) ausreichend
+
+---
+
+## Update (2026-07-16)
+
+`ADR-023` ersetzt SQLite vollständig durch PostgreSQL als Implementierung des hier definierten
+`AuditWriter`-Interfaces (`audit_events`-Tabelle, WAL-Modus → PostgreSQL `synchronous_commit=on`).
+Die in diesem ADR getroffene Invariante („SAFE_MODE-Transition erst nach erfolgreichem
+`WriteSync()`") bleibt unverändert gültig — nur der Storage-Layer wechselt (Details, SQL-Dialekt-
+Mapping und Konsequenzen: siehe `ADR-023`). Dieses ADR bleibt als Herleitung des `AuditWriter`-
+Interfaces und der Log-Klassifizierung (Safety Event vs. Audit Log vs. Technical Log) weiterhin
+gültig — nur der Abschnitt „SQLite-Schema"/„Storage-Pfad" ist historisch (SQLite), nicht mehr Ist-Zustand.

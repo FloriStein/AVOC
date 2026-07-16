@@ -150,6 +150,7 @@ type SafetyAuditEvent struct {
 
 type AuditWriter interface {
     WriteSync(event SafetyAuditEvent) error  // blockiert bis Durability garantiert
+    QueryBySession(sessionID string) ([]SafetyAuditEvent, error)  // Ergänzung: Session-Rekonstruktion, siehe pkg/audit/writer.go
     Close() error
 }
 

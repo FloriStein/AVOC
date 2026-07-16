@@ -286,6 +286,8 @@ aber keine `sessionId` gesetzt ist (kein Router nötig für zwei Post-Login-View
 | `useFleetOverview.ts` | REST-Snapshot + WS-Deltas (`fleet-ws-client.ts`), Resync bei jedem Reconnect nach dem ersten | 22 |
 | `useFleetZones.ts` | Einmaliger REST-Fetch für Zonen/Stationen — bewusst kein WS (Broadcast-Hub kennt keine Zonen-/Stations-Events) | 23 |
 | `useActiveSessions.ts` | Extrahiert aus `App.tsx`, pollt `GET /api/sessions` | 22 |
+| `FleetTaskPanel.tsx` | Task-Management-UI — Erstellen/Zuweisen, Status-Übergänge (`pending`/`in_progress`/`completed`/`cancelled`), Prioritäten | 24 |
+| `fleet-alert-sound.ts` / `useFleetAlertSound.ts` | Audio-Benachrichtigung bei neuen Fleet-Alerts — Severity-gefiltert (`isAudibleSeverity`), Mindestabstand zwischen Tönen (`MIN_INTERVAL_MS`), Mute-Toggle mit `localStorage`-Persistenz | 25 |
 
 **Scope-Grenze (Grill-Me 2026-07-16):** Sprint 23 beschränkt sich auf Outdoor-Zonen — Indoor
 scheitert an der oben genannten `position_x/y`-Lücke, verschoben auf einen Folge-Sprint.
@@ -435,6 +437,7 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
 |---------|-------------|-------|
 | `frontend` | React/Vite, nginx | SPA serving; nginx routet `/whep/` → MediaMTX |
 | `control-server` | Go | WebSocket, State Machine, GSA, MediaMTX Auth-Hook + SAFE_MODE-Kick |
+| `postgres` | `postgres:16-alpine` | Primäre Datenbank (`avoc`) seit `ADR-023` — `audit_events`, `vehicles`, `users`; separate Connection-Pools pro Service; Healthcheck `pg_isready` gated Start von `control-server`/`auth-service` |
 | `auth-service` | Go | JWT Ausstellung, Operator-Rollen, Handover-Token |
 | `safety-service` | Go | Safety Event Bus (In-Memory, DDS-ready) |
 | `telemetry-service` | Go | MQTT Bridge / Mosquitto Client |

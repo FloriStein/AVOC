@@ -18,7 +18,7 @@
 | [ADR-012](docs/adr/012-message-flow-runtime.md) | Message Flow Runtime Model | Accepted | Field-based Protobuf Versioning, CI Schema-Gate |
 | [ADR-012b](docs/adr/012b-message-flow-runtime-sync-codegen.md) | Sync/Async-Modell & Code Generation | Accepted | Safety/MQTT async; Auth async+lokale JWT; Frontend sync ACK; Build-time protoc Code-Gen |
 | [ADR-013](docs/adr/013-frontend-tech-stack.md) | Frontend Technology Stack | Accepted | React 18+ + TypeScript + Vite + Tailwind CSS + Shadcn/ui + protoc-gen-es |
-| [ADR-014](docs/adr/014-video-streaming.md) | Video Streaming Technologie | Accepted | WebRTC SFU (Pion/Go) + coturn; 1 Primary + 1-2 Secondary; server-seitiges Recording; Handover |
+| [ADR-014](docs/adr/014-video-streaming.md) | Video Streaming Technologie | Superseded by ADR-020 | WebRTC SFU (Pion/Go) + coturn; 1 Primary + 1-2 Secondary; server-seitiges Recording; Handover |
 | [ADR-015](docs/adr/015-session-coordinator.md) | Session Coordinator | Accepted | Control Session als primäre Einheit; GSA = Control Server; Ephemeral + Checkpoint; SFU Event-Push |
 | [ADR-016](docs/adr/016-session-correlation-id.md) | Session Correlation ID | Accepted | ULID; Control Server generiert bei CONNECTING→CONNECTED; Vehicle-ID→Session-ID→Event-ID; JWT = Identity only |
 | [ADR-017](docs/adr/017-logging-strategy.md) | Logging Strategy | Accepted | Hybrid: Technical Logs async (slog → Loki); Safety Events sync (AuditWriter.WriteSync); 3 Log-Klassen; Frontend via POST /log; Interface-first (ADR-018) |
