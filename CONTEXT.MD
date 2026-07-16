@@ -273,6 +273,7 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Konkrete ROS2/DDS-Fahrzeugschnittstelle (IBATOUR) | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1) noch ausstehend; `FleetGateway`-Interface läuft bis dahin gegen Mock/Simulation. Bezug zu ADR-002 (Safety Bus bereits DDS-interface-kompatibel designed) prüfen, sobald die reale Schnittstelle bekannt ist |
 | Handshake-basierte Autonomie-Rückgabe (statt einfachem Session-Ende) | offen | ADR-028 Folge — bewusst zurückgestellt, `endSession()` reicht für den Anfang, siehe `tasks/backlog.md` |
 | Persistenzform für "gefahrene Route" (Historie) | offen | ADR-029 Folge — Zeitreihen-DB vs. einfache Tabelle noch nicht entschieden |
+| Prinzip 6 ("Interface over Implementation") in der Praxis lückenhaft | offen | ADR-031 Bestandsaufnahme (2026-07-16) — `safety-service`s Bus-Interface (ADR-002) existiert nicht als Go-Code, `SessionRecorder` (ADR-005) existiert, wird aber nirgends als Interface-Typ verwendet; `fleetgateway` (ADR-027) ist bisher der einzige Service-Port, der das Prinzip tatsächlich durchsetzt |
 
 ---
 

@@ -240,6 +240,115 @@ sobald die Architektur final abgestimmt ist.
 
 ---
 
+## EPIC: AP1 — Einarbeitung & Architekturplanung (Meilenstein 1, IBATOUR)
+
+Laut Leistungsbeschreibung umfasst AP1 zwei Teile: (1) "Einarbeitung in vorhandene
+Programmierschnittstellen für ausgewählte Fahrzeuge" und (2) "Design der Softwarearchitektur und
+Schnittstellen" (siehe `ADR-027` Kontext). Teil (2) ist inhaltlich weitgehend erledigt — verteilt
+über `docs/vision.md`, `docs/requirements.md`, `CONTEXT.MD`, `docs/architecture.md`
+(Fleet-Abschnitt nachgezogen 2026-07-16) und `ADR-027/028/029`. Teil (1) ist **nicht** erledigt und
+kann laut denselben Dokumenten nicht ohne den vertraglich vorgesehenen Workshop mit der Professur
+Logistik abgeschlossen werden — bis dahin läuft alles gegen eine unbestätigte Annahme
+(`FleetGateway`/`MockGateway`, ADR-027). Das ist der Grund, warum die konkrete ROS2/DDS-Schnittstelle
+projektweit als offener Punkt geführt wird (`DECISIONS.MD`, `CONTEXT.MD` Offene Fragen).
+
+**Wichtiger Vorbehalt (keine Repo-Quelle, nur Rückschluss aus der Leistungsbeschreibungs-Erwähnung
+in ADR-027):** Ob Meilenstein 1 formal ein eigenständiges, dem Auftraggeber zu übergebendes
+Architektur-Dokument verlangt, oder ob die bereits bestehende, über mehrere Dateien verteilte
+Dokumentation für die Abnahme ausreicht, ist im Repo nirgends explizit festgehalten. AP1-04 unten
+ist deshalb als zu klärender Punkt markiert, nicht als sicher notwendige Aufgabe.
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| AP1-01 | Workshop-Termin mit der Professur Logistik vereinbaren + durchführen — Klärung der konkreten ROS2-Topics, Nachrichtenformate, DDS-vs-ROSbridge-Frage, sowie der vorhandenen Programmierschnittstellen der ausgewählten Fahrzeuge (Lastenrad/Lastenzug) | L | 🔲 Backlog | Externe Abhängigkeit (Termin mit AG), kein Code-Task; vertraglich Teil von AP1 (`ADR-027`); blockiert AP1-02/AP1-03 sowie die "Konkrete ROS2/DDS-Schnittstelle"-Zeile in `DECISIONS.MD`/`CONTEXT.MD` |
+| AP1-02 | `FleetGateway`-Interface (`ADR-027`) gegen die im Workshop geklärte reale Schnittstelle abgleichen; bei signifikanter Abweichung eigenes neues ADR (ADR-027 nicht überschreiben) | M | 🔲 Backlog | Abhängigkeit: AP1-01 |
+| AP1-03 | Konkreten Adapter für die reale ROS2/DDS-Schnittstelle implementieren (`MockGateway` bleibt zusätzlich als Test-Doppel erhalten, wird nicht ersetzt) | L | 🔲 Backlog | Abhängigkeit: AP1-02; betrifft ausschließlich `internal/fleetgateway`, keine Kopplung zu `control-server`/Safety-Domäne laut ADR-029 |
+| AP1-04 | Klären, ob Meilenstein 1 ein eigenständiges Architektur-Liefer-Dokument für den Auftraggeber erfordert; falls ja, bestehende Docs (`docs/vision.md`, `docs/requirements.md`, `CONTEXT.MD`, `docs/architecture.md`, `ADR-027/028/029`) zu einem auftraggebertauglichen Dokument konsolidieren | S/M | 🔲 Zu klären | Kein Beleg im Repo für die genaue Abnahme-Form — vor Bearbeitung mit Auftraggeber/Nutzer klären, keine Annahme treffen |
+
+**Abhängigkeitspfad:**
+```
+AP1-01 → AP1-02 → AP1-03
+AP1-04 unabhängig, aber Klärung vor Bearbeitung nötig
+```
+
+---
+
+## EPIC: AP2 — Web-Dashboard (Meilenstein 2, IBATOUR)
+
+Leistungsbeschreibung AP2 umfasst vier Anforderungsbereiche (siehe `docs/requirements.md`
+"Fleet-Domänenkonzepte"). Status je Bereich, Stand dieser Analyse (2026-07-16), **branchübergreifend**
+recherchiert (mehrere parallele Worktrees arbeiten laut `git worktree list` gleichzeitig an AP2):
+
+| Bereich | Status | Referenz |
+|---|---|---|
+| Flottenübersicht (Echtzeit-Status, Batterie, Alert-Anzeige) | ✅ fertig, in `feature/fleet-service-foundation` gemergt | Sprint 22 (DASH-01..08) |
+| Kartenansicht — Outdoor | ✅ fertig, gemergt | Sprint 23 (MAP-01..11) |
+| Kartenansicht — Indoor | 🔲 offen, kein Task mit ID bisher | Fahrzeuge haben kein `position_x/y` (nur `position_zone_id`) — Backend-Erweiterung nötig, siehe CONTEXT.MD/DECISIONS.MD "Offene Fragen" |
+| Routenübersicht (gefahrene Historie) | 🔲 offen | `FLEET-02` (oben) — Persistenzform (Zeitreihen-DB vs. Tabelle) unentschieden |
+| Task Management (Erstellen/Zuweisen/Status/Historie) | 🔶 fertig, aber **nicht gemergt** | Sprint 24, eigener Branch `feature/fleet-service-foundation-taskui` (Worktree `controlcenter-aws-taskui`) |
+| Alert System — Basis (Echtzeit, Priorität, Ack) | ✅ fertig, gemergt | Sprint 22 |
+| Alert System — Audio-Benachrichtigung | 🔶 fertig, aber **nicht gemergt** | Sprint 25, eigener Branch `feature/fleet-service-foundation-audio` (Worktree `controlcenter-aws-audio`) |
+
+**ADR-Nummernkollision — gelöst (2026-07-16):** Dieser Branch (`feature/fleet-service-foundation-hexarch`)
+hatte `docs/adr/030-hexagonal-architecture-migration.md` angelegt, unabhängig davon der `taskui`-Branch
+am selben Tag `docs/adr/030-task-status-lifecycle.md` unter derselben Nummer. Beim Merge aufgelöst:
+`taskui`s ADR-030 bleibt, dieses ADR wurde auf **ADR-031** verschoben
+(`docs/adr/031-hexagonal-architecture-migration.md`), inkl. Anpassung von `DECISIONS.MD`/`CONTEXT.MD`.
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| AP2-01 | Merge-Integration: Sprint 24 (`-taskui`) und Sprint 25 (`-audio`) in `feature/fleet-service-foundation` zusammenführen (Sprint 23 ist bereits gemergt) | L | ✅ erledigt | ADR-030-Nummernkollision gelöst (siehe oben); verbleibende Merge-Konflikte (doppelte Demo-Stationsanlage `TASKUI-01`, additive `FleetOverview.tsx`-Änderungen aus Sprint 23/24/25) beim Merge selbst aufgelöst |
+| AP2-02 | Indoor-Kartenrendering — Backend-Erweiterung für Fahrzeug-Punktposition innerhalb einer Indoor-Zone | L | 🔲 Backlog | Bisher nur als "Offene Frage" in CONTEXT.MD/DECISIONS.MD geführt, hier erstmals als konkreter Task erfasst. Braucht eigene Datenmodell-Entscheidung (`vehicle_status`-Erweiterung) — vermutlich eigenes ADR, da Datenmodell-Änderung (ADR-029 nicht überschreiben) |
+| AP2-03 | Persistenzform für "gefahrene Route" entscheiden + implementieren | M | 🔲 Backlog | Verweist auf bestehenden `FLEET-02` — hier nur referenziert, nicht dupliziert |
+| AP2-04 | Prioritätenmanagement in der Task-UI über reine Zahlenanzeige hinaus ausbauen (Sortierung nach Priorität, visuelle Hervorhebung hoher Priorität) | M | 🔲 Backlog | Sprint 24 (`FleetTaskPanel.tsx`) hat `priority` als reines Eingabe-/Anzeigefeld ohne Sortierung/Hervorhebung umgesetzt — "Prioritätenmanagement" aus der Leistungsbeschreibung impliziert mehr als das; erst nach AP2-01 sinnvoll bearbeitbar |
+| AP2-05 | Klären, ob Meilenstein 2 ein eigenständiges Abnahme-Artefakt für den Auftraggeber braucht | S | 🔲 Zu klären | Analog `AP1-04` — kein Beleg im Repo für die genaue Abnahme-Form |
+
+**Nicht dupliziert, sondern nur referenziert (bereits auf den jeweiligen Branches dokumentiert,
+kommen beim Merge mit):** `TASKUI-01..05` (`taskui`-Branch-`backlog.md`: doppelte Demo-Stationen,
+Übergangstabellen-Duplikation Backend/Frontend, fehlende volle Task-Audit-Historie, `null`-statt-`[]`
+in mehreren `fleet-service`-List-Endpunkten, geteiltes Docker-Compose-Projekt über alle Worktrees
+hinweg) sowie die im `audio`-Branch als "bewusst nicht in diesem Sprint" genannten optionalen
+Sound-Erweiterungen (konfigurierbare Lautstärke/Tonhöhe, Snooze, Severity-spezifische Töne).
+
+**Abhängigkeitspfad:**
+```
+AP2-01 (Merge, inkl. ADR-030-Konflikt, erledigt) → AP2-04
+AP2-02, AP2-03, AP2-05 unabhängig von AP2-01
+```
+
+---
+
+## EPIC: Hexagonale Architektur-Migration — Pilot fleet-service (ADR-031)
+
+Strategie und vollständige Risikobewertung: [ADR-031](../docs/adr/031-hexagonal-architecture-migration.md).
+Grill-Me 2026-07-16: Auslöser ist allgemeine Wartbarkeit/Onboarding (nicht ADR-027/ROS2), Scope nur
+Go-Backend, Pilot bestätigt `fleet-service`, Start **nachgelagert nach AP2/AP3** — kein fixes Datum,
+daher hier in `backlog.md` statt in `current-sprint.md` (analog zum früheren Vorgehen bei "EPIC:
+Fleet Dashboard Planung"). Umfang: ausschließlich der fehlende `FleetStore`-Repository-Port
+(`internal/fleetservice/handler.go:32,37` → Interface, analog zu `fleetgateway.FleetGateway`),
+keine Use-Case-Schicht-Extraktion in diesem Schritt (siehe HEX-06).
+
+**Arbeitsweise (bewusst kleinteilig geschnitten):** Jeder Task ist einzeln abschließbar und endet
+mit einem Update dieses Eintrags (Status ✅ + Kurzergebnis) **bevor** die Session beendet/geclear't
+wird — Definition-of-Done schließt die Doku-Aktualisierung ein, nicht nur den Code. Damit reicht
+für eine neue Session pro Task ein Verweis auf die Task-ID hier, keine lange Übergabe nötig.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| HEX-01 | `FleetStore`-Interface definieren (deckt alle Methoden von `*PostgresFleetStore` ab) + Compile-Time-Check `var _ FleetStore = (*PostgresFleetStore)(nil)`. Kein Verhaltens-, kein Signatur-Wechsel an `Handler` in diesem Schritt. | S | 🔲 Backlog | — |
+| HEX-02 | `Handler.store` von `*PostgresFleetStore` auf `FleetStore`-Interface umstellen (`internal/fleetservice/handler.go:32,37`). Reine Typ-Änderung, HTTP-Verhalten unverändert — bestehende Postgres-gebundene Tests bleiben vorerst grün (noch kein Fake). | S | 🔲 Backlog | HEX-01 |
+| HEX-03 | `FakeFleetStore` (In-Memory) implementieren, das `FleetStore` erfüllt — Test-Doppel für Handler-Tests ohne Postgres. | M | 🔲 Backlog | HEX-01 |
+| HEX-04 | Bestehende Handler-Tests (~20 der 24, aktuell `DATABASE_URL`-gebunden) schrittweise auf `FakeFleetStore` migrieren. | M | 🔲 Backlog | HEX-02, HEX-03 |
+| HEX-05 | Verifikation: `go test ./internal/fleetservice/...` läuft grün **ohne** gesetzte `DATABASE_URL`. ADR-031-Status-Update (Pilot abgeschlossen) + Status-Update in diesem Eintrag + `DECISIONS.MD`. | S | 🔲 Backlog | HEX-04 |
+| HEX-06 | *(Optional, eigener Entscheid nach HEX-05)* Use-Case-Schicht aus `Handler` extrahieren (Anwendungsfälle als eigene Funktionen zwischen HTTP-Layer und `FleetStore`/`AlertEngine`) — nur falls nach dem Pilot als lohnend bewertet, kein Bestandteil des Piloten selbst. | M | 🔲 Backlog (optional) | HEX-05 |
+
+**Entscheidungspunkt nach HEX-05 (nicht Teil dieses Sprint-Plans):** ob und in welcher
+Reihenfolge auth-service (JWT-Port) bzw. telemetry-service (kleinster Fall) folgen — siehe
+Risikobewertung in ADR-031. `control-server` bleibt bis auf Weiteres ausdrücklich ausgeklammert
+(eigenes ADR nötig, siehe ADR-031 "Offene Punkte").
+
+---
+
 ## Offene Entscheidungen (blockieren zukünftige Tasks)
 
 | Entscheidung | Blockiert | Referenz |

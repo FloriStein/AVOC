@@ -40,6 +40,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | [ADR-027](027-fleet-gateway-interface.md) | Fleet Gateway Interface | Abstraktes Interface gegen noch unbestätigte externe ROS2/DDS-Fahrzeugschnittstelle (IBATOUR); Mock jetzt, Adapter nach AP1-Workshop mit Professur Logistik — konkrete Schnittstellenparameter vorläufig |
 | [ADR-028](028-autonomy-first-operator-model.md) | Autonomy-First Operator Model | Flotte fährt autonom als Normalfall; Teleop nur als Notfall-Ausnahme, ausgelöst durch fahrzeugseitig erkannte Probleme via Alert; `NO_OPERATOR→SAFE_MODE`-Regel (ADR-009/011) gilt nur innerhalb aktiver Session, nicht als Dauerzustand für autonome Fahrzeuge; Vehicle-WS bereits heute session-unabhängig (keine Codeänderung) |
 | [ADR-029](029-fleet-vehicle-data-model.md) | Fleet Vehicle Data Model | Neuer Service `fleet-service`; bestehende `vehicles`-Tabelle bleibt Identitäts-Quelle (erweitert um `vehicle_type`), neue Tabellen (vehicle_status/zones/stations/tasks/alerts) per FK verknüpft; Frontend führt beide Services clientseitig zusammen; Indoor+Outdoor beide SVG-basiert, Outdoor geo-referenziert (Leaflet Overlay) |
+| [ADR-031](031-hexagonal-architecture-migration.md) | Hexagonale Architektur-Migration | Strangler-Fig statt Big-Bang; Pilot ausschließlich `fleet-service` (`FleetStore`-Repository-Port); Scope nur Go-Backend; Start nachgelagert nach AP2/AP3; `control-server` explizit ausgeklammert |
 
 ---
 
