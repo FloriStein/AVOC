@@ -32,19 +32,37 @@ Implementierung statt reiner Doku-Korrektur.
 
 - Backend: 8 neue `AuthWatchdog`-Tests (`watchdog_test.go`: Normalfall, Trigger, Fehlerpfad,
   Recovery-nach-1-Fehler, Stop/Restart, Nebenläufigkeit) + 8 neue `safety_test.go`-Tests
-  (`TransitionOperator`-Guard-Grenzfälle, `TransitionMedia`-Recovery). Alle Go-Pakete außer
-  `tests/integration` zweimal hintereinander mit `-race -count=1` grün (keine Flakiness).
-- Integration: 3 neue Tests gegen den echten Docker-Teststack
+  (`TransitionOperator`-Guard-Grenzfälle, `TransitionMedia`-Recovery) + 2 neue
+  `vehiclecontext_test.go`-Tests (`Registry.WithUserChecker` verdrahtet `AuthWatchdog` korrekt,
+  bleibt `nil` ohne Checker). Alle Go-Pakete außer `tests/integration` zweimal hintereinander mit
+  `-race -count=1` grün (keine Flakiness).
+- Integration: 3 neue Tests gegen den echten Docker-Teststack, **vollständig End-to-End grün**
   (`TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers`,
   `TestIntegration_WSDisconnect_OperatorLayerReflectsNoOperator`,
-  `TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode` — letzterer über eine echte
-  `DELETE`-Operation gegen Postgres). In dieser Sandbox schlägt der WebSocket-Dial für **alle**
-  WS-abhängigen Integrationstests fehl (`websocket: bad handshake`) — bereits vor dieser Änderung
-  bei 3 unveränderten Bestandstests der Fall (`t.Skipf`, Kommentar „expected in minimal test
-  stack"), also eine Umgebungseinschränkung dieser Sandbox, keine Regression. Der Postgres-seitige
-  Teil von DRIFT-K1 (Testuser anlegen/listen/löschen) lief dabei erfolgreich durch, bevor der
-  WS-Schritt griff. Volle End-to-End-Verifikation (inkl. tatsächlichem SAFE_MODE-Eintritt) steht
-  in einer Umgebung mit funktionierendem WS-Dial noch aus.
+  `TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode` — letzterer inkl. echter
+  Postgres-`DELETE`-Operation und tatsächlichem SAFE_MODE-Eintritt nach ~10,8s, passend zum
+  5s×2-Watchdog-Timing). Zweimal komplett frisch (`docker compose down/up --build`, `-count=1`,
+  kein Go-Test-Cache) durchlaufen, beide Male stabil grün.
+
+  **Nachträglich zwei echte Bugs beim Debuggen des ursprünglich als „Sandbox-Limitation"
+  eingeordneten WS-Dial-Fehlschlags gefunden und behoben** (Nutzerfrage, ob wirklich alle Tests
+  die geänderten Module abdecken, deckte auf, dass die erste Verifikation zu oberflächlich war):
+  1. `/ws` verlangt zwingend `?session_id=...` (aus `POST /session/start`) — alle drei neuen Tests
+     (und, bereits vorher bestehend, 3 unveränderte Alttests) dialten die WS **vor** `session/start`
+     bzw. ganz ohne `session_id`, was serverseitig korrekt mit 400 abgelehnt wird und bei gorilla als
+     „bad handshake" ankommt. Kein Docker-/Sandbox-Problem — per manuellem `curl`/Go-Probe gegen den
+     laufenden Teststack verifiziert (101 Switching Protocols bei korrekter Reihenfolge).
+  2. Zusätzlich war im Teststack nur `vehicle-int-mock` tatsächlich online (`vehicle-mock`-Service);
+     jeder andere `vehicle_id` ließ `/session/start` mit 409 „vehicle not connected" scheitern —
+     stillschweigend, da die Alttests den Status-Code nie prüften.
+  3. Beim Beheben von (1)/(2) ein dritter, eigener Test-Bug gefunden: der neue Test-Helper
+     `startSessionAndDialWS` hatte `operator_id: "admin"` hartkodiert — das ursprünglich für
+     DRIFT-K1 gelöschte Test-Konto war dadurch nie das tatsächlich vom `AuthWatchdog` beobachtete
+     Konto (`admin` existiert weiter), wodurch der Test 20s lang wartete, ohne dass der Watchdog je
+     etwas zu melden hatte. Fix: `operator_id` als Parameter, pro Aufrufer korrekt übergeben.
+  Alle drei Punkte sind Test-Infrastruktur-Bugs (2 davon bereits vor dieser Änderung in den
+  unveränderten Alttests vorhanden, 1 selbst eingeführt), keine Bugs im produktiven
+  DRIFT-K1/K2/K3-Code — die Fixes sind ausschließlich in `tests/integration/services_test.go`.
 - Frontend: 22 neue Tests für die reine Schwellwert-/Hysterese-Logik
   (`useWebRTC.test.ts`) — keine `RTCPeerConnection`-Mock-Infrastruktur im Repo vorhanden, daher
   Extraktion in pure, exportierte Funktionen statt Hook-Integrationstest. Gesamte Suite 274
@@ -52,13 +70,17 @@ Implementierung statt reiner Doku-Korrektur.
 
 ### Bewusst nicht abgedeckt
 
-- End-to-End-Verifikation von DRIFT-K1/K2 gegen den echten Docker-Stack (WS-Dial-Limitation dieser
-  Sandbox, s. o.) — Unit-Tests exercisen dieselbe Logik gegen die echte State Machine, nicht
-  synthetisch.
+- `useWebRTC.ts`s tatsächlicher `useEffect`/`getStats()`-Polling-Code (nur die daraus extrahierte
+  reine Entscheidungslogik ist getestet) — keine `RTCPeerConnection`-Mock-Infrastruktur im Repo.
 - MEDIA_DEGRADED-Schwellwerte sind nicht feldvalidiert (keine reale Flotte zum Kalibrieren) —
   bewusste Grill-Me-Entscheidung, im ADR-009-Update-Block als „initial, nicht feldvalidiert"
   markiert.
 - Partial Telemetry Loss — siehe `DRIFT-K3-TELEMETRY`.
+- Die 3 unveränderten Alttests (`TestIntegration_SessionLifecycle_StartAndEnd`,
+  `TestIntegration_MediaFailed_TriggersDegrade_NeverSafeMode`,
+  `TestIntegration_EmergencyStop_TriggersSafeMode`) haben denselben WS-Dial-Bug wie oben unter (1)
+  beschrieben und skippen weiterhin — außerhalb des DRIFT-K1/K2/K3-Scopes, nicht mitgefixt, aber
+  jetzt als eigenständiger, verstandener Befund dokumentiert statt als vermutete Umgebungsgrenze.
 
 ### Neue/geänderte Dateien
 
@@ -71,8 +93,8 @@ Implementierung statt reiner Doku-Korrektur.
 - `pkg/logger/event_types.go` — `EventAuthWatchdogTriggered`
 - `frontend/src/hooks/useWebRTC.ts` — `getStats()`-Schwellwertlogik als pure Funktionen; MEDIA_DEGRADED-Detection
 - `frontend/src/hooks/useWebRTC.test.ts` — NEU
-- `tests/unit/safety_test.go`, `tests/unit/watchdog_test.go` — neue Testfälle
-- `tests/integration/services_test.go` — 3 neue Integrationstests, `getJSONListAuth`-Fix (fehlende Auth)
+- `tests/unit/safety_test.go`, `tests/unit/watchdog_test.go`, `tests/unit/vehiclecontext_test.go` — neue Testfälle
+- `tests/integration/services_test.go` — 3 neue Integrationstests + `getJSONListAuth`-Fix (fehlende Auth) + `startSessionAndDialWS`/`endAllSessions`-Helper (session_id-Reihenfolge, `vehicle-int-mock`, korrekte `operator_id`)
 - `docs/adr/009-failure-model.md` — Update-Block (2026-07-17), Implementierung-Spalten korrigiert
 - `CONTEXT.MD`, `DECISIONS.MD`, `docs/drift-audit-2026-07.md`, `tasks/backlog.md` — nachgezogen
 

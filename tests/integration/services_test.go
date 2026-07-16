@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -295,6 +296,40 @@ func TestIntegration_EmergencyStop_TriggersSafeMode(t *testing.T) {
 	assert.Equal(t, "SAFE_MODE", state["system"])
 }
 
+// startSessionAndDialWS logs in, starts an ACTIVE_OPERATOR session on the one
+// vehicle the test stack's vehicle-mock actually registers as online
+// ("vehicle-int-mock" — any other vehicle_id makes /session/start fail with
+// 409 "vehicle not connected", which silently starved every WS-dependent test
+// below of a session_id: /ws requires ?session_id=..., dialing without one is
+// the actual root cause of the "bad handshake" failures, not a sandbox/docker
+// limitation), then dials the operator WS with that session_id.
+func startSessionAndDialWS(t *testing.T, token, operatorID string) (*websocket.Conn, string) {
+	t.Helper()
+	startResp := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": "vehicle-int-mock", "operator_id": operatorID,
+	})
+	defer startResp.Body.Close()
+	require.Equal(t, 200, startResp.StatusCode, "session/start must succeed against the connected vehicle-mock")
+	var startBody map[string]any
+	require.NoError(t, json.NewDecoder(startResp.Body).Decode(&startBody))
+	sessionID := startBody["session_id"].(string)
+	require.NotEmpty(t, sessionID)
+
+	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s&session_id=%s", token, sessionID))
+	require.NoError(t, err, "WS dial must succeed once session_id is supplied")
+	time.Sleep(200 * time.Millisecond)
+	return conn, sessionID
+}
+
+// endAllSessions force-resets every active vehicle to IDLE (legacy fleet-wide
+// /session/end path — no session_id required, no ownership check) so the
+// shared "vehicle-int-mock" is guaranteed free for the next test regardless
+// of how the current test ended (SAFE_MODE, deleted operator, ...).
+func endAllSessions(t *testing.T, token string) {
+	t.Helper()
+	postJSONAuth(t, controlURL+"/session/end", token, nil).Body.Close()
+}
+
 // --- DRIFT-K3 (2026-07-16): MEDIA_DEGRADED wiring + DEGRADED→CONNECTED recovery ---
 
 func TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers(t *testing.T) {
@@ -306,17 +341,11 @@ func TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	token := body["token"].(string)
 
-	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
-	if err != nil {
-		t.Skipf("WebSocket not available: %v", err)
-	}
+	conn, _ := startSessionAndDialWS(t, token, "admin")
 	defer conn.Close()
-	time.Sleep(300 * time.Millisecond)
+	defer endAllSessions(t, token)
 
-	const vehicleID = "vehicle-media-degraded"
-	postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
-		"vehicle_id": vehicleID, "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
-	}).Body.Close()
+	const vehicleID = "vehicle-int-mock"
 
 	// MEDIA_DEGRADED (quality loss, not full failure) must also map to SYSTEM DEGRADED.
 	resp2 := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{"state": "MEDIA_DEGRADED", "vehicle_id": vehicleID})
@@ -334,8 +363,6 @@ func TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers(t *testing.T) {
 
 	state2 := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
 	assert.Equal(t, "CONNECTED", state2["system"], "media recovery must clear DEGRADED back to CONNECTED")
-
-	postJSONAuth(t, controlURL+"/session/end", token, nil).Body.Close()
 }
 
 // --- DRIFT-K2 (2026-07-16): OPERATOR layer must reflect NO_OPERATOR after WS disconnect ---
@@ -349,16 +376,10 @@ func TestIntegration_WSDisconnect_OperatorLayerReflectsNoOperator(t *testing.T) 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	token := body["token"].(string)
 
-	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
-	if err != nil {
-		t.Skipf("WebSocket not available: %v", err)
-	}
-	time.Sleep(300 * time.Millisecond)
+	conn, _ := startSessionAndDialWS(t, token, "admin")
+	defer endAllSessions(t, token)
 
-	const vehicleID = "vehicle-k2-disconnect"
-	postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
-		"vehicle_id": vehicleID, "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
-	}).Body.Close()
+	const vehicleID = "vehicle-int-mock"
 
 	preState := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
 	require.Equal(t, "ACTIVE_OPERATOR", preState["operator"], "operator must be ACTIVE before disconnect")
@@ -386,10 +407,11 @@ func TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode(t *testing.T) 
 	var adminBody map[string]any
 	require.NoError(t, json.NewDecoder(adminResp.Body).Decode(&adminBody))
 	adminToken := adminBody["token"].(string)
+	defer endAllSessions(t, adminToken)
 
 	username := fmt.Sprintf("int-k1-%d", time.Now().UnixNano())
 	createResp := postJSONAuth(t, authURL+"/auth/users", adminToken, map[string]string{
-		"username": username, "password": "throwaway-secret-1", "role": "OBSERVER",
+		"username": username, "password": "throwaway-secret-1", "role": "ADMIN",
 	})
 	createResp.Body.Close()
 	require.Equal(t, 201, createResp.StatusCode, "test user creation must succeed")
@@ -412,20 +434,10 @@ func TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode(t *testing.T) 
 	require.NoError(t, json.NewDecoder(loginResp.Body).Decode(&loginBody))
 	token := loginBody["token"].(string)
 
-	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
-	if err != nil {
-		t.Skipf("WebSocket not available: %v", err)
-	}
+	conn, _ := startSessionAndDialWS(t, token, username)
 	defer conn.Close()
-	time.Sleep(300 * time.Millisecond)
 
-	vehicleID := fmt.Sprintf("vehicle-k1-%d", time.Now().UnixNano())
-	startResp := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
-		"vehicle_id": vehicleID, "operator_id": username, "operator_role": "ACTIVE_OPERATOR",
-	})
-	startResp.Body.Close()
-	require.Equal(t, 200, startResp.StatusCode)
-
+	const vehicleID = "vehicle-int-mock"
 	preState := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
 	require.Equal(t, "CONNECTED", preState["system"], "session must be CONNECTED before revocation")
 
