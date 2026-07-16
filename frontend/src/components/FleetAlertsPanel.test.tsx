@@ -8,24 +8,24 @@ const ACKED: FleetAlert = { id: 'a2', vehicle_id: 'v2', severity: 'warning', mes
 
 describe('FleetAlertsPanel', () => {
   it('zeigt "Keine Alerts" bei leerer Liste', () => {
-    render(<FleetAlertsPanel alerts={[]} onAcknowledge={vi.fn()} />)
+    render(<FleetAlertsPanel alerts={[]} onAcknowledge={vi.fn()} muted={false} onToggleMuted={vi.fn()} />)
     expect(screen.getByText(/keine alerts/i)).toBeInTheDocument()
   })
 
   it('unquittiertes Alert zeigt einen Bestätigen-Button', () => {
-    render(<FleetAlertsPanel alerts={[UNACKED]} onAcknowledge={vi.fn()} />)
+    render(<FleetAlertsPanel alerts={[UNACKED]} onAcknowledge={vi.fn()} muted={false} onToggleMuted={vi.fn()} />)
     expect(screen.getByRole('button', { name: /bestätigen/i })).toBeInTheDocument()
   })
 
   it('quittiertes Alert zeigt Meta-Text statt Button', () => {
-    render(<FleetAlertsPanel alerts={[ACKED]} onAcknowledge={vi.fn()} />)
+    render(<FleetAlertsPanel alerts={[ACKED]} onAcknowledge={vi.fn()} muted={false} onToggleMuted={vi.fn()} />)
     expect(screen.queryByRole('button', { name: /bestätigen/i })).not.toBeInTheDocument()
     expect(screen.getByText(/op1/)).toBeInTheDocument()
   })
 
   it('Klick auf Bestätigen ruft onAcknowledge mit der alert id auf', async () => {
     const onAcknowledge = vi.fn().mockResolvedValue(undefined)
-    render(<FleetAlertsPanel alerts={[UNACKED]} onAcknowledge={onAcknowledge} />)
+    render(<FleetAlertsPanel alerts={[UNACKED]} onAcknowledge={onAcknowledge} muted={false} onToggleMuted={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /bestätigen/i }))
     expect(onAcknowledge).toHaveBeenCalledWith('a1')
   })
@@ -34,7 +34,14 @@ describe('FleetAlertsPanel', () => {
     const UNACKED_2: FleetAlert = { ...UNACKED, id: 'a3', vehicle_id: 'v3' }
     // onAcknowledge never resolves within this test — simulates an in-flight request.
     const onAcknowledge = vi.fn(() => new Promise<void>(() => {}))
-    render(<FleetAlertsPanel alerts={[UNACKED, UNACKED_2]} onAcknowledge={onAcknowledge} />)
+    render(
+      <FleetAlertsPanel
+        alerts={[UNACKED, UNACKED_2]}
+        onAcknowledge={onAcknowledge}
+        muted={false}
+        onToggleMuted={vi.fn()}
+      />,
+    )
 
     const buttons = screen.getAllByRole('button', { name: /bestätigen/i })
     fireEvent.click(buttons[0])
@@ -43,5 +50,20 @@ describe('FleetAlertsPanel', () => {
     const buttonsAfter = screen.getAllByRole('button')
     const stillEnabled = buttonsAfter.filter((b) => !b.hasAttribute('disabled'))
     expect(stillEnabled.length).toBeGreaterThan(0)
+  })
+
+  it('Mute-Button zeigt Status und ruft onToggleMuted auf', () => {
+    const onToggleMuted = vi.fn()
+    const { rerender } = render(
+      <FleetAlertsPanel alerts={[]} onAcknowledge={vi.fn()} muted={false} onToggleMuted={onToggleMuted} />,
+    )
+    const muteButton = screen.getByRole('button', { name: /ton an/i })
+    expect(muteButton).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(muteButton)
+    expect(onToggleMuted).toHaveBeenCalledTimes(1)
+
+    rerender(<FleetAlertsPanel alerts={[]} onAcknowledge={vi.fn()} muted={true} onToggleMuted={onToggleMuted} />)
+    expect(screen.getByRole('button', { name: /^stumm$/i })).toHaveAttribute('aria-pressed', 'true')
   })
 })
