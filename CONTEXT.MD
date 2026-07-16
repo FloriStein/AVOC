@@ -275,6 +275,7 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Persistenzform für "gefahrene Route" (Historie) | offen | ADR-029 Folge — Zeitreihen-DB vs. einfache Tabelle noch nicht entschieden |
 | Task-Status-Übergangstabelle dupliziert (Go Backend + TypeScript Frontend) | offen | ADR-030 Folge — Frontend spiegelt die Zustandsmaschine nur für UI-Button-Sichtbarkeit, Backend bleibt autoritativ |
 | Vollständige Task-Status-Audit-Historie (mehrere Übergänge, nicht nur der letzte) | offen | ADR-030 Folge — bewusst auf `status_changed_by` (nur letzter Übergang) begrenzt statt eigener `task_status_history`-Tabelle (Scope-Entscheidung, Grill-Me 2026-07-16) |
+| Prinzip 6 ("Interface over Implementation") in der Praxis lückenhaft | offen | ADR-031 Bestandsaufnahme (2026-07-16) — `safety-service`s Bus-Interface (ADR-002) existiert nicht als Go-Code, `SessionRecorder` (ADR-005) existiert, wird aber nirgends als Interface-Typ verwendet; `fleetgateway` (ADR-027) ist bisher der einzige Service-Port, der das Prinzip tatsächlich durchsetzt |
 
 ---
 
