@@ -201,10 +201,50 @@ export interface FleetAlert {
   acknowledged_by?: string
 }
 
+// GET /fleet/zones: geo_bounds mirrors internal/fleetservice/store.go's Zone.GeoBounds (*string,
+// raw JSON passthrough) — callers must JSON.parse it themselves (see lib/fleet-map.ts's
+// parseGeoBounds), it is never a nested object on the wire.
+export interface Zone {
+  id: string
+  name: string
+  environment: 'indoor' | 'outdoor'
+  svg_geometry: string
+  geo_bounds?: string
+  created_at: string
+}
+
+export interface Station {
+  id: string
+  zone_id: string
+  name: string
+  position_x?: number
+  position_y?: number
+  position_lat?: number
+  position_lon?: number
+  created_at: string
+}
+
 export async function listFleetVehicles(token: string): Promise<FleetVehicle[]> {
   const res = await fetch('/fleet/vehicles', { headers: { 'Authorization': `Bearer ${token}` } })
   if (!res.ok) throw new Error(`listFleetVehicles failed: ${res.status}`)
   return res.json()
+}
+
+// Both list endpoints return JSON `null` (not `[]`) when the underlying table is empty — the Go
+// store leaves the backing slice nil for zero rows (internal/fleetservice/store.go's
+// ListZones/ListStations), and json.Marshal renders a nil slice as null. Normalized to `[]` here
+// so callers never need a null-check.
+
+export async function listFleetZones(token: string): Promise<Zone[]> {
+  const res = await fetch('/fleet/zones', { headers: { 'Authorization': `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`listFleetZones failed: ${res.status}`)
+  return (await res.json()) ?? []
+}
+
+export async function listFleetStations(token: string): Promise<Station[]> {
+  const res = await fetch('/fleet/stations', { headers: { 'Authorization': `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`listFleetStations failed: ${res.status}`)
+  return (await res.json()) ?? []
 }
 
 export async function listFleetAlerts(token: string): Promise<FleetAlert[]> {

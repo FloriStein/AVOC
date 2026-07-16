@@ -13,6 +13,12 @@ frontend/node_modules/
 # Docker Hub username helper (optional local file for make push)
 .docker-username
 
+# Local-only MCP server config (browser devtools servers, machine-specific)
+.mcp.json
+
+# Local-only reference material, not part of the repo
+requirements.pdf
+
 # IDE
 .idea/
 .vscode/

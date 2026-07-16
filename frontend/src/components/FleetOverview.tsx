@@ -2,10 +2,12 @@ import { useState } from 'react'
 import type { SessionState } from '@/hooks/useSession'
 import { useFleetOverview } from '@/hooks/useFleetOverview'
 import { useActiveSessions } from '@/hooks/useActiveSessions'
+import { useFleetZones } from '@/hooks/useFleetZones'
 import { parseTokenRole } from '@/lib/api-client'
 import { FleetVehicleList } from '@/components/FleetVehicleList'
 import { FleetVehicleDetail } from '@/components/FleetVehicleDetail'
 import { FleetAlertsPanel } from '@/components/FleetAlertsPanel'
+import { FleetMap } from '@/components/FleetMap'
 
 interface Props {
   session: SessionState
@@ -22,6 +24,7 @@ export function FleetOverview({ session }: Props) {
     session.operatorId,
   )
   const { activeSessions } = useActiveSessions(session.token)
+  const { zones, stations } = useFleetZones(session.token)
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
 
   const isObserverRole = parseTokenRole(session.token!) === 'OBSERVER'
@@ -55,22 +58,32 @@ export function FleetOverview({ session }: Props) {
       )}
 
       {!loading && !error && (
-        <main className="flex-1 grid grid-cols-3 gap-4 p-4 min-h-0">
-          <FleetVehicleList
+        <main className="flex-1 flex flex-col gap-4 p-4 min-h-0">
+          <FleetMap
+            zones={zones}
+            stations={stations}
             vehicles={vehicles}
-            activeSessions={activeSessions}
             selectedVehicleId={selectedVehicleId}
-            onSelect={setSelectedVehicleId}
+            onSelectVehicle={setSelectedVehicleId}
+            className="h-[45vh] min-h-80 shrink-0"
           />
-          <FleetVehicleDetail
-            vehicle={selectedVehicle}
-            hasActiveOperator={hasActiveOperator}
-            activeOperatorId={activeOperatorSession?.operator_id ?? null}
-            isObserverRole={isObserverRole}
-            onTeleoperate={session.startSession}
-            onObserve={session.startSession}
-          />
-          <FleetAlertsPanel alerts={alerts} onAcknowledge={acknowledgeAlert} />
+          <div className="grid grid-cols-3 gap-4 flex-1 min-h-0">
+            <FleetVehicleList
+              vehicles={vehicles}
+              activeSessions={activeSessions}
+              selectedVehicleId={selectedVehicleId}
+              onSelect={setSelectedVehicleId}
+            />
+            <FleetVehicleDetail
+              vehicle={selectedVehicle}
+              hasActiveOperator={hasActiveOperator}
+              activeOperatorId={activeOperatorSession?.operator_id ?? null}
+              isObserverRole={isObserverRole}
+              onTeleoperate={session.startSession}
+              onObserve={session.startSession}
+            />
+            <FleetAlertsPanel alerts={alerts} onAcknowledge={acknowledgeAlert} />
+          </div>
         </main>
       )}
     </div>

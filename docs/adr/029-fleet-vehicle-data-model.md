@@ -123,6 +123,31 @@ Visualisierungsschicht (Leistungsbeschreibung AP2).
   geplante Route aus `tasks` (from/to Station), Historie aus `vehicle_status`-Zeitreihe
   (Persistenzform für Historie ist noch offen, siehe `CONTEXT.MD` Offene Fragen)
 
+> **Update (2026-07-16, Sprint 23/MAP-01..MAP-03):** Format von `svg_geometry`/`geo_bounds` war
+> bis hierhin nur als "wird als Beispiel neu erstellt" umschrieben, nie konkret festgelegt. Für die
+> Outdoor-Kartenvisualisierung (Sprint 23) jetzt verbindlich definiert:
+> - `svg_geometry` (TEXT) = rohes `<svg>...</svg>`-Markup, gerendert als Leaflet-Layer via
+>   `L.svgOverlay(svgElement, bounds)` (Core-Feature seit Leaflet 1.0, kein zusätzliches Plugin
+>   nötig).
+> - `geo_bounds` (JSONB, Go `*string`) = `{"sw":{"lat":number,"lon":number},"ne":{"lat":number,"lon":number}}`,
+>   passend zu Leaflets `LatLngBounds`-Eckpunkt-Konvention.
+> - **Wire-Gotcha:** `Zone.GeoBounds` ist Go `*string` — ein `POST /fleet/zones`-Body muss
+>   `geo_bounds` deshalb als JSON-**String** senden (`"geo_bounds": "{\"sw\":...}"`), nicht als
+>   verschachteltes Objekt, sonst schlägt `json.Decode` fehl. Verifiziert gegen den echten
+>   Dev-Stack (`scripts/seed-fleet-demo.sh`, MAP-01) — `geo_bounds` kommt danach als parsbarer
+>   String über `GET /fleet/zones` zurück.
+> - Zusätzlich gefunden (nicht Teil der ursprünglichen Spezifikation): `GET /fleet/zones`/
+>   `/fleet/stations` liefern JSON `null` statt `[]`, wenn die jeweilige Tabelle leer ist (Go
+>   belässt den Slice `nil` bei 0 Zeilen). Frontend normalisiert das defensiv in
+>   `frontend/src/lib/api-client.ts` (`?? []`) statt den Store-Code zu ändern — bewusst kein
+>   Backend-Fix in diesem, laut Grill-Me frontend-lastigen Sprint, aber als bekannte Lücke auch für
+>   `ListVehiclesWithStatus`/`ListAlerts` vermerkt (dort bisher folgenlos, da in der Praxis nie
+>   leer abgefragt).
+> - Scope-Entscheidung (Grill-Me 2026-07-16): nur Outdoor-Zonen werden diesen Sprint gerendert.
+>   Indoor bleibt offen — Fahrzeuge haben aktuell keine `position_x/y` für eine Punktposition
+>   innerhalb einer Indoor-Zone (nur `position_zone_id`), das bräuchte eine eigene
+>   Backend-Erweiterung (Folge-Sprint).
+
 ## Konsequenzen
 
 ### Positiv

@@ -1,6 +1,8 @@
 # Teleoperation System Architecture
 
-Stand: 2026-06-16 (aktualisiert nach ADR-001 bis ADR-026, Sprint 17 deployed)
+Stand: 2026-06-16 (aktualisiert nach ADR-001 bis ADR-026, Sprint 17 deployed); Fleet-System-Abschnitt
+nachgezogen 2026-07-16 (Sprint 21–23, ADR-027/028/029) — bis dahin unbeschrieben, obwohl seit
+Sprint 21 im Betrieb.
 
 ---
 
@@ -202,6 +204,94 @@ Alle schreibenden REST-Endpoints sind durch `requireJWT`-Middleware geschützt (
 
 ---
 
+## Fleet System (ADR-027/028/029, Sprint 21–23)
+
+Zweiter, orthogonaler Service-Cluster neben dem Direct-Teleop-System oben — entstanden aus dem
+IBATOUR-Kurswechsel (Fördervertrag-Pivot Direct-Teleop-PoC → Leitstellensoftware). Bewusst als
+**eigener Go-Service** (`fleet-service`), nicht als Erweiterung von `control-server`: koexistiert
+auf derselben `vehicles`-Tabelle (`vehicle_type`-Spalte, ADR-029), aber eigener DB-Connection-Pool,
+eigener Prozess, kein `depends_on` in beide Richtungen (Startreihenfolge ist absichtlich egal —
+beide Services legen ihre jeweils benötigten Tabellen bei Bedarf selbst per
+`CREATE TABLE IF NOT EXISTS` an).
+
+### Datenmodell (ADR-029)
+
+Neue, per Fremdschlüssel an `vehicles.id` gehängte Tabellen: `vehicle_status`, `zones`,
+`stations`, `tasks`, `alerts`. Zonen/Stationen tragen `svg_geometry` (rohes SVG-Markup) und bei
+Outdoor-Zonen zusätzlich `geo_bounds` (JSON-String mit `sw`/`ne`-Ecken, geo-referenziert für
+Leaflet `svgOverlay`/Marker-Bounds) — Format in ADR-029 verbindlich definiert (Sprint 23, MAP-02).
+Fahrzeuge haben für Outdoor `position_lat/lon`, für Indoor nur `position_zone_id`, **kein**
+`position_x/y` — echte, dokumentierte Datenmodell-Lücke (`DECISIONS.MD`), Indoor-Kartenrendering
+blockiert bis zu einer Folge-Migration.
+
+### FleetGateway-Abstraktion (ADR-027)
+
+`internal/fleetgateway`: Interface (`SubscribeVehicleStatus`/`SubscribeVehicleAlerts`/
+`DispatchTask`) zwischen `fleet-service` und der tatsächlichen Fahrzeug-Anbindung — Event-Typen
+bewusst von den `fleetservice`-Persistenztypen getrennt, damit das Interface stabil bleibt, falls
+sich das DB-Schema ändert. Zwei Implementierungen:
+
+- `MockGateway` (`mock.go`) — In-Process-Simulation, für Unit-/Integrationstests.
+- `MQTTGateway` (`mqtt.go`) — Produktiv-Pfad: abonniert `fleet/{id}/status`/`fleet/{id}/alert` auf
+  dem bestehenden Mosquitto-Broker (Telemetry Channel, siehe oben), parst JSON (nicht Protobuf —
+  bewusste Abweichung vom Direct-Teleop-Schema, da Fleet-Fahrzeuge nur MQTT sprechen, nie eine
+  WS-Verbindung zum Control Server aufbauen). `EnsureVehicleExists` (`INSERT ... ON CONFLICT DO
+  NOTHING`) registriert neue Fleet-Fahrzeuge in `vehicles` selbst, analog zu `control-server`s
+  Auto-Register-Verhalten bei WS-Connect.
+
+`vehicle-mock` (`cmd/vehicle-mock/fleet_simulator.go`) publiziert als externer Prozess auf diese
+MQTT-Topics — Bewegung zwischen Demo-Stationen, Batterie sinkt/lädt, seltene fahrzeug-initiierte
+Alerts, zwei Fahrzeugtypen (`lastenzug`/`lastenrad`) mit unterschiedlichem Verbrauchsprofil.
+
+### fleet-service REST-API + WS-Broadcast
+
+`cmd/fleet-service/main.go`, Handler in `internal/fleetservice/handler.go`. `RequireAuth` prüft
+nur JWT-Signatur/Gültigkeit, keine Rollenprüfung (Fleet-Daten sind operator-facing, nicht
+rollenspezifisch wie Admin-Aktionen).
+
+| Methode | Pfad | Zweck |
+|---|---|---|
+| GET | `/health` | Health-Check, ungeschützt |
+| GET | `/fleet/vehicles` | Fahrzeugliste inkl. `vehicle_type` |
+| GET/POST | `/fleet/zones` | Zonen-CRUD (Read/Create) |
+| GET/POST | `/fleet/stations` | Stations-CRUD (Read/Create) |
+| GET/POST | `/fleet/tasks` | Task-CRUD; `CreateTask` dispatcht fire-and-forget an die Gateway (Ack-Semantik der echten Fahrzeug-Anbindung noch offen, ADR-027) |
+| GET | `/fleet/alerts` | Alert-Liste |
+| POST | `/fleet/alerts/{id}/acknowledge` | Alert bestätigen |
+| GET | `/fleet/ws` | WS-Upgrade — Live-Broadcast (siehe unten) |
+
+**Live-Updates ohne Polling (ADR-028, FLEET-06):** `fleet-service` betreibt einen eigenen
+Broadcast-Hub (`internal/fleetservice/broadcast.go`) — jede über die MQTT-Gateway eingehende
+`vehicle_status`/`alert`-Änderung wird an alle verbundenen `/fleet/ws`-Clients gepusht
+(Multi-Workstation-fähig, kein Backlog/Replay). Frontend resynct deshalb bei jedem Reconnect nach
+dem ersten vollständig per REST-Snapshot (`useFleetOverview.ts`). Alert-Schwellenwertlogik
+(Batterie-Warnung u. ä.) läuft server-seitig in `internal/fleetservice/alertengine.go`, getrennt
+von fahrzeug-initiierten Alerts, die bereits fertig über die Gateway hereinkommen (FLEET-07).
+
+**Bekannte, bewusst nicht in Sprint 23 gefixte Lücke:** `GET /fleet/zones`/`/fleet/stations`
+liefern bei leerer Tabelle JSON `null` statt `[]` (Go `nil`-Slice-Marshalling) — Frontend
+normalisiert defensiv (`?? []`), Backend-Fix offen (`DECISIONS.MD`).
+
+### Frontend — Fleet Overview Dashboard (Sprint 22–23)
+
+Zweite Landing-View neben dem Direct-Teleop-Cockpit, `App.tsx` routet dorthin, sobald ein Token
+aber keine `sessionId` gesetzt ist (kein Router nötig für zwei Post-Login-Views).
+
+| Komponente/Hook | Zweck | Sprint |
+|---|---|---|
+| `FleetOverview.tsx` | Container — führt `fleet-service`-Daten mit `control-server`s `activeSessions` clientseitig zusammen (ADR-029: "Frontend führt Services clientseitig zusammen") | 22 |
+| `FleetVehicleList.tsx` / `FleetVehicleDetail.tsx` | Fahrzeugliste + Detail-Panel; ADR-028-Gating (Teleoperate-Button nur ohne aktiven Operator) | 22 |
+| `FleetAlertsPanel.tsx` | Alert-Liste, Severity-farbig, Acknowledge pro Zeile | 22 |
+| `FleetMap.tsx` | Outdoor-Zonen-Karte — `L.svgOverlay` (Zonen-`svg_geometry`, imperativ via `useMap()`, kein react-leaflet-`<SVGOverlay>` da rohes Markup statt JSX), `L.divIcon`-Marker für Stationen (Quadrate) und Fahrzeuge (Kreise, Klick synct mit Detail-Panel). Kein `<TileLayer>` — ADR-029 schließt externe Kartenkacheln/SaaS aus | 23 |
+| `useFleetOverview.ts` | REST-Snapshot + WS-Deltas (`fleet-ws-client.ts`), Resync bei jedem Reconnect nach dem ersten | 22 |
+| `useFleetZones.ts` | Einmaliger REST-Fetch für Zonen/Stationen — bewusst kein WS (Broadcast-Hub kennt keine Zonen-/Stations-Events) | 23 |
+| `useActiveSessions.ts` | Extrahiert aus `App.tsx`, pollt `GET /api/sessions` | 22 |
+
+**Scope-Grenze (Grill-Me 2026-07-16):** Sprint 23 beschränkt sich auf Outdoor-Zonen — Indoor
+scheitert an der oben genannten `position_x/y`-Lücke, verschoben auf einen Folge-Sprint.
+
+---
+
 ## Control Server — Interne Modulstruktur
 
 Ein Service, 5 logische Module:
@@ -273,7 +363,9 @@ AutonomousVehicleOperationalControlCenter/
 │   ├── auth-service/
 │   ├── safety-service/
 │   ├── telemetry-service/
-│   └── webrtc-sfu/
+│   ├── webrtc-sfu/
+│   ├── fleet-service/            # Fleet-REST-API + WS-Broadcast (Sprint 21, ADR-027/028/029)
+│   └── vehicle-mock/             # Simulierte Fleet-Fahrzeuge — fleet_simulator.go, publiziert via MQTT
 ├── internal/                     # Go Service-interne Pakete
 │   ├── controlserver/
 │   │   ├── command/              # Command Engine — Protobuf Parsing, Rate Limiting (BE-04)
@@ -286,16 +378,18 @@ AutonomousVehicleOperationalControlCenter/
 │   ├── recording/                # Session Recording Interface + MemoryRecorder (BE-07)
 │   ├── telemetryservice/         # MQTT Telemetry Client — Paho (BE-05)
 │   ├── vehicleconnection/        # Vehicle WebSocket Handler (BE-06)
-│   └── webrtcsfu/                # WebRTC SFU Pion/Go — passiver Session-Event-Subscriber (ADR-020)
+│   ├── webrtcsfu/                # WebRTC SFU Pion/Go — passiver Session-Event-Subscriber (ADR-020)
+│   ├── fleetservice/             # Fleet REST-Handler, Store, Broadcast-Hub, Alert-Engine (Sprint 21, ADR-029)
+│   └── fleetgateway/             # FleetGateway-Interface + Mock-/MQTT-Implementierung (ADR-027)
 ├── pkg/                          # Shared Go-Pakete
 │   ├── ulid/                     # ULID-Wrapper (ADR-016)
 │   ├── logger/                   # Strukturierter slog-Wrapper — JSON, Event-Type-Katalog (ADR-017)
 │   └── audit/                    # AuditWriter Interface + SQLiteAuditWriter (ADR-018)
 ├── frontend/                     # React App (ADR-013)
 │   └── src/
-│       ├── components/           # VideoPanel, ControlPanel, SafetyPanel, ConnectionPanel, SafeModeOverlay
-│       ├── hooks/                # useControls, useWebRTC, useTelemetry, useSession, useSystemState, useDeadmanSwitch
-│       └── lib/                  # ws-client (Protobuf ACK), api-client
+│       ├── components/           # VideoPanel, ControlPanel, SafetyPanel, ConnectionPanel, SafeModeOverlay, FleetOverview/FleetMap/FleetVehicleList/FleetVehicleDetail/FleetAlertsPanel (Sprint 22–23)
+│       ├── hooks/                # useControls, useWebRTC, useTelemetry, useSession, useSystemState, useDeadmanSwitch, useFleetOverview, useFleetZones, useActiveSessions
+│       └── lib/                  # ws-client (Protobuf ACK), api-client, fleet-ws-client, fleet-map
 ├── infrastructure/               # Docker & Compose
 │   ├── docker/                   # Dockerfiles je Service, nginx.conf
 │   ├── compose/                  # docker-compose.yml + docker-compose.prod.yml
@@ -344,7 +438,9 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
 | `auth-service` | Go | JWT Ausstellung, Operator-Rollen, Handover-Token |
 | `safety-service` | Go | Safety Event Bus (In-Memory, DDS-ready) |
 | `telemetry-service` | Go | MQTT Bridge / Mosquitto Client |
-| `mosquitto` | Eclipse Mosquitto | MQTT Broker |
+| `fleet-service` | Go | Fleet-REST-API + `/fleet/ws`-Broadcast, konsumiert `FleetGateway` (MQTT) — Sprint 21, ADR-027/028/029 |
+| `vehicle-mock` / `vehicle-mock-2` | Go | Simulierte Fleet-Fahrzeuge (`lastenzug-01`/`lastenrad-01`), publizieren Status/Alerts über MQTT — Sprint 21 |
+| `mosquitto` | Eclipse Mosquitto | MQTT Broker (Direct-Teleop-Telemetrie + Fleet-Gateway) |
 | `webrtc-sfu` | Go / Pion | Passiver Session-Event-Subscriber (ADR-020); kein Media-Routing |
 | `mediamtx` | bluenviron/mediamtx | WHIP/WHEP Router; Management API :9997 (ADR-020) |
 | `stun-turn` | coturn | STUN/TURN für NAT Traversal; ICE-Credentials für MediaMTX + Browser |

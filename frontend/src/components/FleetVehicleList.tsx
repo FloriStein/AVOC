@@ -1,16 +1,11 @@
 import type { FleetVehicle, ActiveSession } from '@/lib/api-client'
+import { AUTONOMY_DOT } from '@/lib/fleet-map'
 
 interface Props {
   vehicles: FleetVehicle[]
   activeSessions: ActiveSession[]
   selectedVehicleId: string | null
   onSelect: (vehicleId: string) => void
-}
-
-const AUTONOMY_DOT: Record<string, string> = {
-  autonomous: 'bg-green-500',
-  teleoperated: 'bg-blue-500',
-  manual: 'bg-yellow-500',
 }
 
 function activeOperatorFor(vehicleId: string, activeSessions: ActiveSession[]): string | null {
