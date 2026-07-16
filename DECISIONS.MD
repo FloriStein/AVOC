@@ -12,7 +12,7 @@
 | [ADR-006](docs/adr/006-testing-strategy.md) | Testing Strategy | Accepted | testing+testify / Docker / Safety Test Suite / Jest+Playwright / CI Latenz / WebRTC E2E non-blocking. Update 2026-07-15: verpflichtende Fallgruppen-Checkliste pro Task, siehe CLAUDE.MD Abschnitt 17 |
 | [ADR-007](docs/adr/007-system-runtime-topology.md) | System Runtime Topology | Accepted | Hub-and-Spoke (Control Hub ≠ Data Hub); CONTROL HUB > VIDEO HUB; SFU = orthogonaler zweiter Hub |
 | [ADR-008](docs/adr/008-message-protocol.md) | Message Protocol Contract Layer | Accepted | Protobuf (Application Bus); WebRTC Signaling bewusst außerhalb |
-| [ADR-009](docs/adr/009-failure-model.md) | Failure Model & System Behavior under Faults | Accepted | CRITICAL/DEGRADED/OBSERVATION; Video=DEGRADED; Command ACK Timeout=CRITICAL; 3 formale Invarianten |
+| [ADR-009](docs/adr/009-failure-model.md) | Failure Model & System Behavior under Faults | Accepted | CRITICAL/DEGRADED/OBSERVATION; Video=DEGRADED; Command ACK Timeout=CRITICAL; 3 formale Invarianten. Update 2026-07-17 (DRIFT-K1/K2/K3): Auth Invalidation (neuer `AuthWatchdog`) und No Active Operator (`TransitionOperator(OpNoOperator)`) jetzt produktiv verdrahtet, teilen denselben kanonischen Trigger; MEDIA_DEGRADED-Schwellwerte + DEGRADED→CONNECTED-Recovery ergänzt; Partial Telemetry Loss bewusst zurückgestellt |
 | [ADR-010](docs/adr/010-control-loop.md) | Control Loop Definition & Safety Override | Accepted | Event-driven Stream / ACK-Roundtrip / Channel Close |
 | [ADR-011](docs/adr/011-system-state-machine.md) | System State Machine | Accepted | 4-Layer: SYSTEM / CONTROL / MEDIA / OPERATOR STATE |
 | [ADR-012](docs/adr/012-message-flow-runtime.md) | Message Flow Runtime Model | Accepted | Field-based Protobuf Versioning, CI Schema-Gate |
@@ -72,3 +72,4 @@
 | Fortsetzung Hexagonal-Migration auf auth-/telemetry-service nach Pilot | offen | ADR-031 Folge — expliziter Entscheidungspunkt nach HEX-05, kein Automatismus |
 | Hexagonal-Migration `control-server` | Nicht in diesem Scope | ADR-031 Folge — bräuchte eigenes ADR + Testabdeckung-Aufbau zuerst; höchstes Risiko im Projekt |
 | Testabdeckung `safety-service`/`webrtc-sfu`/`internal/recording` (0 Tests) | offen | ADR-031 Bestandsaufnahme — Voraussetzung, bevor dort überhaupt eine Hexagonal-Migration sinnvoll wäre |
+| Partial Telemetry Loss → DEGRADED (kein Produktivpfad) | offen | ADR-009 Update (2026-07-17, DRIFT-K3-TELEMETRY) — bewusst zurückgestellt, bräuchte neuen Cross-Service-Watchdog gegen `telemetry-service` (bisher keine Kopplung zu `control-server`); Backlog-Task angelegt |

@@ -21,6 +21,7 @@ const (
 	EventWsConnected           = "WS_CONNECTED"
 	EventWsSessionInvalid      = "WS_SESSION_NOT_FOUND"
 	EventOperatorHandover      = "OPERATOR_HANDOVER_COMPLETED"
+	EventAuthWatchdogTriggered = "AUTH_WATCHDOG_TRIGGERED" // DRIFT-K1 (2026-07-16)
 
 	// System events
 	EventStateTransition  = "STATE_TRANSITION_SYSTEM"

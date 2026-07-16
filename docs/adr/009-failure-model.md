@@ -20,18 +20,18 @@ Sprint 16 hat zwei offene Lücken des ursprünglichen Failure Models implementie
 | Dead-man Switch Timeout | Kein Heartbeat vom Operator | Auto-Stop → SAFE_MODE | `safety/detector.go` DeadmanWatchdog |
 | Vehicle ACK Timeout | Fahrzeug bestätigt Befehl nicht | Auto-Stop → SAFE_MODE | **VehicleACKWatchdog** (Sprint 16) |
 | Command ACK Timeout | Control ACK zum Operator überschritten | Auto-Stop → SAFE_MODE | `safety/detector.go` ACKTimeoutWatcher |
-| Auth Invalidation | JWT revoked, laufende Session | Auto-Stop → SAFE_MODE | Auth Service (ADR-004) |
-| No Active Operator | OPERATOR_STATE = NO_OPERATOR | Auto-Stop → SAFE_MODE | `statemachine/state.go` (`TransitionOperator(OpNoOperator)`) |
+| Auth Invalidation | Operator-Account gelöscht/deaktiviert, laufende Session | Auto-Stop → SAFE_MODE | **AuthWatchdog** (2026-07-16, siehe Update unten) |
+| No Active Operator | OPERATOR_STATE = NO_OPERATOR | Auto-Stop → SAFE_MODE | `statemachine/state.go` (`TransitionOperator(OpNoOperator)`), produktiv verdrahtet seit 2026-07-16 (siehe Update unten) |
 | Emergency Stop | Operator-Kommando | Sofort → SAFE_MODE | `command/engine.go` |
 
 ### DEGRADED — Warnung, Control bleibt möglich
 
-| Fehlerfall | Trigger | Verhalten |
-|---|---|---|
-| Video Stream Lost | MEDIA_FAILED | SYSTEM → DEGRADED, Warnung im UI |
-| Video Qualitätsverlust | MEDIA_DEGRADED | SYSTEM → DEGRADED, Warnung |
-| Secondary Camera Failure | Partial MEDIA_FAILED | SYSTEM → DEGRADED |
-| Partial Telemetry Loss | MQTT teilweise verloren | SYSTEM → DEGRADED |
+| Fehlerfall | Trigger | Verhalten | Implementierung |
+|---|---|---|---|
+| Video Stream Lost | MEDIA_FAILED (ICE failed/disconnected, WHEP-Fehler) | SYSTEM → DEGRADED, Warnung im UI | `useWebRTC.ts` → `POST /media/event` → `TransitionMedia`, produktiv verdrahtet seit Initial Project State |
+| Video Qualitätsverlust | MEDIA_DEGRADED (Paketverlust >5% oder Bitrate <100kbps, 3 Samples) | SYSTEM → DEGRADED, Warnung, automatische Erholung zu CONNECTED | `useWebRTC.ts` `getStats()`-Polling, produktiv verdrahtet seit 2026-07-16 (siehe Update unten) |
+| Secondary Camera Failure | Partial MEDIA_FAILED | SYSTEM → DEGRADED | Kein Produktivpfad — nur eine Kamera pro Fahrzeug im aktuellen Scope |
+| Partial Telemetry Loss | MQTT teilweise verloren | SYSTEM → DEGRADED | Kein Produktivpfad — zurückgestellt, eigener Backlog-Task (siehe Update unten) |
 
 ### OBSERVATION — Kein Stop, laufende Session bleibt aktiv
 
@@ -163,3 +163,121 @@ INVARIANT 3:
 - Command ACK Timeout als CRITICAL erfordert präzises Timeout-Management im Control Server
 - SAFE_MODE lässt Media weiter laufen — erfordert bewusste Implementierungsentscheidung
 - SafetyBusWatchdog: 10s Reaktionszeit (2 × 5s Intervall) ist ein bewusster Trade-off gegen False Positives bei kurzen Netzwerk-Flakiness
+
+---
+
+## Update (2026-07-17)
+
+Sprint-26-Drift-Audit (`docs/drift-audit-2026-07.md`, AUDIT-02/AUDIT-05) fand drei der oben
+tabellierten CRITICAL/DEGRADED-Trigger ohne echten Produktivpfad — nur in
+`tests/unit/safety_test.go` synthetisch erzeugt (`EventAuthInvalid`, `TransitionOperator
+(OpNoOperator)`, `TransitionMedia(...)`). Für jeden Befund vor der Umsetzung eine eigene
+Grill-Me-Session (§1.1/§5 CLAUDE.MD, Typ L) — Nutzer entschied sich in allen drei Fällen für
+Implementierung statt Doku-Korrektur. Diese Änderung überschreibt **nicht** die ursprüngliche
+Tabelle oben (§6) — die „Implementierung"-Spalte für die drei betroffenen Zeilen wurde auf den
+aktuellen Stand nachgezogen, alle übrigen Inhalte bleiben unverändert stehen.
+
+### DRIFT-K1: Auth Invalidation
+
+**Befund:** Kein Revocation-Mechanismus existierte. Konkret exploitierbar: `DELETE
+/auth/users/{id}` (Admin-Endpunkt) konnte den Account eines aktiven Operators mitten in der
+Session löschen, ohne jede Wirkung — `websocket.go validateJWT` prüft das JWT nur einmalig beim
+Handshake, danach nie wieder. `POST /logout` blockiert zwar Self-Logout während einer aktiven
+Session (ADR-025), das deckt aber nicht den Fall ab, dass ein Admin den Account löscht.
+
+**Entscheidung (Grill-Me):** Implementieren, nicht nur Doku korrigieren. Umfang bewusst
+minimal gehalten — nur Account-Existenz/`is_active`-Check, kein `token_version`-Mechanismus,
+da aktuell einzig `DELETE /auth/users/{id}` als Revocation-Pfad existiert (kein
+Soft-Deactivate-Endpunkt). Timing mirrort `SafetyBusWatchdog` (5s Poll × 2 Fails ≈ 10s) — gleiche
+Risikoabwägung wie bei einer bereits akzeptierten Watchdog-Klasse, siehe „Negativ" oben.
+
+**Implementierung:**
+- Neues Paket `internal/controlserver/authcheck` — liest `users.is_active` direkt aus der
+  geteilten `avoc`-Postgres-DB (gleiches Muster wie `internal/vehicleregistry`/`pkg/audit`), statt
+  einer neuen HTTP-Abhängigkeit auf auth-service (würde die Watchdog-Verfügbarkeit an einen
+  zweiten Netzwerk-Hop koppeln und mit der OBSERVATION-Klasse „Auth Service nicht erreichbar"
+  kollidieren).
+- Neuer `AuthWatchdog` (`internal/controlserver/safety/auth_watchdog.go`) — per-`VehicleContext`
+  (nicht global wie `SafetyBusWatchdog`, da ein widerrufener Operator-Account nur dessen eigenes
+  Fahrzeug betreffen darf, ADR-026). Lifecycle (`Start`/`Stop`) an Session-Start/-Ende und
+  WS-Reconnect-Recovery gekoppelt (`vehiclecontext.Registry.WithUserChecker`, optional — nil-safe
+  für bestehende Tests, die keinen Checker setzen).
+- Feuert über `TransitionOperator(OpNoOperator)`, nicht über einen zweiten, parallelen
+  `TransitionSystem`-Aufruf — ein widerrufener Account IST aus Sicht der State Machine „kein
+  aktiver Operator mehr" (siehe DRIFT-K2). Publiziert `EventAuthInvalid` auf dem Safety Event Bus.
+
+### DRIFT-K2: No Active Operator
+
+**Befund:** `TransitionOperator(OpNoOperator)` wurde produktiv nirgends aufgerufen — der
+Sicherheits-Effekt entstand nur zufällig über den WS-Disconnect-Handler, der SYSTEM STATE direkt
+transitionierte, ohne den OPERATOR-Layer zu berühren. Der Layer blieb nach jedem Disconnect bei
+`ACTIVE_OPERATOR` hängen.
+
+**Entscheidung (Grill-Me):** Implementieren. Der WS-Disconnect-Pfad deckte den heutigen
+Ist-Zustand zwar bereits redundant ab — aber ohne echten OPERATOR-Layer-Pfad hätte jeder
+*zukünftige* Code-Pfad, der eine Session ohne WS-Close beendet (z. B. DRIFT-K1s neuer
+AuthWatchdog), den OPERATOR-Layer erneut umgangen. `TransitionOperator(OpNoOperator)` ist jetzt
+der eine kanonische „Operator ist weg"-Trigger, den beide Fälle teilen.
+
+**Implementierung:**
+- `internal/controlserver/transport/websocket.go` readLoop-defer ruft nach dem bestehenden
+  `TransitionSystem(StateSafeMode)` zusätzlich `TransitionOperator(OpNoOperator)` auf — SYSTEM ist
+  zu dem Zeitpunkt bereits SAFE_MODE, der Aufruf korrigiert nur noch das OPERATOR-Feld selbst.
+  Publiziert neu `EventNoOperator` auf dem Safety Event Bus (`WSHandler.WithPublisher`, vorher
+  fehlte der Publisher am WSHandler komplett).
+- **Nebenbefund beim Implementieren:** `TransitionOperator`s interner SAFE_MODE-Zweig setzte
+  `m.System` bisher direkt, ohne den `validSystemTransitions`-Guard, den `TransitionSystem`
+  erzwingt (`statemachine/state.go`). Funktional bislang folgenlos, da die Guard-Bedingung
+  (`System == CONNECTED/DEGRADED`) zufällig mit den einzigen gültigen Zieltransitionen
+  übereinstimmt — aber ein Stilbruch, der riskant geworden wäre, sobald der Pfad produktiv
+  aufgerufen wird. Behoben durch Extraktion von `transitionSystemLocked` (gemeinsam von
+  `TransitionSystem` und `TransitionOperator` genutzt) — jede SAFE_MODE-Transition läuft jetzt
+  über denselben validierten, geloggten Pfad.
+
+### DRIFT-K3: DEGRADED-Tier (Media)
+
+**Befund korrigiert gegenüber Audit-Annahme:** Der Audit behauptete, `TransitionMedia(...)` werde
+produktiv nie aufgerufen (geprüft wurden nur `internal/webrtcsfu`/`internal/mediamtx`). Tatsächlich
+verifiziert: `frontend/src/hooks/useWebRTC.ts` meldet echte ICE-Connection-State-Änderungen via
+`reportMediaState()` → `POST /api/media/event` → `TransitionMedia()` — dieser Pfad existierte
+bereits und wird vom echten `VideoPanel` genutzt. **MEDIA_FAILED war also bereits produktiv
+verdrahtet.** Echte Lücken: `MEDIA_DEGRADED` (Qualitätsverlust) wurde vom Frontend nie emittiert,
+und `TransitionMedia` hatte keinen Rückweg von DEGRADED zu CONNECTED (CONTEXT.MD dokumentiert
+CONNECTED ⇄ DEGRADED als bidirektional — nur die Eintritts-Richtung war implementiert; einmal
+verlorenes Video ließ SYSTEM STATE dauerhaft bei DEGRADED hängen, selbst nach Recovery). Video
+Qualitätsverlust und Partial Telemetry Loss (MQTT) hatten tatsächlich keinen Pfad.
+
+**Entscheidung (Grill-Me):** Video-Teil implementieren (Schwellwerte + Recovery), Telemetrie-Teil
+bewusst zurückstellen — `telemetry-service` ist ein komplett separater Prozess ohne bestehende
+Kopplung zu control-server; das Verdrahten hätte einen neuen Cross-Service-Watchdog erfordert
+(neuer HTTP-Client, neue `TELEMETRY_SERVICE_URL`, eigene Failure-Handling-Entscheidung für den
+Watchdog selbst) — andere Risikoklasse als die Video-Änderung, die nur bestehende Endpunkte
+wiederverwendet. Eigener Backlog-Task `DRIFT-K3-TELEMETRY` (`tasks/backlog.md`).
+
+**Implementierung:**
+- `statemachine/state.go` `TransitionMedia`: `MediaConnected` während `StateDegraded` transitioniert
+  jetzt zurück zu `StateConnected` (über `transitionSystemLocked`, siehe DRIFT-K2). Der
+  MEDIA_FAILED/DEGRADED-Eintrittszweig nutzt jetzt ebenfalls `transitionSystemLocked` statt
+  direktem Feld-Zugriff, aus demselben Konsistenzgrund wie bei `TransitionOperator`.
+- `frontend/src/hooks/useWebRTC.ts`: `getStats()`-Polling (schon vorhanden für RTT) erweitert um
+  Paketverlust-Ratio und Empfangs-Bitrate aus dem `inbound-rtp`-Report. Schwellwerte (>5%
+  Paketverlust ODER <100kbps, 3 aufeinanderfolgende 1s-Samples) sind **initiale, nicht
+  feldvalidierte Werte** (Grill-Me-Entscheidung: keine reale Flotte zum Kalibrieren verfügbar,
+  Formel/Hysterese wichtiger als die exakten Zahlen — vor Produktivbetrieb mit echten
+  Netzwerkbedingungen aus Pilot/Demo nachjustieren). Reine Entscheidungslogik als exportierte,
+  pure Funktionen ausgelagert (`computeLossRatio`, `computeBitrateBps`, `isDegradedSample`,
+  `nextStreak`, `nextMediaStateFromStreak`) — keine `RTCPeerConnection`-Mock-Infrastruktur im
+  Repo vorhanden, direkter Unit-Test der Schwellwert-/Hysterese-Logik statt dessen.
+
+### Teststandard (§17)
+
+Neue/erweiterte Tests: `tests/unit/safety_test.go` (Guard-Grenzfälle `TransitionOperator`/
+`TransitionMedia`, Recovery-Pfad), `tests/unit/watchdog_test.go` (8 neue `AuthWatchdog`-Tests:
+Normalfall, Trigger, Fehlerpfad, Recovery-nach-1-Fehler, Stop/Restart, Nebenläufigkeit
+`-race`), `frontend/src/hooks/useWebRTC.test.ts` (22 Tests für die reinen
+Schwellwert-/Hysterese-Funktionen), `tests/integration/services_test.go` (3 neue Tests gegen den
+echten Docker-Teststack: `TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers`,
+`TestIntegration_WSDisconnect_OperatorLayerReflectsNoOperator`,
+`TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode` — letzterer über eine echte
+Postgres-`DELETE`-Operation, nicht gemockt). Vollständige Ergebnisliste inkl. bewusst nicht
+abgedeckter Fälle: `tasks/current-sprint.md` Sprint-26-Nachtrag.

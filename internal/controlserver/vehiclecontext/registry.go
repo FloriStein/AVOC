@@ -16,11 +16,15 @@ import (
 )
 
 // VehicleContext bundles the safety-critical state for exactly ONE vehicle.
+// AuthWatchdog is nil unless the Registry was given a UserChecker (DRIFT-K1,
+// 2026-07-16) — callers must nil-check before Start()/Stop(), same as any
+// optional dependency (mirrors auditWriter's nil-safe handling in each watchdog).
 type VehicleContext struct {
 	SM                 *statemachine.Machine
 	Deadman            *csafety.DeadmanWatchdog
 	ACKTimeoutWatcher  *csafety.ACKTimeoutWatcher
 	VehicleACKWatchdog *csafety.VehicleACKWatchdog
+	AuthWatchdog       *csafety.AuthWatchdog
 }
 
 // Registry lazily creates and permanently retains one VehicleContext per
@@ -31,8 +35,11 @@ type Registry struct {
 	deadmanTimeout    time.Duration
 	ackTimeout        time.Duration
 	vehicleACKTimeout time.Duration
+	authInterval      time.Duration
+	authThreshold     int
 	publisher         csafety.Publisher
 	auditWriter       audit.AuditWriter
+	userChecker       csafety.UserChecker
 }
 
 func NewRegistry(deadmanTimeout, ackTimeout, vehicleACKTimeout time.Duration, publisher csafety.Publisher) *Registry {
@@ -41,6 +48,8 @@ func NewRegistry(deadmanTimeout, ackTimeout, vehicleACKTimeout time.Duration, pu
 		deadmanTimeout:    deadmanTimeout,
 		ackTimeout:        ackTimeout,
 		vehicleACKTimeout: vehicleACKTimeout,
+		authInterval:      csafety.DefaultAuthCheckInterval,
+		authThreshold:     csafety.DefaultAuthFailThreshold,
 		publisher:         publisher,
 	}
 }
@@ -49,6 +58,21 @@ func NewRegistry(deadmanTimeout, ackTimeout, vehicleACKTimeout time.Duration, pu
 // watchdogs (ADR-018). Call before the first Get().
 func (r *Registry) WithAuditWriter(aw audit.AuditWriter) *Registry {
 	r.auditWriter = aw
+	return r
+}
+
+// WithUserChecker enables AuthWatchdog on every VehicleContext (DRIFT-K1). Call
+// before the first Get() — without it, VehicleContext.AuthWatchdog stays nil.
+func (r *Registry) WithUserChecker(checker csafety.UserChecker) *Registry {
+	r.userChecker = checker
+	return r
+}
+
+// WithAuthWatchdogTiming overrides the default 5s×2 poll/threshold (tests only —
+// production always uses csafety.DefaultAuthCheckInterval/DefaultAuthFailThreshold).
+func (r *Registry) WithAuthWatchdogTiming(interval time.Duration, threshold int) *Registry {
+	r.authInterval = interval
+	r.authThreshold = threshold
 	return r
 }
 
@@ -66,6 +90,9 @@ func (r *Registry) Get(vehicleID string) *VehicleContext {
 		Deadman:            csafety.NewDeadmanWatchdog(r.deadmanTimeout, sm, r.publisher).WithAuditWriter(r.auditWriter),
 		ACKTimeoutWatcher:  csafety.NewACKTimeoutWatcher(r.ackTimeout, sm, r.publisher).WithAuditWriter(r.auditWriter),
 		VehicleACKWatchdog: csafety.NewVehicleACKWatchdog(r.vehicleACKTimeout, sm, r.publisher).WithAuditWriter(r.auditWriter),
+	}
+	if r.userChecker != nil {
+		ctx.AuthWatchdog = csafety.NewAuthWatchdog(r.authInterval, r.authThreshold, sm, r.publisher, r.userChecker).WithAuditWriter(r.auditWriter)
 	}
 	r.contexts[vehicleID] = ctx
 	return ctx

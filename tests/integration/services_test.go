@@ -294,3 +294,162 @@ func TestIntegration_EmergencyStop_TriggersSafeMode(t *testing.T) {
 	state := getJSON(t, controlURL+"/state")
 	assert.Equal(t, "SAFE_MODE", state["system"])
 }
+
+// --- DRIFT-K3 (2026-07-16): MEDIA_DEGRADED wiring + DEGRADED→CONNECTED recovery ---
+
+func TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers(t *testing.T) {
+	resp := postJSON(t, authURL+"/auth/operator/login",
+		map[string]string{"username": "admin", "password": "admin_test_secret"})
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	token := body["token"].(string)
+
+	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
+	if err != nil {
+		t.Skipf("WebSocket not available: %v", err)
+	}
+	defer conn.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	const vehicleID = "vehicle-media-degraded"
+	postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": vehicleID, "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
+	}).Body.Close()
+
+	// MEDIA_DEGRADED (quality loss, not full failure) must also map to SYSTEM DEGRADED.
+	resp2 := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{"state": "MEDIA_DEGRADED", "vehicle_id": vehicleID})
+	resp2.Body.Close()
+	assert.Equal(t, 202, resp2.StatusCode)
+
+	state := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
+	assert.Equal(t, "DEGRADED", state["system"])
+
+	// Recovery (DRIFT-K3 fix): MEDIA_CONNECTED while DEGRADED must clear it —
+	// before this fix TransitionMedia had no path back to CONNECTED at all.
+	resp3 := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{"state": "MEDIA_CONNECTED", "vehicle_id": vehicleID})
+	resp3.Body.Close()
+	assert.Equal(t, 202, resp3.StatusCode)
+
+	state2 := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
+	assert.Equal(t, "CONNECTED", state2["system"], "media recovery must clear DEGRADED back to CONNECTED")
+
+	postJSONAuth(t, controlURL+"/session/end", token, nil).Body.Close()
+}
+
+// --- DRIFT-K2 (2026-07-16): OPERATOR layer must reflect NO_OPERATOR after WS disconnect ---
+
+func TestIntegration_WSDisconnect_OperatorLayerReflectsNoOperator(t *testing.T) {
+	resp := postJSON(t, authURL+"/auth/operator/login",
+		map[string]string{"username": "admin", "password": "admin_test_secret"})
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	token := body["token"].(string)
+
+	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
+	if err != nil {
+		t.Skipf("WebSocket not available: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	const vehicleID = "vehicle-k2-disconnect"
+	postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": vehicleID, "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
+	}).Body.Close()
+
+	preState := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
+	require.Equal(t, "ACTIVE_OPERATOR", preState["operator"], "operator must be ACTIVE before disconnect")
+
+	// Close the WS without calling /session/end — the readLoop defer must fire.
+	conn.Close()
+
+	var state map[string]any
+	require.Eventually(t, func() bool {
+		state = getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
+		return state["system"] == "SAFE_MODE"
+	}, 5*time.Second, 100*time.Millisecond, "WS disconnect must trigger SAFE_MODE")
+
+	assert.Equal(t, "NO_OPERATOR", state["operator"],
+		"DRIFT-K2 fix: OPERATOR layer must no longer hang at ACTIVE_OPERATOR after disconnect")
+}
+
+// --- DRIFT-K1 (2026-07-16): AuthWatchdog — revoked operator account → SAFE_MODE ---
+
+func TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode(t *testing.T) {
+	adminResp := postJSON(t, authURL+"/auth/operator/login",
+		map[string]string{"username": "admin", "password": "admin_test_secret"})
+	defer adminResp.Body.Close()
+	require.Equal(t, 200, adminResp.StatusCode)
+	var adminBody map[string]any
+	require.NoError(t, json.NewDecoder(adminResp.Body).Decode(&adminBody))
+	adminToken := adminBody["token"].(string)
+
+	username := fmt.Sprintf("int-k1-%d", time.Now().UnixNano())
+	createResp := postJSONAuth(t, authURL+"/auth/users", adminToken, map[string]string{
+		"username": username, "password": "throwaway-secret-1", "role": "OBSERVER",
+	})
+	createResp.Body.Close()
+	require.Equal(t, 201, createResp.StatusCode, "test user creation must succeed")
+
+	users := getJSONListAuth(t, authURL+"/auth/users", adminToken)
+	var userID float64
+	for _, u := range users {
+		m := u.(map[string]any)
+		if m["username"] == username {
+			userID = m["id"].(float64)
+		}
+	}
+	require.NotZero(t, userID, "created test user must appear in GET /auth/users")
+
+	loginResp := postJSON(t, authURL+"/auth/operator/login",
+		map[string]string{"username": username, "password": "throwaway-secret-1"})
+	defer loginResp.Body.Close()
+	require.Equal(t, 200, loginResp.StatusCode)
+	var loginBody map[string]any
+	require.NoError(t, json.NewDecoder(loginResp.Body).Decode(&loginBody))
+	token := loginBody["token"].(string)
+
+	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
+	if err != nil {
+		t.Skipf("WebSocket not available: %v", err)
+	}
+	defer conn.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	vehicleID := fmt.Sprintf("vehicle-k1-%d", time.Now().UnixNano())
+	startResp := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": vehicleID, "operator_id": username, "operator_role": "ACTIVE_OPERATOR",
+	})
+	startResp.Body.Close()
+	require.Equal(t, 200, startResp.StatusCode)
+
+	preState := getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
+	require.Equal(t, "CONNECTED", preState["system"], "session must be CONNECTED before revocation")
+
+	// Admin deletes the account mid-session — the only revocation path that
+	// exists today (no soft-deactivate endpoint). No WS close, no session/end —
+	// the account is simply gone out from under an otherwise-live connection.
+	delResp := func() *http.Response {
+		req, _ := http.NewRequest(http.MethodDelete, authURL+fmt.Sprintf("/auth/users/%d", int(userID)), nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		r, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		return r
+	}()
+	delResp.Body.Close()
+	require.Equal(t, 204, delResp.StatusCode)
+
+	// AuthWatchdog defaults to 5s poll × 2 failures (~10s) — generous timeout
+	// for the real production timing, not a shortened test-only value.
+	var state map[string]any
+	require.Eventually(t, func() bool {
+		state = getJSON(t, controlURL+fmt.Sprintf("/vehicles/%s/state", vehicleID))
+		return state["system"] == "SAFE_MODE"
+	}, 20*time.Second, 500*time.Millisecond,
+		"deleted operator account must trigger SAFE_MODE via AuthWatchdog within ~10s")
+
+	assert.Equal(t, "NO_OPERATOR", state["operator"])
+}

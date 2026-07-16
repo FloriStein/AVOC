@@ -4,6 +4,8 @@
 package unit_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -521,4 +523,205 @@ func TestSafetyBus_NoActiveVehicles_NoOp(t *testing.T) {
 	time.Sleep(time.Duration(testBusThreshold+2) * testBusInterval * 3)
 
 	assert.Empty(t, pub.Events(), "no active vehicles means nothing to fan out to")
+}
+
+// ── AuthWatchdog (DRIFT-K1, 2026-07-16) ─────────────────────────────────────
+// Per-VehicleContext, tied to one session's operator — unlike SafetyBusWatchdog
+// (shared infra, fleet-wide fanout), revoking one operator's account must only
+// affect that operator's own vehicle (ADR-026 per-vehicle isolation). Fires via
+// TransitionOperator(OpNoOperator), the same guarded path the WS-disconnect
+// handler uses (DRIFT-K2) — not a second, parallel way into SAFE_MODE.
+
+const (
+	testAuthInterval  = 40 * time.Millisecond
+	testAuthThreshold = 2
+)
+
+// fakeUserChecker is a controllable in-memory stand-in for authcheck.Checker —
+// keeps these tests focused on AuthWatchdog's polling/threshold/firing logic
+// without a real Postgres dependency. The real Checker's SQL query is covered
+// separately by an integration test against the live docker test stack DB.
+type fakeUserChecker struct {
+	mu     sync.Mutex
+	active bool
+	err    error
+	calls  int
+}
+
+func (f *fakeUserChecker) IsActiveOperator(_ context.Context, _ string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.active, f.err
+}
+
+func (f *fakeUserChecker) setActive(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.active, f.err = v, nil
+}
+
+func (f *fakeUserChecker) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeUserChecker) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func newAuthWatchdogSetup(t *testing.T) (*statemachine.Machine, *mocks.MockSafetyPublisher, *fakeUserChecker) {
+	t.Helper()
+	sm := statemachine.New()
+	sm.TransitionSystem(statemachine.StateConnecting)
+	sm.TransitionSystem(statemachine.StateAuthenticated)
+	require.True(t, sm.TransitionToConnected())
+	sm.TransitionOperator(statemachine.OpActive)
+	return sm, &mocks.MockSafetyPublisher{}, &fakeUserChecker{active: true}
+}
+
+// 1. Account still active → never fires, even after many poll intervals.
+func TestAuthWatchdog_AccountActive_NeverTriggersSafeMode(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+	defer w.Stop()
+
+	time.Sleep(testAuthInterval * 5)
+
+	sys, _, _, op := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys)
+	assert.Equal(t, statemachine.OpActive, op)
+	assert.Empty(t, pub.Events())
+	assert.GreaterOrEqual(t, checker.callCount(), 2, "watchdog must actually be polling")
+}
+
+// 2. Account deleted (checker reports inactive) → threshold consecutive
+// failures → SAFE_MODE via the OPERATOR layer, EventAuthInvalid published.
+func TestAuthWatchdog_AccountDeleted_TriggersSafeModeViaOperatorLayer(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	checker.setActive(false)
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+	defer w.Stop()
+
+	require.True(t, waitForSafeMode(t, sm, time.Duration(testAuthThreshold+3)*testAuthInterval*3))
+
+	sys, ctrl, _, op := sm.Get()
+	assert.Equal(t, statemachine.StateSafeMode, sys)
+	assert.Equal(t, statemachine.ControlBlocked, ctrl)
+	assert.Equal(t, statemachine.OpNoOperator, op, "OPERATOR layer must reflect the revoked operator")
+	assert.Equal(t, safetyservice.EventAuthInvalid, pub.LastEventType())
+}
+
+// 3. Checker query errors (e.g. transient DB blip) count as failures too —
+// same treatment as SafetyBusWatchdog's connection-refused/non-200 handling.
+func TestAuthWatchdog_CheckerError_CountsAsFailure(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	checker.setErr(fmt.Errorf("connection reset"))
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+	defer w.Stop()
+
+	require.True(t, waitForSafeMode(t, sm, time.Duration(testAuthThreshold+3)*testAuthInterval*3))
+}
+
+// 4. One failure then recovery (account active again) resets the counter —
+// a single transient blip must not cost the operator their session.
+func TestAuthWatchdog_OneFailureThenRecovery_NoSafeMode(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	checker.setActive(false)
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+	defer w.Stop()
+
+	time.Sleep(testAuthInterval + testAuthInterval/2) // let exactly 1 failure register
+	checker.setActive(true)
+	time.Sleep(testAuthInterval * 5)
+
+	sys, _, _, op := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "single blip + recovery must not trigger SAFE_MODE")
+	assert.Equal(t, statemachine.OpActive, op)
+	assert.Empty(t, pub.Events())
+}
+
+// 5. Stop() before threshold is reached cancels the watchdog — no SAFE_MODE
+// even after the time that would have been needed passes.
+func TestAuthWatchdog_StopCancelsWatchdog(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	checker.setActive(false)
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+
+	time.Sleep(testAuthInterval / 2)
+	w.Stop()
+
+	time.Sleep(time.Duration(testAuthThreshold+2) * testAuthInterval * 3)
+
+	sys, _, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "Stop() must cancel watchdog — no SAFE_MODE after stop")
+	assert.Empty(t, pub.Events())
+}
+
+// 6. Already in SAFE_MODE for an unrelated reason (e.g. dead-man timeout) —
+// the watchdog's fire() must not double-transition or duplicate the event.
+func TestAuthWatchdog_AlreadyInSafeMode_NoDuplicateTransition(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	sm.TransitionSystem(statemachine.StateSafeMode)
+	pub.Reset()
+	checker.setActive(false)
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+	defer w.Stop()
+
+	time.Sleep(time.Duration(testAuthThreshold+2) * testAuthInterval * 3)
+
+	sys, ctrl, _, op := sm.Get()
+	assert.Equal(t, statemachine.StateSafeMode, sys)
+	assert.Equal(t, statemachine.ControlBlocked, ctrl)
+	assert.Equal(t, statemachine.OpNoOperator, op, "OPERATOR field still gets corrected even though SYSTEM was already SAFE_MODE")
+}
+
+// 7. Start() after Stop() is a clean restart — failure counter resets, a
+// vehicle reconnecting after recovery does not inherit stale failure state.
+func TestAuthWatchdog_StartAfterStop_FreshStart(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	checker.setActive(false)
+
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+	w.Start("sess-1", "vehicle-1", "operator-1")
+	time.Sleep(testAuthInterval + testAuthInterval/2) // 1 failure registered
+	w.Stop()
+
+	checker.setActive(true)
+	w.Start("sess-1", "vehicle-1", "operator-1") // fresh counter
+	time.Sleep(testAuthInterval * 5)
+
+	sys, _, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "restart must not carry over the pre-Stop() failure count")
+}
+
+// 8. Concurrent Start()/Stop() calls (e.g. rapid reconnect) must not race —
+// run with -race (CLAUDE.MD §17).
+func TestAuthWatchdog_ConcurrentStartStop_RaceSafe(t *testing.T) {
+	sm, pub, checker := newAuthWatchdogSetup(t)
+	w := csafety.NewAuthWatchdog(testAuthInterval, testAuthThreshold, sm, pub, checker)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); w.Start("sess-1", "vehicle-1", "operator-1") }()
+		go func() { defer wg.Done(); w.Stop() }()
+	}
+	wg.Wait()
+	w.Stop()
 }

@@ -4,6 +4,80 @@ Lifecycle: backlog → sprint → done
 
 ---
 
+## Sprint 26 (Fortsetzung) — DRIFT-K1/K2/K3: Safety-Trigger ohne Produktivpfad
+
+Abgeschlossen: 2026-07-17
+
+Drei Kritisch-Befunde aus dem Sprint-26-Drift-Audit (`docs/drift-audit-2026-07.md`,
+AUDIT-02/AUDIT-05): ADR-009 behauptete Safety-Trigger, die nur in `tests/unit/safety_test.go`
+synthetisch erzeugt wurden, ohne echten Produktivpfad. Typ L (Kernsystem/Safety-Modell) — je
+Befund eigene Grill-Me-Session vor Umsetzung (§1.1/§5 CLAUDE.MD), gefolgt von einer zweiten
+Grill-Me-Runde zu konkreten Implementierungs-Trade-offs (Erkennungsumfang, Watchdog-Timing,
+Schwellwert-Kalibrierung, Scope-Split), da die Konsequenzen für bestehende Watchdogs/
+State-Machine-Übergänge (ADR-026 Per-Vehicle-Isolation, Race mit dem WS-Disconnect-Pfad) vor
+der Implementierung geklärt werden mussten. Nutzer entschied sich in allen drei Fällen für
+Implementierung statt reiner Doku-Korrektur.
+
+### Tasks
+
+| ID | Task | Typ | Ergebnis |
+|----|------|-----|----------|
+| DRIFT-K1 | Auth Invalidation → SAFE_MODE | L | ✅ Neuer `AuthWatchdog` (`internal/controlserver/safety/auth_watchdog.go`), per-`VehicleContext` (ADR-026), 5s×2-Poll wie `SafetyBusWatchdog`. Liest `users.is_active` direkt aus der geteilten `avoc`-DB (`internal/controlserver/authcheck`, kein neuer HTTP-Dienst). Feuert über `TransitionOperator(OpNoOperator)` |
+| DRIFT-K2 | No Active Operator → SAFE_MODE | L | ✅ WS-Disconnect-Handler ruft jetzt zusätzlich `TransitionOperator(OpNoOperator)` — OPERATOR-Layer hängt nicht mehr dauerhaft bei `ACTIVE_OPERATOR`. `EventNoOperator` wird neu auf dem Safety Event Bus publiziert (`WSHandler.WithPublisher`) |
+| DRIFT-K2-FIX | `TransitionOperator`-Guard-Bypass | S | ✅ Nebenbefund: interner SAFE_MODE-Zweig umging bislang `validSystemTransitions` (funktional bisher folgenlos, da Guard-Bedingung zufällig deckungsgleich). Behoben via `transitionSystemLocked`-Extraktion, jetzt von `TransitionSystem` und `TransitionOperator` gemeinsam genutzt |
+| DRIFT-K3 | MEDIA_DEGRADED-Schwellwerte + Recovery | L | ✅ Audit-Prämisse korrigiert: MEDIA_FAILED war bereits verdrahtet (`useWebRTC.ts`). Neu: Paketverlust-/Bitrate-Schwellwerte aus `getStats()` (initiale, nicht feldvalidierte Werte, 3-Sample-Hysterese) → `MEDIA_DEGRADED`; `TransitionMedia` bekommt einen bislang fehlenden Rückweg DEGRADED→CONNECTED |
+| DRIFT-K3-TELEMETRY | Partial Telemetry Loss | — | 🔲 Bewusst zurückgestellt, eigener Backlog-Task (`tasks/backlog.md`) — neuer Cross-Service-Watchdog gegen `telemetry-service` nötig, andere Risikoklasse als die Video-Änderung |
+
+### Test-Ergebnis
+
+- Backend: 8 neue `AuthWatchdog`-Tests (`watchdog_test.go`: Normalfall, Trigger, Fehlerpfad,
+  Recovery-nach-1-Fehler, Stop/Restart, Nebenläufigkeit) + 8 neue `safety_test.go`-Tests
+  (`TransitionOperator`-Guard-Grenzfälle, `TransitionMedia`-Recovery). Alle Go-Pakete außer
+  `tests/integration` zweimal hintereinander mit `-race -count=1` grün (keine Flakiness).
+- Integration: 3 neue Tests gegen den echten Docker-Teststack
+  (`TestIntegration_MediaDegraded_TriggersDegrade_ThenRecovers`,
+  `TestIntegration_WSDisconnect_OperatorLayerReflectsNoOperator`,
+  `TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode` — letzterer über eine echte
+  `DELETE`-Operation gegen Postgres). In dieser Sandbox schlägt der WebSocket-Dial für **alle**
+  WS-abhängigen Integrationstests fehl (`websocket: bad handshake`) — bereits vor dieser Änderung
+  bei 3 unveränderten Bestandstests der Fall (`t.Skipf`, Kommentar „expected in minimal test
+  stack"), also eine Umgebungseinschränkung dieser Sandbox, keine Regression. Der Postgres-seitige
+  Teil von DRIFT-K1 (Testuser anlegen/listen/löschen) lief dabei erfolgreich durch, bevor der
+  WS-Schritt griff. Volle End-to-End-Verifikation (inkl. tatsächlichem SAFE_MODE-Eintritt) steht
+  in einer Umgebung mit funktionierendem WS-Dial noch aus.
+- Frontend: 22 neue Tests für die reine Schwellwert-/Hysterese-Logik
+  (`useWebRTC.test.ts`) — keine `RTCPeerConnection`-Mock-Infrastruktur im Repo vorhanden, daher
+  Extraktion in pure, exportierte Funktionen statt Hook-Integrationstest. Gesamte Suite 274
+  Tests/26 Dateien, zweimal hintereinander grün, `tsc -b` sauber.
+
+### Bewusst nicht abgedeckt
+
+- End-to-End-Verifikation von DRIFT-K1/K2 gegen den echten Docker-Stack (WS-Dial-Limitation dieser
+  Sandbox, s. o.) — Unit-Tests exercisen dieselbe Logik gegen die echte State Machine, nicht
+  synthetisch.
+- MEDIA_DEGRADED-Schwellwerte sind nicht feldvalidiert (keine reale Flotte zum Kalibrieren) —
+  bewusste Grill-Me-Entscheidung, im ADR-009-Update-Block als „initial, nicht feldvalidiert"
+  markiert.
+- Partial Telemetry Loss — siehe `DRIFT-K3-TELEMETRY`.
+
+### Neue/geänderte Dateien
+
+- `internal/controlserver/authcheck/checker.go` — NEU
+- `internal/controlserver/safety/auth_watchdog.go` — NEU
+- `internal/controlserver/statemachine/state.go` — `transitionSystemLocked`-Extraktion; `TransitionMedia`-Recovery
+- `internal/controlserver/transport/websocket.go` — `WithPublisher`; `TransitionOperator(OpNoOperator)` im Disconnect-Handler; `AuthWatchdog` Start/Stop
+- `internal/controlserver/vehiclecontext/registry.go` — `AuthWatchdog`-Feld (optional, nil-safe), `WithUserChecker`/`WithAuthWatchdogTiming`
+- `cmd/control-server/main.go` — `authcheck.NewChecker`, `WithUserChecker`, `WithPublisher`, `AuthWatchdog` Start/Stop an allen Session-Lifecycle-Stellen
+- `pkg/logger/event_types.go` — `EventAuthWatchdogTriggered`
+- `frontend/src/hooks/useWebRTC.ts` — `getStats()`-Schwellwertlogik als pure Funktionen; MEDIA_DEGRADED-Detection
+- `frontend/src/hooks/useWebRTC.test.ts` — NEU
+- `tests/unit/safety_test.go`, `tests/unit/watchdog_test.go` — neue Testfälle
+- `tests/integration/services_test.go` — 3 neue Integrationstests, `getJSONListAuth`-Fix (fehlende Auth)
+- `docs/adr/009-failure-model.md` — Update-Block (2026-07-17), Implementierung-Spalten korrigiert
+- `CONTEXT.MD`, `DECISIONS.MD`, `docs/drift-audit-2026-07.md`, `tasks/backlog.md` — nachgezogen
+
+---
+
 ## Sprint 17 — Multi-Vehicle State Isolation (ADR-026)
 
 Abgeschlossen: 2026-06-16 | Deployed: 2026-06-16 (Commits `32de463`, `d20e9f2`)

@@ -154,6 +154,57 @@ func TestSafety_NoOperator_TriggersSafeMode(t *testing.T) {
 	assert.Equal(t, statemachine.ControlBlocked, ctrl)
 }
 
+// DRIFT-K2 (2026-07-16): TransitionOperator(OpNoOperator) now routes its internal
+// SAFE_MODE branch through the same transitionSystemLocked guard as TransitionSystem
+// (previously set m.System directly). These cases pin down the guard boundary and the
+// idempotent-when-already-SAFE_MODE behavior that the WS-disconnect handler relies on.
+
+func TestSafety_NoOperator_AlreadyInSafeMode_NoOpNoInvalidWarningFlood(t *testing.T) {
+	sm, _, _, mgr := newTestSetup(t)
+	connectSession(t, sm, mgr)
+	sm.TransitionOperator(statemachine.OpActive)
+	sm.TransitionSystem(statemachine.StateSafeMode)
+
+	// Simulates the WS-disconnect handler calling TransitionOperator AFTER it has
+	// already called TransitionSystem(StateSafeMode) directly (websocket.go readLoop
+	// defer) — must not attempt a SAFE_MODE→SAFE_MODE transition, only correct Operator.
+	sm.TransitionOperator(statemachine.OpNoOperator)
+
+	sys, ctrl, _, op := sm.Get()
+	assert.Equal(t, statemachine.StateSafeMode, sys)
+	assert.Equal(t, statemachine.ControlBlocked, ctrl)
+	assert.Equal(t, statemachine.OpNoOperator, op, "OPERATOR layer must reflect NO_OPERATOR, not hang at ACTIVE_OPERATOR")
+}
+
+func TestSafety_NoOperator_WhileAuthenticated_DoesNotForceSafeMode(t *testing.T) {
+	sm, _, _, _ := newTestSetup(t)
+	sm.TransitionSystem(statemachine.StateConnecting)
+	sm.TransitionSystem(statemachine.StateAuthenticated)
+
+	// No operator ever became ACTIVE (e.g. login completed but session/start not yet
+	// called) — OpNoOperator here is not a "operator disappeared" event and must not
+	// force a SYSTEM transition; only StateConnected/StateDegraded arm the branch.
+	sm.TransitionOperator(statemachine.OpNoOperator)
+
+	sys, _, _, op := sm.Get()
+	assert.Equal(t, statemachine.StateAuthenticated, sys, "guard boundary: only CONNECTED/DEGRADED trigger SAFE_MODE")
+	assert.Equal(t, statemachine.OpNoOperator, op)
+}
+
+func TestSafety_NoOperator_FromDegraded_TriggersSafeMode(t *testing.T) {
+	sm, _, _, mgr := newTestSetup(t)
+	connectSession(t, sm, mgr)
+	sm.TransitionOperator(statemachine.OpActive)
+	sm.TransitionMedia(statemachine.MediaFailed) // → DEGRADED (Invariant 1)
+	require.Equal(t, statemachine.StateDegraded, func() statemachine.SystemState { s, _, _, _ := sm.Get(); return s }())
+
+	sm.TransitionOperator(statemachine.OpNoOperator)
+
+	sys, ctrl, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateSafeMode, sys, "NO_OPERATOR must also trigger SAFE_MODE from DEGRADED")
+	assert.Equal(t, statemachine.ControlBlocked, ctrl)
+}
+
 // --- CRITICAL Trigger 5: Emergency Stop ---
 
 func TestSafety_EmergencyStop_TriggersSafeMode(t *testing.T) {
@@ -230,6 +281,53 @@ func TestSafety_MediaDegraded_TriggersDegrade_NeverSafeMode(t *testing.T) {
 	assert.Equal(t, statemachine.StateDegraded, sys)
 	assert.NotEqual(t, statemachine.StateSafeMode, sys)
 	assert.Equal(t, statemachine.ControlActive, ctrl, "control stays active during DEGRADED")
+}
+
+// DRIFT-K3 (2026-07-16): MediaConnected while SYSTEM is DEGRADED must recover back to
+// CONNECTED — CONTEXT.MD documents CONNECTED ⇄ DEGRADED as bidirectional, but only the
+// DEGRADED-entry direction existed before this fix, leaving SYSTEM STATE permanently
+// stuck at DEGRADED once video failed even once, regardless of later recovery.
+
+func TestSafety_MediaRecovered_FromDegraded_ReturnsToConnected(t *testing.T) {
+	sm, _, _, mgr := newTestSetup(t)
+	connectSession(t, sm, mgr)
+	sm.TransitionMedia(statemachine.MediaFailed)
+	require.Equal(t, statemachine.StateDegraded, func() statemachine.SystemState { s, _, _, _ := sm.Get(); return s }())
+
+	sm.TransitionMedia(statemachine.MediaConnected)
+
+	sys, ctrl, media, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "media recovery must clear DEGRADED")
+	assert.Equal(t, statemachine.ControlActive, ctrl)
+	assert.Equal(t, statemachine.MediaConnected, media)
+}
+
+func TestSafety_MediaConnected_WhileAlreadyConnected_NoOp(t *testing.T) {
+	sm, _, _, mgr := newTestSetup(t)
+	connectSession(t, sm, mgr)
+
+	// MediaConnected fires (e.g. renegotiation) while SYSTEM was never DEGRADED —
+	// must not spuriously touch SYSTEM/CONTROL state.
+	sm.TransitionMedia(statemachine.MediaConnected)
+
+	sys, ctrl, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys)
+	assert.Equal(t, statemachine.ControlActive, ctrl)
+}
+
+func TestSafety_MediaRecovered_DuringSafeMode_DoesNotEscapeSafeMode(t *testing.T) {
+	sm, _, _, mgr := newTestSetup(t)
+	connectSession(t, sm, mgr)
+	sm.TransitionSystem(statemachine.StateSafeMode)
+
+	// Media recovering while the vehicle is in SAFE_MODE for an unrelated reason
+	// (e.g. dead-man timeout) must NOT pull SYSTEM back to CONNECTED — recovery
+	// requires an explicit Operator Ack (ADR-009 "No Auto-Resume"), never a media event.
+	sm.TransitionMedia(statemachine.MediaConnected)
+
+	sys, ctrl, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateSafeMode, sys, "SAFE_MODE must only be left via explicit recovery, never by a MEDIA event")
+	assert.Equal(t, statemachine.ControlBlocked, ctrl)
 }
 
 // --- Recovery Checkpoint ---

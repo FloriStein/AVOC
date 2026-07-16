@@ -97,8 +97,8 @@ Regel: Max. 1 ACTIVE_OPERATOR. NO_OPERATOR → SYSTEM SAFE_MODE.
 
 | Klasse | Trigger | Reaktion |
 |--------|---------|----------|
-| **CRITICAL** | WS Disconnect, Safety Bus Failure, Dead-man Timeout, **Command ACK Timeout** (`ACKTimeoutWatcher`, 100ms — Server-ACK an Operator bleibt aus), **Vehicle ACK Timeout** (`VehicleACKWatchdog`, 1s — Fahrzeug bestätigt weitergeleiteten Befehl nicht), Auth Invalidation, No Active Operator | Channel Close → SAFE_MODE |
-| **DEGRADED** | Video Lost (MEDIA_FAILED), Video Degraded, Partial Telemetry Loss | DEGRADED State, Warnung im UI, Control möglich |
+| **CRITICAL** | WS Disconnect, Safety Bus Failure, Dead-man Timeout, **Command ACK Timeout** (`ACKTimeoutWatcher`, 100ms — Server-ACK an Operator bleibt aus), **Vehicle ACK Timeout** (`VehicleACKWatchdog`, 1s — Fahrzeug bestätigt weitergeleiteten Befehl nicht), Auth Invalidation (`AuthWatchdog`, 2026-07-16), No Active Operator (`TransitionOperator(OpNoOperator)`, produktiv verdrahtet seit 2026-07-16) | Channel Close → SAFE_MODE |
+| **DEGRADED** | Video Lost (MEDIA_FAILED), Video Degraded (MEDIA_DEGRADED, Schwellwert-basiert seit 2026-07-16), Partial Telemetry Loss (noch kein Produktivpfad — siehe unten) | DEGRADED State, Warnung im UI, Control möglich |
 | **OBSERVATION** | Auth Service down (bestehende Session) | Neue Sessions blockiert, JWT-Validierung lokal weiter |
 
 **„Command ACK Timeout" ist kein einzelner Mechanismus**, sondern zwei eigenständige Watchdogs mit
@@ -107,6 +107,22 @@ unterschiedlichem Timeout/Trigger (beide Teil des `VehicleContext`, ADR-026):
   → `ControlAck` an den Operator zurückgesendet. Bildet das <100ms-Control-Loop-Budget ab.
 - `VehicleACKWatchdog` (1s) — überwacht, ob das **Fahrzeug** einen weitergeleiteten Bewegungsbefehl
   (`ForwardCommand`) mit einem `VehicleCommandAck` bestätigt (ADR-021).
+
+**Auth Invalidation / No Active Operator (2026-07-16, DRIFT-K1/K2, ADR-009 Update):** Bis Sprint 26
+existierten beide Trigger nur in `tests/unit/safety_test.go`, ohne echten Produktivpfad — Details
+und Herleitung: `docs/adr/009-failure-model.md` Update-Block. Beide feuern jetzt über denselben
+kanonischen Trigger `TransitionOperator(OpNoOperator)`: einmal vom WS-Disconnect-Handler (SYSTEM
+war da bereits SAFE_MODE, korrigiert nur den OPERATOR-Layer), einmal vom neuen `AuthWatchdog`
+(5s-Poll × 2 Fails, prüft `users.is_active` direkt gegen die geteilte Postgres-DB — kein
+Account = kein aktiver Operator mehr, gleiche Semantik).
+
+**Video Degraded (2026-07-16, DRIFT-K3):** `MEDIA_FAILED` war bereits produktiv verdrahtet
+(`useWebRTC.ts` → `POST /media/event`), der Audit-Befund war hier ungenau. Neu: `MEDIA_DEGRADED`
+über Paketverlust-/Bitrate-Schwellwerte aus `RTCPeerConnection.getStats()` (initiale, nicht
+feldvalidierte Werte), sowie ein bislang fehlender Rückweg DEGRADED → CONNECTED bei Media-Recovery
+(vorher blieb SYSTEM STATE nach jedem Videoverlust dauerhaft bei DEGRADED). **Partial Telemetry
+Loss bleibt unverdrahtet** — `telemetry-service` ist ein eigener Prozess ohne Kopplung zu
+control-server, bewusst zurückgestellt (`DRIFT-K3-TELEMETRY`, `tasks/backlog.md`).
 
 **Formale Invarianten:**
 ```
@@ -283,6 +299,7 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Task-Status-Übergangstabelle dupliziert (Go Backend + TypeScript Frontend) | offen | ADR-030 Folge — Frontend spiegelt die Zustandsmaschine nur für UI-Button-Sichtbarkeit, Backend bleibt autoritativ |
 | Vollständige Task-Status-Audit-Historie (mehrere Übergänge, nicht nur der letzte) | offen | ADR-030 Folge — bewusst auf `status_changed_by` (nur letzter Übergang) begrenzt statt eigener `task_status_history`-Tabelle (Scope-Entscheidung, Grill-Me 2026-07-16) |
 | Prinzip 6 ("Interface over Implementation") in der Praxis lückenhaft | offen | ADR-031 Bestandsaufnahme (2026-07-16) — `safety-service`s Bus-Interface (ADR-002) existiert nicht als Go-Code, `SessionRecorder` (ADR-005) existiert, wird aber nirgends als Interface-Typ verwendet; `fleetgateway` (ADR-027) ist bisher der einzige Service-Port, der das Prinzip tatsächlich durchsetzt |
+| Partial Telemetry Loss (DEGRADED-Trigger) ohne Produktivpfad | offen | ADR-009 Update (2026-07-16, DRIFT-K3-TELEMETRY) — bewusst zurückgestellt: `telemetry-service` ist ein eigener Prozess ohne bestehende Kopplung zu `control-server`, bräuchte einen neuen Cross-Service-Watchdog (eigene HTTP-Abhängigkeit, eigene Failure-Handling-Entscheidung) statt nur bestehende Endpunkte wiederzuverwenden — siehe `tasks/backlog.md` |
 
 ---
 

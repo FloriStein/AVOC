@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"avoc/internal/controlserver/authcheck"
 	"avoc/internal/controlserver/command"
 	csafety "avoc/internal/controlserver/safety"
 	"avoc/internal/controlserver/session"
@@ -91,9 +92,13 @@ func main() {
 	// Per-vehicle State Machine + Watchdogs (ADR-026) — replaces the single
 	// process-wide sm/deadman/ackWatcher/vehicleACKWatchdog singletons that
 	// caused two vehicles to silently share (and overwrite) safety monitoring.
+	// AuthWatchdog (DRIFT-K1, 2026-07-16) reads the shared `avoc` DB directly —
+	// same pattern as vehicleregistry/audit below — no new HTTP dependency on
+	// auth-service.
+	userChecker := authcheck.NewChecker(db)
 	vehicleContexts := vehiclecontext.NewRegistry(
 		csafety.DefaultDeadmanTimeout, csafety.DefaultACKTimeout, csafety.DefaultVehicleACKTimeout, safetyPub,
-	).WithAuditWriter(auditWriter)
+	).WithAuditWriter(auditWriter).WithUserChecker(userChecker)
 
 	// HandoverManager resolves each vehicle's own State Machine via the same
 	// per-vehicle registry as everything else (ADR-026 follow-up, MV-11) — no
@@ -133,7 +138,8 @@ func main() {
 
 	// --- Handlers ---
 	wsHandler := transport.NewWSHandler(secret, vehicleContexts, sessionMgr, cmdEngine).
-		WithAuditWriter(auditWriter)
+		WithAuditWriter(auditWriter).
+		WithPublisher(safetyPub)
 	vehicleHandler := vehicleconnection.NewHandler(secret, vehicleContexts, safetyPub, vehicleRegistry, vehicleAckStore).
 		WithVehicleAdder(vehicleStore)
 
@@ -191,6 +197,9 @@ func main() {
 			vc.SM.TransitionOperator(statemachine.OpActive)
 			vc.Deadman.Start(sess.ID, sess.VehicleID)
 			vc.VehicleACKWatchdog.Start(sess.ID, sess.VehicleID)
+			if vc.AuthWatchdog != nil {
+				vc.AuthWatchdog.Start(sess.ID, sess.VehicleID, sess.OperatorID)
+			}
 			sessionMgr.PushSFUEvent("SESSION_CREATED")
 			recorder.StartSession(sess.ID, sess.VehicleID, sess.OperatorID)
 			sys, ctrl, _, _ := vc.SM.Get()
@@ -224,6 +233,9 @@ func main() {
 					vc := vehicleContexts.Get(sess.VehicleID)
 					vc.Deadman.Stop()
 					vc.VehicleACKWatchdog.Stop()
+					if vc.AuthWatchdog != nil {
+						vc.AuthWatchdog.Stop()
+					}
 					sessionMgr.PushSFUEvent("SESSION_ENDED")
 					sessionMgr.ReleaseSession(sess.ID)
 					// Reset to IDLE — clears SAFE_MODE if active (e.g. operator logged out mid-session).
@@ -251,6 +263,9 @@ func main() {
 				vc := vehicleContexts.Get(vehicleID)
 				vc.Deadman.Stop()
 				vc.VehicleACKWatchdog.Stop()
+				if vc.AuthWatchdog != nil {
+					vc.AuthWatchdog.Stop()
+				}
 				vc.SM.TransitionSystem(statemachine.StateIdle)
 			}
 			sessionMgr.PushSFUEvent("SESSION_ENDED")
