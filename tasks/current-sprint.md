@@ -1,3 +1,65 @@
+# Sprint 26 — Drift-Audit: MD-Dokumentation vs. Ist-Zustand
+
+Ziel: Vor der nächsten Feature-Entwicklung prüfen, ob zwischen den maßgeblichen Markdown-Dokumenten
+(`docs/vision.md`, alle 34 ADRs in `docs/adr/`, `docs/code-patterns.md`/`CLAUDE.MD` §12,
+Qualitätsziele aus `vision.md` §8, Sicherheitsregeln aus `CLAUDE.MD` §13/`CONTEXT.MD`/
+`requirements.md`, Performance-Ziele aus `requirements.md`/`architecture.md`) und dem tatsächlichen
+Ist-Zustand des Projekts (Code, Tests, Deployment, `README.md`/`Doku.md`/`DECISIONS.MD`) Drifts
+entstanden sind. Dieser Sprint entwickelt keine neuen Features und ändert bewusst keinen
+Produktivcode — reine Bestandsaufnahme.
+
+Grill-Me-Session (2026-07-16), vier Fragen, jeweils die empfohlene Option gewählt:
+
+- **Scope:** nur Audit (identifizieren + dokumentieren), keine Fixes in diesem Sprint — gefundene
+  Drifts werden als eigene Folgetasks in `tasks/backlog.md` aufgenommen. Begründung: 30-180-Min-
+  Taskgrößenregel (§10) und sicherheitsrelevante Fixes sollen ihren eigenen Grill-Me-/ADR-Prozess
+  durchlaufen statt nebenbei mitgepatcht zu werden.
+- **Granularität:** ein Task pro Kategorie (~7 Tasks) statt Aufsplittung pro Domäne (Core-Teleop/
+  Fleet/Frontend) oder ein einzelner Typ-L-Recherche-Task.
+- **Output:** neues datiertes Audit-Dokument (`docs/drift-audit-2026-07.md`), bestätigte Drifts
+  zusätzlich als konkrete Einträge in `tasks/backlog.md`. Kein separates ADR pro Befund (nur falls
+  ein Befund tatsächlich eine Architekturentscheidungs-Lücke aufdeckt, s. §6).
+- **Branch:** eigener neuer Worktree/Branch (`feature/docs-drift-audit`, Basis:
+  `feature/fleet-service-foundation`), konsistent zum bisherigen Muster (Sprint 23/24/25 liefen
+  ebenfalls in eigenen Worktrees).
+
+**Schweregrad-Skala für alle Befunde** (konsistent über AUDIT-01–07 hinweg zu verwenden):
+
+- **Kritisch:** Doku behauptet ein Sicherheits-/Safety-Verhalten, das der Code nicht (mehr) erfüllt,
+  oder umgekehrt (z. B. Invariante aus `CONTEXT.MD` ohne Entsprechung im Code).
+  Sicherheit schlägt alles (§0) — sofort auch mündlich/im Chat hervorheben, nicht nur im Report.
+- **Mittel:** veraltete/irreführende, aber nicht sicherheitsrelevante Doku (z. B. ADR beschreibt
+  einen Zustand, der durch einen späteren ADR überholt, aber nicht verlinkt wurde).
+- **Niedrig:** kosmetische Abweichung ohne Entscheidungsrelevanz (Tippfehler, veraltete Zahl ohne
+  Konsequenz).
+
+Datum: 2026-07-16 | **Status: Geplant — Tasks offen**
+Vorgänger: Sprint 25 ✅ / Sprint 24 ✅ / Sprint 23 ✅ (alle bereits in
+`feature/fleet-service-foundation` gemerged)
+Branch: `feature/docs-drift-audit` (eigener Worktree `controlcenter-aws-driftaudit`, Basis:
+`feature/fleet-service-foundation`)
+
+---
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| AUDIT-01 | Vision-Drift: `docs/vision.md` (Grundprinzipien §7, Qualitätsziele §8, Zielgruppen, Erfolgskriterien §10, Nicht-Ziele §6) gegen Ist-Zustand abgleichen | M | ⏳ |
+| AUDIT-02 | ADR-Gesamtkonsistenz: alle 34 ADRs (`docs/adr/*`) gegen aktuellen Code/Architektur prüfen — überholte, aber nicht verlinkt als "updated" markierte ADRs; sich widersprechende ADRs; ADRs ohne Code-Entsprechung | M | ⏳ |
+| AUDIT-03 | Coding Guidelines: `docs/code-patterns.md` + `CLAUDE.MD` §12 (KISS, keine versteckte Logik, keine Magic Values, explizite Abhängigkeiten) gegen tatsächlichen Code-Stil (Stichproben Backend/Frontend) abgleichen | M | ⏳ |
+| AUDIT-04 | Qualitätsziele: `vision.md` §8 gegen Ist — Teststandard (`CLAUDE.MD` §17) tatsächlich eingehalten, Wartbarkeit, Dokumentationsvollständigkeit | M | ⏳ |
+| AUDIT-05 | Sicherheitsregeln: `CLAUDE.MD` §13, `CONTEXT.MD` (Safety Concepts, Invarianten 1–3, Failure Classification), `requirements.md` "Safety Requirements" gegen tatsächliche Implementierung (State Machine, Watchdogs, SAFE_MODE, Auth) abgleichen | M | ⏳ |
+| AUDIT-06 | Performance-Ziele: `requirements.md` "Performance Requirements", `architecture.md` "Latency Targets", `CONTEXT.MD` Control-Loop-Zielwert (<100ms) gegen tatsächlich gemessene/getestete Werte (CI-Latenztests, echte Messungen) abgleichen | M | ⏳ |
+| AUDIT-07 | Ist-Zustand-Abgleich: `requirements.md` "Projektstatus", `README.md`, `Doku.md`, `DECISIONS.MD` gegen tatsächlichen Code-/Feature-Stand (was ist wirklich implementiert/getestet/deploybar vs. nur dokumentiert oder umgekehrt) | M | ⏳ |
+| AUDIT-08 | Konsolidierung: `docs/drift-audit-2026-07.md` aus AUDIT-01–07 zusammenführen, bestätigte Drifts als konkrete Tasks in `tasks/backlog.md` aufnehmen, Sprint-Dokumentation abschließen | S | ⏳ |
+
+## Ergebnisse
+
+_Noch keine — Sprint ist geplant, Umsetzung steht aus._
+
+---
+
 # Sprint 24 — Task-Management-UI
 
 Ziel: Task-Management-UI im Fleet-Overview-Dashboard (AP2) — Aufgaben erstellen/zuweisen,
