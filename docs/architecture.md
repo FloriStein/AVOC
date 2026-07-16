@@ -438,8 +438,8 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
 | `auth-service` | Go | JWT Ausstellung, Operator-Rollen, Handover-Token |
 | `safety-service` | Go | Safety Event Bus (In-Memory, DDS-ready) |
 | `telemetry-service` | Go | MQTT Bridge / Mosquitto Client |
-| `fleet-service` | Go | Fleet-REST-API + `/fleet/ws`-Broadcast, konsumiert `FleetGateway` (MQTT) — Sprint 21, ADR-027/028/029 |
-| `vehicle-mock` / `vehicle-mock-2` | Go | Simulierte Fleet-Fahrzeuge (`lastenzug-01`/`lastenrad-01`), publizieren Status/Alerts über MQTT — Sprint 21 |
+| `fleet-service` | Go | Fleet-Domäne (Zonen/Stationen/Tasks/Alerts/Live-Status), eigener Postgres-Pool auf `avoc`, REST + `/fleet/ws`-Broadcast, konsumiert `FleetGateway` (MQTT) — Sprint 21, ADR-027/028/029 |
+| `vehicle-mock` / `vehicle-mock-2` | Go | Simulierte Fleet-Fahrzeuge (`lastenzug-01`/`lastenrad-01`), publizieren Status/Alerts über MQTT (`ADR-027`); daneben Direct-Teleop-Einzelfahrzeug (`ADR-021`) |
 | `mosquitto` | Eclipse Mosquitto | MQTT Broker (Direct-Teleop-Telemetrie + Fleet-Gateway) |
 | `webrtc-sfu` | Go / Pion | Passiver Session-Event-Subscriber (ADR-020); kein Media-Routing |
 | `mediamtx` | bluenviron/mediamtx | WHIP/WHEP Router; Management API :9997 (ADR-020) |

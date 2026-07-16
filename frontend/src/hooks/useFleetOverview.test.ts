@@ -6,7 +6,10 @@ import * as apiClient from '@/lib/api-client'
 vi.mock('@/lib/api-client', () => ({
   listFleetVehicles: vi.fn(),
   listFleetAlerts: vi.fn(),
+  listFleetTasks: vi.fn(),
   acknowledgeFleetAlert: vi.fn(),
+  createFleetTask: vi.fn(),
+  updateFleetTaskStatus: vi.fn(),
 }))
 
 // Mock FleetWSClient as a controllable stub — tests drive onOpen/onEvent manually instead of
@@ -37,11 +40,20 @@ vi.mock('@/lib/fleet-ws-client', () => {
 
 const V1 = { id: 'v1', display_name: 'V1', battery_pct: 50 }
 const A1 = { id: 'a1', vehicle_id: 'v1', severity: 'warning' as const, message: 'x', created_at: 't1' }
+const T1 = {
+  id: 't1', vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b',
+  status: 'pending' as const, priority: 1, created_at: 't1',
+}
 
 describe('useFleetOverview', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     lastInstance = null
+    // Default for tests that don't care about tasks specifically — listFleetTasks has no
+    // implicit auto-mock (vi.mock's factory replaces the whole module), so leaving it unset
+    // would make Promise.all's third call throw (calling `undefined`) and every existing
+    // vehicle/alert test fail via the catch-all error path.
+    vi.mocked(apiClient.listFleetTasks).mockResolvedValue([])
   })
 
   it('token null: lädt nichts, bleibt im loading-Zustand', () => {
@@ -118,7 +130,7 @@ describe('useFleetOverview', () => {
     expect(result.current.alerts.map((a) => a.id)).toEqual(['a2', 'a1'])
   })
 
-  it('unbekannter/task_created-Event wird ignoriert, crasht nicht', async () => {
+  it('unbekanntes Event wird ignoriert, crasht nicht', async () => {
     vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([V1])
     vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([A1])
 
@@ -132,6 +144,126 @@ describe('useFleetOverview', () => {
     }).not.toThrow()
     expect(result.current.vehicles).toEqual([V1])
     expect(result.current.alerts).toEqual([A1])
+  })
+
+  it('lädt Tasks initial per REST', async () => {
+    vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+    vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+    vi.mocked(apiClient.listFleetTasks).mockResolvedValue([T1])
+
+    const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+    await act(async () => {})
+
+    expect(result.current.tasks).toEqual([T1])
+  })
+
+  it('task_created-Event stellt einen neuen Task voran (idempotent, falls von anderem Client ausgelöst)', async () => {
+    vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+    vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+    vi.mocked(apiClient.listFleetTasks).mockResolvedValue([T1])
+
+    const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+    await act(async () => {})
+
+    const t2 = { ...T1, id: 't2' }
+    act(() => {
+      lastInstance?.onEvent?.({ type: 'task_created', data: t2 })
+    })
+
+    expect(result.current.tasks.map((t) => t.id)).toEqual(['t2', 't1'])
+  })
+
+  it('task_status_changed-Event aktualisiert den passenden Task', async () => {
+    vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+    vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+    vi.mocked(apiClient.listFleetTasks).mockResolvedValue([T1])
+
+    const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+    await act(async () => {})
+
+    act(() => {
+      lastInstance?.onEvent?.({
+        type: 'task_status_changed',
+        data: { id: 't1', status: 'in_progress', status_changed_by: 'op1' },
+      })
+    })
+
+    expect(result.current.tasks[0].status).toBe('in_progress')
+    expect(result.current.tasks[0].status_changed_by).toBe('op1')
+  })
+
+  describe('createTask', () => {
+    it('ruft die REST-API auf und übernimmt die Antwort direkt (vor jedem WS-Broadcast)', async () => {
+      vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetTasks).mockResolvedValue([])
+      vi.mocked(apiClient.createFleetTask).mockResolvedValue(T1)
+
+      const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+      await act(async () => {})
+
+      const input = { vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b', priority: 1 }
+      await act(async () => { await result.current.createTask(input) })
+
+      expect(apiClient.createFleetTask).toHaveBeenCalledWith('tok', input)
+      expect(result.current.tasks).toEqual([T1])
+    })
+
+    it('wirft bei REST-Fehler weiter (sichtbares Formular-Feedback)', async () => {
+      vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetTasks).mockResolvedValue([])
+      vi.mocked(apiClient.createFleetTask).mockRejectedValue(new Error('failed'))
+
+      const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+      await act(async () => {})
+
+      const input = { vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b', priority: 1 }
+      await expect(result.current.createTask(input)).rejects.toThrow('failed')
+    })
+  })
+
+  describe('updateTaskStatus', () => {
+    it('ruft die REST-API auf und übernimmt die Antwort lokal', async () => {
+      vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetTasks).mockResolvedValue([T1])
+      const updated = { ...T1, status: 'in_progress' as const, status_changed_by: 'op1' }
+      vi.mocked(apiClient.updateFleetTaskStatus).mockResolvedValue(updated)
+
+      const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+      await act(async () => {})
+
+      await act(async () => { await result.current.updateTaskStatus('t1', 'in_progress') })
+
+      expect(apiClient.updateFleetTaskStatus).toHaveBeenCalledWith('tok', 't1', 'in_progress', 'op1')
+      expect(result.current.tasks[0].status).toBe('in_progress')
+    })
+
+    it('wirft bei 409 (ungültiger Übergang) weiter, statt ihn zu verschlucken', async () => {
+      vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetTasks).mockResolvedValue([T1])
+      vi.mocked(apiClient.updateFleetTaskStatus).mockRejectedValue(new Error('updateFleetTaskStatus failed: 409'))
+
+      const { result } = renderHook(() => useFleetOverview('tok', 'op1'))
+      await act(async () => {})
+
+      await expect(result.current.updateTaskStatus('t1', 'completed')).rejects.toThrow('409')
+    })
+
+    it('ohne operatorId: no-op, ruft die REST-API nicht auf', async () => {
+      vi.mocked(apiClient.listFleetVehicles).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetAlerts).mockResolvedValue([])
+      vi.mocked(apiClient.listFleetTasks).mockResolvedValue([T1])
+
+      const { result } = renderHook(() => useFleetOverview('tok', null))
+      await act(async () => {})
+
+      await act(async () => { await result.current.updateTaskStatus('t1', 'in_progress') })
+
+      expect(apiClient.updateFleetTaskStatus).not.toHaveBeenCalled()
+    })
   })
 
   it('Reconnect (zweites onOpen) löst einen erneuten REST-Fetch aus (Resync, kein Backlog im Backend)', async () => {

@@ -3,7 +3,7 @@
 // dependency so the parsing logic is unit-testable without mocking a socket — unlike
 // lib/ws-client.ts (binary Protobuf), which has no colocated test file for exactly that reason.
 
-import type { FleetAlert } from '@/lib/api-client'
+import type { FleetAlert, Task } from '@/lib/api-client'
 
 // Mirrors internal/fleetservice.VehicleStatus's JSON shape exactly — NOT the same as
 // api-client.ts's FleetVehicle: autonomy_mode is non-optional here (Go: plain string), while
@@ -27,17 +27,28 @@ export interface FleetAlertAcknowledgedEvent {
   acknowledged_at: string
 }
 
+// Mirrors internal/fleetservice.TaskStatusChangedEvent's JSON shape (ADR-030) — deliberately
+// smaller than Task (no vehicle_id/from_station_id/etc.), same rationale as
+// FleetAlertAcknowledgedEvent above: GET /fleet/tasks remains the authoritative full-row source.
+export interface FleetTaskStatusChangedEvent {
+  id: string
+  status: 'in_progress' | 'completed' | 'cancelled'
+  completed_at?: string
+  status_changed_by: string
+}
+
 export type FleetWSEvent =
   | { type: 'vehicle_status'; data: FleetVehicleStatus }
   | { type: 'alert_created'; data: FleetAlert }
   | { type: 'alert_acknowledged'; data: FleetAlertAcknowledgedEvent }
-  | { type: 'task_created'; data: unknown }
+  | { type: 'task_created'; data: Task }
+  | { type: 'task_status_changed'; data: FleetTaskStatusChangedEvent }
   | { type: 'unknown'; rawType: string; data: unknown }
 
 // Parses one raw WS text frame. Never throws — malformed JSON or an envelope missing/mistyped
 // "type"/"data" collapses to the 'unknown' variant so the caller can log and skip rather than
 // crash the WS message handler. 'unknown' is an explicit tag (not a widened `{type: string}`
-// fallback) so `switch (event.type)` stays exhaustively narrowed for the 4 real cases downstream.
+// fallback) so `switch (event.type)` stays exhaustively narrowed for the 5 real cases downstream.
 export function parseFleetWSMessage(raw: string): FleetWSEvent {
   let parsed: unknown
   try {
@@ -63,7 +74,9 @@ export function parseFleetWSMessage(raw: string): FleetWSEvent {
     case 'alert_acknowledged':
       return { type: 'alert_acknowledged', data: envelope.data as FleetAlertAcknowledgedEvent }
     case 'task_created':
-      return { type: 'task_created', data: envelope.data }
+      return { type: 'task_created', data: envelope.data as Task }
+    case 'task_status_changed':
+      return { type: 'task_status_changed', data: envelope.data as FleetTaskStatusChangedEvent }
     default:
       return { type: 'unknown', rawType, data: envelope.data }
   }

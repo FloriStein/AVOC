@@ -261,3 +261,56 @@ export async function acknowledgeFleetAlert(token: string, id: string, acknowled
   })
   if (!res.ok) throw new Error(`acknowledgeFleetAlert failed: ${res.status}`)
 }
+
+// Sprint 24 (ADR-030) — Task-Management-UI. Field optionality mirrors
+// internal/fleetservice/store.go's Task exactly (see FleetVehicle's comment above for why this
+// matters: the Go struct's `omitempty`/pointer-ness is the actual contract, not a guess). `Station`
+// already exists above (Sprint 23, MAP-03) — reused as-is.
+
+export interface Task {
+  id: string
+  vehicle_id: string
+  from_station_id: string
+  to_station_id: string
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  priority: number
+  created_at: string
+  completed_at?: string
+  status_changed_by?: string
+}
+
+export async function listFleetTasks(token: string): Promise<Task[]> {
+  const res = await fetch('/fleet/tasks', { headers: { 'Authorization': `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`listFleetTasks failed: ${res.status}`)
+  return res.json()
+}
+
+export interface CreateFleetTaskInput {
+  vehicle_id: string
+  from_station_id: string
+  to_station_id: string
+  priority: number
+}
+
+export async function createFleetTask(token: string, input: CreateFleetTaskInput): Promise<Task> {
+  const res = await fetch('/fleet/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(`createFleetTask failed: ${res.status}`)
+  return res.json()
+}
+
+// updateFleetTaskStatus can fail with a 409 (ADR-030 — the task's current status doesn't allow
+// this transition) in addition to network/auth errors; callers that show inline feedback should
+// inspect the thrown Error's message for "409" rather than treating every failure alike.
+export async function updateFleetTaskStatus(token: string, id: string, status: string, changedBy: string): Promise<Task> {
+  const res = await fetch(`/fleet/tasks/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ status, changed_by: changedBy }),
+  })
+  if (!res.ok) throw new Error(`updateFleetTaskStatus failed: ${res.status}`)
+  return res.json()
+}

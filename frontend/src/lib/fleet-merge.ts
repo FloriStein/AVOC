@@ -1,8 +1,8 @@
 // Pure state-merge functions for the Fleet Overview dashboard — kept free of React/WebSocket so
 // the merge semantics (the actual interesting logic here) are unit-testable in isolation.
 
-import type { FleetVehicle, FleetAlert } from '@/lib/api-client'
-import type { FleetVehicleStatus, FleetAlertAcknowledgedEvent } from '@/lib/fleet-ws-events'
+import type { FleetVehicle, FleetAlert, Task } from '@/lib/api-client'
+import type { FleetVehicleStatus, FleetAlertAcknowledgedEvent, FleetTaskStatusChangedEvent } from '@/lib/fleet-ws-events'
 
 // Merges a live vehicle_status WS event into the vehicle list. No match (a status event for a
 // vehicle_id not present in the initial GET /fleet/vehicles snapshot — e.g. registered between
@@ -52,5 +52,32 @@ export function applyAlertAcknowledged(alerts: FleetAlert[], ack: FleetAlertAckn
   if (idx === -1) return alerts
   const next = alerts.slice()
   next[idx] = { ...next[idx], acknowledged_by: ack.acknowledged_by, acknowledged_at: ack.acknowledged_at }
+  return next
+}
+
+// Inserts or replaces a task by id (ADR-030) — same idempotent-upsert shape as upsertAlert,
+// covering both the REST response from createFleetTask (called directly, before any WS event
+// arrives) and the task_created WS broadcast (which then re-applies harmlessly by id).
+export function upsertTask(tasks: Task[], task: Task): Task[] {
+  const idx = tasks.findIndex((t) => t.id === task.id)
+  if (idx === -1) return [task, ...tasks]
+  const next = tasks.slice()
+  next[idx] = task
+  return next
+}
+
+// Applies a task_status_changed event. No-op if the task isn't in the local list (race-safe, same
+// rationale as applyAlertAcknowledged) — only overlays the fields the event actually carries
+// (status/completed_at/status_changed_by), leaving vehicle_id/from_station_id/etc. untouched.
+export function applyTaskStatusChanged(tasks: Task[], event: FleetTaskStatusChangedEvent): Task[] {
+  const idx = tasks.findIndex((t) => t.id === event.id)
+  if (idx === -1) return tasks
+  const next = tasks.slice()
+  next[idx] = {
+    ...next[idx],
+    status: event.status,
+    completed_at: event.completed_at,
+    status_changed_by: event.status_changed_by,
+  }
   return next
 }

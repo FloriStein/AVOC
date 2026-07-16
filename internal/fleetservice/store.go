@@ -5,10 +5,11 @@ package fleetservice
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 
 	"avoc/pkg/ulid"
 )
@@ -31,6 +32,12 @@ CREATE TABLE IF NOT EXISTS vehicles (
 // id/display_name) with the fleet-specific vehicle_type column (ADR-029). Using
 // ADD COLUMN IF NOT EXISTS keeps this idempotent regardless of which service starts first.
 const vehicleTypeColumn = `ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_type TEXT;`
+
+// taskStatusChangedByColumn extends the `tasks` table with the operator-attribution column for
+// manual status transitions (ADR-030). Same idempotent-ALTER pattern as vehicleTypeColumn — the
+// column is also declared directly in `schema`'s CREATE TABLE below for fresh installs, but this
+// ALTER is required for the already-running dev DB where `tasks` predates ADR-030.
+const taskStatusChangedByColumn = `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS status_changed_by TEXT;`
 
 const schema = `
 CREATE TABLE IF NOT EXISTS zones (
@@ -61,7 +68,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
     priority         INTEGER NOT NULL DEFAULT 0,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at     TIMESTAMPTZ
+    completed_at     TIMESTAMPTZ,
+    status_changed_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vehicle_status (
@@ -85,6 +93,25 @@ CREATE TABLE IF NOT EXISTS alerts (
     acknowledged_at TIMESTAMPTZ,
     acknowledged_by TEXT
 );
+`
+
+// demoStationSeed provisions a minimal Zone + two Stations so Sprint 24's Task-creation UI has
+// valid from_station_id/to_station_id (FK) to pick from — zones/stations were completely empty
+// in the dev DB before ADR-030 (verified 2026-07-16). ON CONFLICT DO NOTHING keeps this
+// idempotent across repeated container starts. IDs are deliberately `-taskui`-suffixed: the
+// parallel Sprint 23 (map/zone visualization) session may independently seed its own
+// zones/stations for the same underlying gap, and this namespacing keeps a later merge conflict
+// a spottable, resolvable data-row duplicate rather than an ID collision (ADR-030, accepted risk).
+const demoStationSeed = `
+INSERT INTO zones (id, name, environment, svg_geometry)
+VALUES ('demo-zone-taskui', 'Demo-Betriebsgelände (Sprint 24 Seed)', 'indoor', '')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO stations (id, zone_id, name, position_x, position_y)
+VALUES
+    ('demo-station-a-taskui', 'demo-zone-taskui', 'Station A (Demo)', 0, 0),
+    ('demo-station-b-taskui', 'demo-zone-taskui', 'Station B (Demo)', 100, 100)
+ON CONFLICT (id) DO NOTHING;
 `
 
 // Zone is an admin-managed spatial area (AP3 "Räumliche Zonenzuweisung") — indoor (SVG-based)
@@ -113,14 +140,15 @@ type Station struct {
 // Task represents a vehicle moving between two Stations (ADR-029 — first-version task model,
 // no multi-step job/loading model yet).
 type Task struct {
-	ID            string     `json:"id"`
-	VehicleID     string     `json:"vehicle_id"`
-	FromStationID string     `json:"from_station_id"`
-	ToStationID   string     `json:"to_station_id"`
-	Status        string     `json:"status"` // "pending" | "in_progress" | "completed" | "cancelled"
-	Priority      int        `json:"priority"`
-	CreatedAt     time.Time  `json:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	ID              string     `json:"id"`
+	VehicleID       string     `json:"vehicle_id"`
+	FromStationID   string     `json:"from_station_id"`
+	ToStationID     string     `json:"to_station_id"`
+	Status          string     `json:"status"` // "pending" | "in_progress" | "completed" | "cancelled"
+	Priority        int        `json:"priority"`
+	CreatedAt       time.Time  `json:"created_at"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	StatusChangedBy *string    `json:"status_changed_by,omitempty"` // ADR-030 — set on manual PATCH transitions, nil until the first one
 }
 
 // VehicleStatus is the live fleet telemetry for one vehicle — separate from the vehicles
@@ -165,6 +193,15 @@ func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("fleetservice: create schema: %w", err)
+	}
+	// Runs after `schema` — taskStatusChangedByColumn ALTERs a table `schema` just created (or
+	// that already existed pre-ADR-030); ordering here mirrors vehicleTypeColumn/vehicleBaseTable
+	// above (create-then-extend).
+	if _, err := db.Exec(taskStatusChangedByColumn); err != nil {
+		return nil, fmt.Errorf("fleetservice: extend tasks table: %w", err)
+	}
+	if _, err := db.Exec(demoStationSeed); err != nil {
+		return nil, fmt.Errorf("fleetservice: seed demo stations: %w", err)
 	}
 	return &PostgresFleetStore{db: db}, nil
 }
@@ -275,21 +312,88 @@ func (s *PostgresFleetStore) CreateTask(t Task) (Task, error) {
 }
 
 func (s *PostgresFleetStore) ListTasks() ([]Task, error) {
-	rows, err := s.db.Query(`SELECT id, vehicle_id, from_station_id, to_station_id, status, priority, created_at, completed_at FROM tasks ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id, vehicle_id, from_station_id, to_station_id, status, priority, created_at, completed_at, status_changed_by FROM tasks ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("fleetservice: list tasks: %w", err)
 	}
 	defer rows.Close()
 
-	var tasks []Task
+	// Non-nil even with zero rows: a nil slice marshals to JSON `null`, which crashed
+	// FleetTaskPanel.tsx's `tasks.length` check on a fresh/empty task list (found via manual
+	// browser verification, TASK-14 follow-up).
+	tasks := []Task{}
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.VehicleID, &t.FromStationID, &t.ToStationID, &t.Status, &t.Priority, &t.CreatedAt, &t.CompletedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.VehicleID, &t.FromStationID, &t.ToStationID, &t.Status, &t.Priority, &t.CreatedAt, &t.CompletedAt, &t.StatusChangedBy); err != nil {
 			return nil, err
 		}
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
+}
+
+// ErrTaskNotFound and ErrInvalidTransition let Handler.UpdateTaskStatus distinguish 404 from 409
+// (ADR-030) — unlike AcknowledgeAlert, which only ever needs a single "not found" outcome.
+var (
+	ErrTaskNotFound      = errors.New("fleetservice: task not found")
+	ErrInvalidTransition = errors.New("fleetservice: invalid task status transition")
+)
+
+// taskTransitionSources maps each allowed target status to the set of statuses a task may
+// currently be in for that transition to succeed (ADR-030's state machine). "pending" is
+// deliberately absent as a key — it is only ever the CreateTask default, never a PATCH target.
+var taskTransitionSources = map[string][]string{
+	"in_progress": {"pending"},
+	"completed":   {"in_progress"},
+	"cancelled":   {"pending", "in_progress"},
+}
+
+// UpdateTaskStatus atomically transitions a task to newStatus, but only if its current status is
+// an allowed source for that target (ADR-030) — race-safe against concurrent PATCHes on the same
+// task via a single conditional UPDATE, not a read-then-write. On 0 rows affected, a follow-up
+// SELECT tells "no such task" (ErrTaskNotFound) apart from "task exists but wrong current status"
+// (ErrInvalidTransition). On a terminal transition (completed/cancelled), also clears a matching
+// vehicle_status.current_task_id so the Fleet Overview doesn't keep showing a finished task as
+// the vehicle's "current" one.
+func (s *PostgresFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (Task, error) {
+	sources, ok := taskTransitionSources[newStatus]
+	if !ok {
+		return Task{}, fmt.Errorf("fleetservice: unknown target status %q: %w", newStatus, ErrInvalidTransition)
+	}
+
+	var t Task
+	err := s.db.QueryRow(
+		`UPDATE tasks
+		 SET status = $1,
+		     completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE completed_at END,
+		     status_changed_by = $2
+		 WHERE id = $3 AND status = ANY($4)
+		 RETURNING id, vehicle_id, from_station_id, to_station_id, status, priority, created_at, completed_at, status_changed_by`,
+		newStatus, changedBy, id, pq.Array(sources),
+	).Scan(&t.ID, &t.VehicleID, &t.FromStationID, &t.ToStationID, &t.Status, &t.Priority, &t.CreatedAt, &t.CompletedAt, &t.StatusChangedBy)
+
+	if err == sql.ErrNoRows {
+		var current string
+		selErr := s.db.QueryRow(`SELECT status FROM tasks WHERE id = $1`, id).Scan(&current)
+		if selErr == sql.ErrNoRows {
+			return Task{}, ErrTaskNotFound
+		}
+		return Task{}, ErrInvalidTransition
+	}
+	if err != nil {
+		return Task{}, fmt.Errorf("fleetservice: update task status: %w", err)
+	}
+
+	if newStatus == "completed" || newStatus == "cancelled" {
+		if _, err := s.db.Exec(
+			`UPDATE vehicle_status SET current_task_id = NULL WHERE vehicle_id = $1 AND current_task_id = $2`,
+			t.VehicleID, t.ID,
+		); err != nil {
+			return Task{}, fmt.Errorf("fleetservice: clear current_task_id: %w", err)
+		}
+	}
+
+	return t, nil
 }
 
 // UpsertVehicleStatus writes the latest live telemetry for a vehicle — one row per vehicle,

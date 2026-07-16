@@ -18,6 +18,8 @@ export default defineConfig({
       '/ws':         { target: 'ws://localhost:8080', ws: true, changeOrigin: true },
       '/vehicle/ws': { target: 'ws://localhost:8080', ws: true, changeOrigin: true },
       '/api':        { target: 'http://localhost:8080', rewrite: (p) => p.replace(/^\/api/, ''), changeOrigin: true },
+      '/fleet/ws':   { target: 'ws://localhost:8085', ws: true, changeOrigin: true },
+      '/fleet':      { target: 'http://localhost:8085', changeOrigin: true },
       '/auth':       { target: 'http://localhost:8081', changeOrigin: true },
       '/sfu':        { target: 'http://localhost:8084', rewrite: (p) => p.replace(/^\/sfu/, ''), changeOrigin: true },
       '/telemetry':  { target: 'http://localhost:8083', changeOrigin: true },

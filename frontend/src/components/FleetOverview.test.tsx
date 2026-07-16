@@ -42,52 +42,52 @@ describe('FleetOverview', () => {
   })
 
   it('zeigt einen Lade-Zustand', () => {
-    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [], alerts: [], loading: true, error: null, acknowledgeAlert: vi.fn() })
+    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [], alerts: [], tasks: [], loading: true, error: null, acknowledgeAlert: vi.fn(), createTask: vi.fn(), updateTaskStatus: vi.fn() })
     render(<FleetOverview session={makeSession()} />)
     expect(screen.getByText(/lädt flottendaten/i)).toBeInTheDocument()
   })
 
   it('zeigt einen Fehlerzustand', () => {
-    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [], alerts: [], loading: false, error: 'kaputt', acknowledgeAlert: vi.fn() })
+    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [], alerts: [], tasks: [], loading: false, error: 'kaputt', acknowledgeAlert: vi.fn(), createTask: vi.fn(), updateTaskStatus: vi.fn() })
     render(<FleetOverview session={makeSession()} />)
     expect(screen.getByText('kaputt')).toBeInTheDocument()
   })
 
   it('Fahrzeug auswählen aktualisiert das Detail-Panel', () => {
-    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [V1], alerts: [], loading: false, error: null, acknowledgeAlert: vi.fn() })
+    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [V1], alerts: [], tasks: [], loading: false, error: null, acknowledgeAlert: vi.fn(), createTask: vi.fn(), updateTaskStatus: vi.fn() })
     render(<FleetOverview session={makeSession()} />)
 
     expect(screen.getByText(/fahrzeug auswählen/i)).toBeInTheDocument()
-    fireEvent.click(screen.getByText('V1').closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /V1/i }))
     // FleetVehicleDetail now renders the vehicle's own heading instead of the placeholder.
     expect(screen.queryByText(/fahrzeug auswählen/i)).not.toBeInTheDocument()
   })
 
   it('leitet hasActiveOperator korrekt aus activeSessions für das ausgewählte Fahrzeug ab', () => {
-    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [V1], alerts: [], loading: false, error: null, acknowledgeAlert: vi.fn() })
+    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [V1], alerts: [], tasks: [], loading: false, error: null, acknowledgeAlert: vi.fn(), createTask: vi.fn(), updateTaskStatus: vi.fn() })
     vi.mocked(useActiveSessions).mockReturnValue({
       activeSessions: [{ session_id: 's1', vehicle_id: 'v1', operator_id: 'op2', role: 'ACTIVE_OPERATOR', created_at: 't1' }],
       hasPolled: true,
     })
     render(<FleetOverview session={makeSession()} />)
 
-    fireEvent.click(screen.getByText('V1').closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /V1/i }))
 
     expect(screen.getByText(/aktiver operator: op2/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /teleoperate/i })).not.toBeInTheDocument()
   })
 
   it('leitet isObserverRole korrekt aus dem Token ab (OBSERVER sieht keinen Teleoperate-Button)', () => {
-    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [V1], alerts: [], loading: false, error: null, acknowledgeAlert: vi.fn() })
+    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [V1], alerts: [], tasks: [], loading: false, error: null, acknowledgeAlert: vi.fn(), createTask: vi.fn(), updateTaskStatus: vi.fn() })
     render(<FleetOverview session={makeSession({ token: OBSERVER_TOKEN })} />)
 
-    fireEvent.click(screen.getByText('V1').closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /V1/i }))
 
     expect(screen.queryByRole('button', { name: /teleoperate/i })).not.toBeInTheDocument()
   })
 
   it('Abmelden-Button ruft session.disconnect auf', () => {
-    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [], alerts: [], loading: false, error: null, acknowledgeAlert: vi.fn() })
+    vi.mocked(useFleetOverview).mockReturnValue({ vehicles: [], alerts: [], tasks: [], loading: false, error: null, acknowledgeAlert: vi.fn(), createTask: vi.fn(), updateTaskStatus: vi.fn() })
     const session = makeSession()
     render(<FleetOverview session={session} />)
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { mergeVehicleStatus, upsertAlert, applyAlertAcknowledged } from './fleet-merge'
-import type { FleetVehicle, FleetAlert } from './api-client'
-import type { FleetVehicleStatus, FleetAlertAcknowledgedEvent } from './fleet-ws-events'
+import { mergeVehicleStatus, upsertAlert, applyAlertAcknowledged, upsertTask, applyTaskStatusChanged } from './fleet-merge'
+import type { FleetVehicle, FleetAlert, Task } from './api-client'
+import type { FleetVehicleStatus, FleetAlertAcknowledgedEvent, FleetTaskStatusChangedEvent } from './fleet-ws-events'
 
 const vehicle = (overrides: Partial<FleetVehicle> = {}): FleetVehicle => ({
   id: 'v1',
@@ -114,5 +114,83 @@ describe('applyAlertAcknowledged', () => {
     const result = applyAlertAcknowledged(alerts, ack)
 
     expect(result).toBe(alerts) // unchanged reference
+  })
+})
+
+describe('upsertTask', () => {
+  const task = (overrides: Partial<Task> = {}): Task => ({
+    id: 't1',
+    vehicle_id: 'v1',
+    from_station_id: 'station-a',
+    to_station_id: 'station-b',
+    status: 'pending',
+    priority: 0,
+    created_at: 't1',
+    ...overrides,
+  })
+
+  it('stellt einen neuen Task an den Anfang (newest-first)', () => {
+    const tasks = [task({ id: 't1' })]
+    const result = upsertTask(tasks, task({ id: 't2' }))
+    expect(result.map((t) => t.id)).toEqual(['t2', 't1'])
+  })
+
+  it('ist idempotent: dieselbe id wird ersetzt, nicht erneut vorangestellt', () => {
+    const tasks = [task({ id: 't1', priority: 1 }), task({ id: 't2' })]
+    const result = upsertTask(tasks, task({ id: 't1', priority: 9 }))
+
+    expect(result).toHaveLength(2)
+    expect(result[0].id).toBe('t1')
+    expect(result[0].priority).toBe(9)
+  })
+
+  it('leere Liste: Task wird eingefügt', () => {
+    const result = upsertTask([], task({ id: 't1' }))
+    expect(result).toEqual([task({ id: 't1' })])
+  })
+})
+
+describe('applyTaskStatusChanged', () => {
+  const task = (overrides: Partial<Task> = {}): Task => ({
+    id: 't1',
+    vehicle_id: 'v1',
+    from_station_id: 'station-a',
+    to_station_id: 'station-b',
+    status: 'pending',
+    priority: 0,
+    created_at: 't1',
+    ...overrides,
+  })
+
+  it('überschreibt status/completed_at/status_changed_by bei passender id', () => {
+    const event: FleetTaskStatusChangedEvent = {
+      id: 't1', status: 'completed', completed_at: 't2', status_changed_by: 'op1',
+    }
+    const result = applyTaskStatusChanged([task()], event)
+
+    expect(result[0].status).toBe('completed')
+    expect(result[0].completed_at).toBe('t2')
+    expect(result[0].status_changed_by).toBe('op1')
+  })
+
+  it('lässt vehicle_id/from_station_id/to_station_id/priority unangetastet', () => {
+    const original = task({ vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b', priority: 7 })
+    const event: FleetTaskStatusChangedEvent = { id: 't1', status: 'in_progress', status_changed_by: 'op1' }
+
+    const result = applyTaskStatusChanged([original], event)
+
+    expect(result[0].vehicle_id).toBe('v1')
+    expect(result[0].from_station_id).toBe('station-a')
+    expect(result[0].to_station_id).toBe('station-b')
+    expect(result[0].priority).toBe(7)
+  })
+
+  it('no-op wenn die id nicht gefunden wird (race-safe)', () => {
+    const tasks = [task({ id: 't1' })]
+    const event: FleetTaskStatusChangedEvent = { id: 'unknown', status: 'cancelled', status_changed_by: 'op1' }
+
+    const result = applyTaskStatusChanged(tasks, event)
+
+    expect(result).toBe(tasks) // unchanged reference
   })
 })

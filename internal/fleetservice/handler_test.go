@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -508,6 +510,281 @@ func TestListTasks_IncludesCreatedTask(t *testing.T) {
 	if !found {
 		t.Fatal("created task not present in ListTasks")
 	}
+}
+
+// ─── UpdateTaskStatus (ADR-030, Postgres required) ─────────────────────────────
+
+// taskStatusFixtureCounter guarantees fixture ID uniqueness across multiple
+// newTaskStatusTestFixture calls within the *same* test (t.Name() alone isn't unique enough —
+// e.g. TestUpdateTaskStatus_TerminalStates_RejectAnyFurtherTransition needs two independent
+// fixtures, one per terminal state, both under one t.Name()).
+var taskStatusFixtureCounter atomic.Int64
+
+// newTaskStatusTestFixture creates a fresh zone/2 stations/task for one test's exclusive use —
+// unlike other Task tests in this file, UpdateTaskStatus tests mutate the task's status
+// repeatedly, so each fixture needs its own rows rather than sharing "handler-test-*" IDs with
+// concurrently-run sibling tests (Go runs tests in a package sequentially by default, but a
+// shared task row would still make failures in one test contaminate another's starting state).
+func newTaskStatusTestFixture(t *testing.T, store *fleetservice.PostgresFleetStore) fleetservice.Task {
+	t.Helper()
+	suffix := t.Name() + "-" + strconv.FormatInt(taskStatusFixtureCounter.Add(1), 10)
+	zoneID := "handler-test-zone-status-" + suffix
+	stationAID := "handler-test-station-a-status-" + suffix
+	stationBID := "handler-test-station-b-status-" + suffix
+	if err := store.AddZone(fleetservice.Zone{ID: zoneID, Name: "Zone", Environment: "indoor"}); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	if err := store.AddStation(fleetservice.Station{ID: stationAID, ZoneID: zoneID, Name: "A"}); err != nil {
+		t.Fatalf("AddStation A: %v", err)
+	}
+	if err := store.AddStation(fleetservice.Station{ID: stationBID, ZoneID: zoneID, Name: "B"}); err != nil {
+		t.Fatalf("AddStation B: %v", err)
+	}
+	task, err := store.CreateTask(fleetservice.Task{
+		VehicleID: "handler-test-vehicle", FromStationID: stationAID, ToStationID: stationBID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Own short-lived connection for cleanup only — PostgresFleetStore's db field is unexported
+	// (this file is package fleetservice_test), and this fixture's dynamically-named rows aren't
+	// covered by requirePostgresStore's own fixed-ID cleanup. Registered before
+	// requirePostgresStore's t.Cleanup runs (LIFO — this runs first) and must independently unblock
+	// the FK chain (vehicle_status.current_task_id -> tasks.id -> stations.id -> zones.id, all
+	// RESTRICT) for this fixture's own rows rather than relying on run order.
+	t.Cleanup(func() {
+		db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+		if err != nil {
+			return
+		}
+		defer db.Close()
+		db.Exec(`UPDATE vehicle_status SET current_task_id = NULL WHERE vehicle_id = 'handler-test-vehicle' AND current_task_id = $1`, task.ID)
+		db.Exec(`DELETE FROM tasks WHERE id = $1`, task.ID)
+		db.Exec(`DELETE FROM stations WHERE zone_id = $1`, zoneID)
+		db.Exec(`DELETE FROM zones WHERE id = $1`, zoneID)
+	})
+
+	return task
+}
+
+func newTaskStatusMux(h *fleetservice.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /fleet/tasks/{id}/status", h.UpdateTaskStatus)
+	return mux
+}
+
+func patchTaskStatus(mux *http.ServeMux, taskID string, body any) *httptest.ResponseRecorder {
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/fleet/tasks/"+taskID+"/status", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestUpdateTaskStatus_NotFound_Returns404(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	rr := patchTaskStatus(newTaskStatusMux(h), "does-not-exist", map[string]string{"status": "in_progress", "changed_by": "operator-1"})
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUpdateTaskStatus_MalformedJSON_Returns400(t *testing.T) {
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
+	mux := newTaskStatusMux(h)
+
+	req := httptest.NewRequest(http.MethodPatch, "/fleet/tasks/whatever/status", bytes.NewBufferString("{"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestUpdateTaskStatus_MissingFields_Returns400(t *testing.T) {
+	h := fleetservice.NewHandler(testSecret, nil, &stubDispatcher{}, fleetservice.NewHub())
+	mux := newTaskStatusMux(h)
+
+	rr := patchTaskStatus(mux, "whatever", map[string]string{"status": "in_progress"})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing changed_by: expected 400, got %d", rr.Code)
+	}
+
+	rr = patchTaskStatus(mux, "whatever", map[string]string{"changed_by": "operator-1"})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing status: expected 400, got %d", rr.Code)
+	}
+}
+
+func TestUpdateTaskStatus_UnknownTargetStatus_Returns409(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+
+	// "pending" is a valid enum value in the DB CHECK constraint but never a legal PATCH target
+	// (ADR-030 — it's exclusively the CreateTask default), and "bogus" isn't a status at all.
+	// Both must be rejected as invalid transitions, not crash on an unrecognized map key.
+	for _, target := range []string{"pending", "bogus"} {
+		rr := patchTaskStatus(newTaskStatusMux(h), task.ID, map[string]string{"status": target, "changed_by": "operator-1"})
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("target %q: expected 409, got %d: %s", target, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestUpdateTaskStatus_PendingToInProgress_Valid(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+
+	rr := patchTaskStatus(newTaskStatusMux(h), task.ID, map[string]string{"status": "in_progress", "changed_by": "operator-1"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var updated fleetservice.Task
+	if err := json.NewDecoder(rr.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.Status != "in_progress" {
+		t.Fatalf("expected status in_progress, got %q", updated.Status)
+	}
+	if updated.StatusChangedBy == nil || *updated.StatusChangedBy != "operator-1" {
+		t.Fatalf("expected status_changed_by=operator-1, got %v", updated.StatusChangedBy)
+	}
+	if updated.CompletedAt != nil {
+		t.Fatalf("expected completed_at to stay nil for in_progress, got %v", updated.CompletedAt)
+	}
+}
+
+func TestUpdateTaskStatus_InProgressToCompleted_SetsCompletedAt(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+	mux := newTaskStatusMux(h)
+
+	if rr := patchTaskStatus(mux, task.ID, map[string]string{"status": "in_progress", "changed_by": "operator-1"}); rr.Code != http.StatusOK {
+		t.Fatalf("setup transition to in_progress failed: %d: %s", rr.Code, rr.Body.String())
+	}
+
+	rr := patchTaskStatus(mux, task.ID, map[string]string{"status": "completed", "changed_by": "operator-2"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var updated fleetservice.Task
+	if err := json.NewDecoder(rr.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.Status != "completed" || updated.CompletedAt == nil {
+		t.Fatalf("expected completed with a completed_at timestamp, got %+v", updated)
+	}
+	if updated.StatusChangedBy == nil || *updated.StatusChangedBy != "operator-2" {
+		t.Fatalf("expected status_changed_by to reflect the latest transition (operator-2), got %v", updated.StatusChangedBy)
+	}
+}
+
+func TestUpdateTaskStatus_PendingToCancelled_Valid(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+
+	rr := patchTaskStatus(newTaskStatusMux(h), task.ID, map[string]string{"status": "cancelled", "changed_by": "operator-1"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("pending->cancelled must be allowed (cancelling a never-started task), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestUpdateTaskStatus_TerminalStates_RejectAnyFurtherTransition proves both terminal states
+// (completed, cancelled) reject every subsequent transition attempt, not just the "obvious"
+// reverse one — the full point of ADR-030's allowed-source-set model over a naive current!=target check.
+func TestUpdateTaskStatus_TerminalStates_RejectAnyFurtherTransition(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	mux := newTaskStatusMux(h)
+
+	completedTask := newTaskStatusTestFixture(t, store)
+	for _, step := range []string{"in_progress", "completed"} {
+		if rr := patchTaskStatus(mux, completedTask.ID, map[string]string{"status": step, "changed_by": "operator-1"}); rr.Code != http.StatusOK {
+			t.Fatalf("setup step %q failed: %d: %s", step, rr.Code, rr.Body.String())
+		}
+	}
+	for _, target := range []string{"in_progress", "completed", "cancelled"} {
+		rr := patchTaskStatus(mux, completedTask.ID, map[string]string{"status": target, "changed_by": "operator-1"})
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("completed->%s: expected 409, got %d", target, rr.Code)
+		}
+	}
+
+	cancelledTask := newTaskStatusTestFixture(t, store)
+	if rr := patchTaskStatus(mux, cancelledTask.ID, map[string]string{"status": "cancelled", "changed_by": "operator-1"}); rr.Code != http.StatusOK {
+		t.Fatalf("setup cancel failed: %d: %s", rr.Code, rr.Body.String())
+	}
+	for _, target := range []string{"in_progress", "completed", "cancelled"} {
+		rr := patchTaskStatus(mux, cancelledTask.ID, map[string]string{"status": target, "changed_by": "operator-1"})
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("cancelled->%s: expected 409, got %d", target, rr.Code)
+		}
+	}
+}
+
+// TestUpdateTaskStatus_Idempotency_RepeatingSameTransition_SecondCallReturns409 documents the
+// deliberate behaviour (contrast with AcknowledgeAlert, which allows repeat calls to silently
+// overwrite): a status transition is a one-way state change, not a settable value, so replaying
+// the same PATCH after it already succeeded is itself an invalid transition — the task has already
+// left its previous source status — and must be rejected, not silently treated as a no-op success.
+func TestUpdateTaskStatus_Idempotency_RepeatingSameTransition_SecondCallReturns409(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+	mux := newTaskStatusMux(h)
+
+	body := map[string]string{"status": "in_progress", "changed_by": "operator-1"}
+	if rr := patchTaskStatus(mux, task.ID, body); rr.Code != http.StatusOK {
+		t.Fatalf("first call: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if rr := patchTaskStatus(mux, task.ID, body); rr.Code != http.StatusConflict {
+		t.Fatalf("second identical call: expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestUpdateTaskStatus_TerminalTransition_ClearsVehicleCurrentTaskID proves the ADR-030 bugfix:
+// before this, nothing ever cleared vehicle_status.current_task_id when its referenced task
+// finished, leaving the Fleet Overview showing a "current task" that had actually ended.
+func TestUpdateTaskStatus_TerminalTransition_ClearsVehicleCurrentTaskID(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+
+	if err := store.UpsertVehicleStatus(fleetservice.VehicleStatus{
+		VehicleID: "handler-test-vehicle", AutonomyMode: "autonomous", CurrentTaskID: &task.ID,
+	}); err != nil {
+		t.Fatalf("UpsertVehicleStatus: %v", err)
+	}
+
+	rr := patchTaskStatus(newTaskStatusMux(h), task.ID, map[string]string{"status": "cancelled", "changed_by": "operator-1"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	statuses, err := store.ListVehicleStatus()
+	if err != nil {
+		t.Fatalf("ListVehicleStatus: %v", err)
+	}
+	for _, s := range statuses {
+		if s.VehicleID == "handler-test-vehicle" {
+			if s.CurrentTaskID != nil {
+				t.Fatalf("expected current_task_id cleared after task cancellation, got %v", *s.CurrentTaskID)
+			}
+			return
+		}
+	}
+	t.Fatal("handler-test-vehicle status not found")
 }
 
 // ─── Alerts (Postgres required) ────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package fleetservice
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -207,6 +208,59 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, created)
+}
+
+// UpdateTaskStatus handles the ADR-030 manual status-transition endpoint. Unlike CreateTask/
+// AcknowledgeAlert (which only ever produce one kind of failure), a PATCH here can fail two
+// distinct ways that need distinct HTTP codes: unknown id (404) vs. a structurally valid but
+// currently-disallowed transition (409) — store.UpdateTaskStatus's ErrTaskNotFound/
+// ErrInvalidTransition sentinels carry that distinction through.
+func (h *Handler) UpdateTaskStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Status    string `json:"status"`
+		ChangedBy string `json:"changed_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Status == "" || req.ChangedBy == "" {
+		http.Error(w, "status and changed_by required", http.StatusBadRequest)
+		return
+	}
+
+	updated, err := h.store.UpdateTaskStatus(id, req.Status, req.ChangedBy)
+	switch {
+	case errors.Is(err, ErrTaskNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case errors.Is(err, ErrInvalidTransition):
+		http.Error(w, "invalid status transition", http.StatusConflict)
+		return
+	case err != nil:
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+
+	h.hub.Broadcast("task_status_changed", TaskStatusChangedEvent{
+		ID:          updated.ID,
+		Status:      updated.Status,
+		CompletedAt: updated.CompletedAt,
+		ChangedBy:   req.ChangedBy,
+	})
+
+	writeJSON(w, updated)
+}
+
+// TaskStatusChangedEvent is the FLEET-06-style broadcast payload for a status transition —
+// smaller than the full Task row (mirrors AlertAcknowledgedEvent's rationale: GET /fleet/tasks
+// remains the authoritative source for the full row).
+type TaskStatusChangedEvent struct {
+	ID          string     `json:"id"`
+	Status      string     `json:"status"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ChangedBy   string     `json:"status_changed_by"`
 }
 
 // ─── Alerts ─────────────────────────────────────────────────────────────────

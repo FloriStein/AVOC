@@ -80,6 +80,13 @@ Fernsteuerung). Details siehe "Notfall-Trigger-Modell" unten.
 
 - Ein Task = Bewegung eines Fahrzeugs zwischen auf der Karte markierten **Stationen**
 - Kein komplexeres Job-Modell (Be-/Entladen, Prozessschritte) in der Erstversion — das ist eine spätere Erweiterung, kein aktuelles Requirement
+- **Status-Lifecycle (geklärt, Grill-Me 2026-07-16, `ADR-030`):** ein Task startet immer bei
+  `pending` (Erzeugung); solange die reale Fahrzeug-Anbindung (`ADR-027`, AP1-Workshop) noch
+  aussteht, liefert nichts automatisch eine Statusrückmeldung — ein Operator kann den Status daher
+  manuell über die Dashboard-UI setzen (`in_progress`/`completed`/`cancelled`, Zustandsmaschine in
+  `ADR-030`). "Task-Historie" bedeutet für die Erstversion die vollständige Task-Liste über alle
+  Status hinweg (inkl. wer die letzte Statusänderung vorgenommen hat), kein separates Audit-Log
+  über mehrere Übergänge hinweg
 
 ### Notfall-Trigger-Modell (geklärt, Grill-Me 2026-07-13/14, `ADR-028`)
 

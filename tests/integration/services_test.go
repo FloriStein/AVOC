@@ -59,6 +59,22 @@ func postJSONAuth(t *testing.T, url, token string, body any) *http.Response {
 	return resp
 }
 
+// patchJSONAuth is postJSONAuth's PATCH counterpart — needed for the ADR-030 manual task
+// status-transition endpoint (PATCH /fleet/tasks/{id}/status), the only PATCH-verb fleet-service
+// route so far.
+func patchJSONAuth(t *testing.T, url, token string, body any) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err, "PATCH %s", url)
+	return resp
+}
+
 // --- Health Checks ---
 
 func TestIntegration_ControlServer_Healthy(t *testing.T) {
