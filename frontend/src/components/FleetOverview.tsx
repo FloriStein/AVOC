@@ -3,6 +3,7 @@ import type { SessionState } from '@/hooks/useSession'
 import { useFleetOverview } from '@/hooks/useFleetOverview'
 import { useActiveSessions } from '@/hooks/useActiveSessions'
 import { useFleetZones } from '@/hooks/useFleetZones'
+import { useFleetAlertSound } from '@/hooks/useFleetAlertSound'
 import { parseTokenRole } from '@/lib/api-client'
 import { FleetVehicleList } from '@/components/FleetVehicleList'
 import { FleetVehicleDetail } from '@/components/FleetVehicleDetail'
@@ -25,6 +26,7 @@ export function FleetOverview({ session }: Props) {
   )
   const { activeSessions } = useActiveSessions(session.token)
   const { zones, stations } = useFleetZones(session.token)
+  const { muted, toggleMuted } = useFleetAlertSound(alerts, loading)
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
 
   const isObserverRole = parseTokenRole(session.token!) === 'OBSERVER'
@@ -82,7 +84,12 @@ export function FleetOverview({ session }: Props) {
               onTeleoperate={session.startSession}
               onObserve={session.startSession}
             />
-            <FleetAlertsPanel alerts={alerts} onAcknowledge={acknowledgeAlert} />
+            <FleetAlertsPanel
+              alerts={alerts}
+              onAcknowledge={acknowledgeAlert}
+              muted={muted}
+              onToggleMuted={toggleMuted}
+            />
           </div>
         </main>
       )}

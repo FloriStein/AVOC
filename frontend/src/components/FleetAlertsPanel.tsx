@@ -4,6 +4,8 @@ import type { FleetAlert } from '@/lib/api-client'
 interface Props {
   alerts: FleetAlert[]
   onAcknowledge: (id: string) => Promise<void>
+  muted: boolean
+  onToggleMuted: () => void
 }
 
 const SEVERITY_STYLE: Record<string, string> = {
@@ -12,7 +14,7 @@ const SEVERITY_STYLE: Record<string, string> = {
   info: 'border-gray-600 bg-gray-900/50 text-gray-300',
 }
 
-export function FleetAlertsPanel({ alerts, onAcknowledge }: Props) {
+export function FleetAlertsPanel({ alerts, onAcknowledge, muted, onToggleMuted }: Props) {
   // Per-row (not global) so acknowledging one alert doesn't disable a different alert's button.
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null)
 
@@ -27,7 +29,21 @@ export function FleetAlertsPanel({ alerts, onAcknowledge }: Props) {
 
   return (
     <section className="bg-gray-800 rounded-lg border border-gray-700 p-4 flex flex-col gap-2 min-h-0">
-      <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Alerts</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Alerts</h2>
+        <button
+          onClick={onToggleMuted}
+          aria-pressed={muted}
+          title={
+            muted
+              ? 'Ton für neue Alerts ist stummgeschaltet — klicken zum Aktivieren'
+              : 'Ton für neue Alerts ist aktiv — klicken zum Stummschalten'
+          }
+          className="px-2 py-0.5 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 text-xs font-semibold transition-colors"
+        >
+          {muted ? 'Stumm' : 'Ton an'}
+        </button>
+      </div>
 
       {alerts.length === 0 ? (
         <p className="text-xs text-gray-500 text-center py-4">Keine Alerts</p>
