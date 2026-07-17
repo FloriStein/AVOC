@@ -5,6 +5,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+
+	"avoc/pkg/logger"
 )
 
 // DefaultConnectRetries/DefaultConnectRetryDelay bound how long WaitForReady
@@ -42,4 +44,26 @@ func WaitForReady(db *sql.DB, retries int, delay time.Duration) error {
 		}
 	}
 	return err
+}
+
+// OpenAndWait opens databaseURL and waits up to DefaultConnectRetries ×
+// DefaultConnectRetryDelay for Postgres to become reachable. If Open itself
+// fails, it logs a fatal error via log and exits the process. If Postgres is
+// still unreachable after retries, it logs degradedModeMsg as a warning and
+// returns the *sql.DB anyway, so the caller can continue in whatever
+// degraded mode it already implements (e.g. Noop stores) — this is the
+// shared shape every service previously duplicated to handle Docker's
+// `restart: unless-stopped` policy, which, unlike `docker compose up`, does
+// not honor `depends_on: service_healthy`: a crash-restarted service can
+// otherwise race Postgres's own startup and get stuck needing a manual
+// restart (Sprint 18 Bugfix, found after ICE-Fix-Redeploy 2026-07-09).
+func OpenAndWait(databaseURL string, log *logger.Logger, degradedModeMsg string) *sql.DB {
+	db, err := Open(databaseURL)
+	if err != nil {
+		log.Fatal("failed to open database", "error", err)
+	}
+	if err := WaitForReady(db, DefaultConnectRetries, DefaultConnectRetryDelay); err != nil {
+		log.Warn(degradedModeMsg, "error", err)
+	}
+	return db
 }

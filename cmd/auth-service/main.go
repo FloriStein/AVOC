@@ -3,48 +3,23 @@ package main
 import (
 	"context"
 	"net/http"
-	"os"
 
 	"avoc/internal/authservice"
 	pkgdb "avoc/pkg/db"
+	"avoc/pkg/env"
 	"avoc/pkg/logger"
 )
 
 var log = logger.New("auth-service")
 
 func main() {
-	port := os.Getenv("AUTH_PORT")
-	if port == "" {
-		port = "8081"
-	}
+	port := env.OptionalOr("AUTH_PORT", "8081")
+	secret := env.Require("JWT_SECRET", log)
+	databaseURL := env.Require("DATABASE_URL", log)
+	adminPassword := env.Require("ADMIN_PASSWORD", log)
 
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
-	}
-
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL environment variable is required")
-	}
-
-	adminPassword := os.Getenv("ADMIN_PASSWORD")
-	if adminPassword == "" {
-		log.Fatal("ADMIN_PASSWORD environment variable is required")
-	}
-
-	db, err := pkgdb.Open(databaseURL)
-	if err != nil {
-		log.Fatal("failed to open database", "error", err)
-	}
+	db := pkgdb.OpenAndWait(databaseURL, log, "database not reachable after retries — proceeding anyway")
 	defer db.Close()
-
-	// See control-server/main.go: Docker's `restart: unless-stopped` policy
-	// does not honor `depends_on: service_healthy`, so a crash-restarted
-	// auth-service can race Postgres's own startup (Sprint 18 Bugfix).
-	if err := pkgdb.WaitForReady(db, pkgdb.DefaultConnectRetries, pkgdb.DefaultConnectRetryDelay); err != nil {
-		log.Warn("database not reachable after retries — proceeding anyway", "error", err)
-	}
 
 	userStore, err := authservice.NewPostgresUserStore(db)
 	if err != nil {

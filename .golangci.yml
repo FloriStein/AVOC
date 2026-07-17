@@ -1,0 +1,22 @@
+# golangci-lint config for the Go Coding Style Guide rollout (GOSTYLE-15,
+# docs/go-style-guide.md). Runs as a non-blocking warning-only CI job (see
+# .github/workflows/lint.yml) — most of the existing codebase is not yet
+# conformant (tasks/backlog.md EPIC "Go Coding Style Guide Rollout"), so this
+# is not a merge gate.
+linters:
+  disable-all: true
+  enable:
+    - funlen  # Rule 2.2: function length
+    - revive  # Rule 2.3: parameter count (argument-limit rule below)
+
+linters-settings:
+  funlen:
+    lines: 50
+    statements: -1
+  revive:
+    rules:
+      - name: argument-limit
+        arguments: [4]
+
+run:
+  timeout: 5m

@@ -264,6 +264,10 @@ Vermeide:
 - unnötige Abstraktion
 - Magic Values
 
+Für Go-Code (`cmd/`, `internal/`, `pkg/`) gilt zusätzlich verbindlich `docs/go-style-guide.md` —
+konkrete, messbare Schwellenwerte zu Funktionslänge, Parameterzahl, Duplikat-Schwelle und
+Interface-Design, die diese Prinzipien für Go konkretisieren.
+
 ---
 
 ## 13. Security & Risiko

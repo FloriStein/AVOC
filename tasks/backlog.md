@@ -354,6 +354,107 @@ Risikobewertung in ADR-031. `control-server` bleibt bis auf Weiteres ausdrückli
 
 ---
 
+## EPIC: Go Coding Style Guide Rollout
+
+Style Guide selbst: [docs/go-style-guide.md](../docs/go-style-guide.md) (Wortlaut vom Nutzer
+vorgegeben, ergänzt um projektspezifische Anmerkungen). Referenziert aus CLAUDE.MD Abschnitt 12.
+
+**Quantifizierte Bestandsaufnahme (2026-07-17, AST-basiert über alle 7 Go-Services + `pkg/`, 404
+Funktionen/Methoden insgesamt):** 12 Funktionen >50 Zeilen (Rule 2.2, größtenteils `main()`-
+Funktionen), 6 Funktionen/Methoden >4 Parameter (Rule 2.3), 3 Interfaces >3 Methoden plus 2 an der
+Grenze (Rule 4.3), 0 generische utils/common/helpers-Pakete (Rule 4.1 — `pkg/db`, `pkg/logger`,
+`pkg/ulid`, `pkg/audit` bestätigt einzweckig), 2 echte Dreifach-Duplikate (Rule 3.1: `envOr`-Helper
+und DB-Open+WaitForReady-Block, je 3× identisch). Vertiefte Analyse aller Interfaces >1 Methode
+ergab: **alle** sind aktuell producer-definiert (`UserStore`, `SessionRecorder`, `VehicleStore`,
+`FleetGateway`, `AuditWriter`, `safety.Publisher`); `SessionRecorder` und `FleetGateway` werden
+nirgends als Interface-Typ konsumiert (Dead Ports, deckt sich mit ADR-031); jeweils mind. eine
+Bootstrap-/Lifecycle-Methode (`SeedAdmin`, `SeedDefault`, `Close`) ist nie über das Interface
+aufgerufen. Die kleinen 1-Methoden-Interfaces (`Dispatcher`, `safetyPublisher`, `VehicleAdder`
+u. a.) sind dagegen bereits vorbildlich konsumentenseitig geschnitten — Vorbild für Phase 2.
+
+Grill-Me 2026-07-17, vier Fragen, Antworten unten eingearbeitet:
+- **Umfang:** komplette Codebasis, alle 4 Regelblöcke (nicht nur ein Pilot-Service).
+- **Interface-Regeln (Rule 4.2/4.3):** eigene, spätere Phase — koordiniert mit ADR-031
+  (Hexagonal-Migration), da beide dieselben Interfaces anfassen würden.
+- **Priorität:** Rules 1-3 + Duplikat-Extraktion laufen **jetzt parallel** zu den laufenden
+  Dashboard-Strängen (keine Signaturänderungen nach außen, geringes Risiko). Rule 4 wartet auf
+  ADR-031 (Pilot-Abschluss `HEX-05` + Post-AP2/AP3-Timing).
+- **Durchsetzung:** `golangci-lint` wird eingerichtet, aber als **non-blocking Warn-Stufe** —
+  löst das Henne-Ei-Problem (kein hartes Gate vor Abschluss der Angleichung nötig) und macht
+  Fortschritt sprintübergreifend sichtbar, statt erst am Ende zu gaten.
+
+**Sprint-Nummern:** Phase 1 ist zu groß für einen einzelnen Sprint (CLAUDE.MD Abschnitt 10: "aktive
+Arbeit max. 3–10 Tasks") und wird daher in drei Sprints gesplittet (27/28/29 vorgeschlagen — **zur
+Verifikation beim Merge**: `Sprint 26` ist bereits durch die parallelen Worktrees `driftaudit`/
+`driftfix`/`drift-k1-k3-safety` belegt, analog zur ADR-030/031-Nummernkollision oben real möglich).
+
+**Keine Signaturänderung nach außen, kein Verhaltenswechsel** in allen drei Sprints — jeder Task
+endet mit vollem Testlauf des betroffenen Service + Diff-Review gegen genau diese Vorgabe
+(CLAUDE.MD Abschnitt 15).
+
+#### Sprint 27 — Fundament: `pkg/db`, `pkg/env`, non-blocking Linter-Gate — ✅ fertig
+
+Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-01`, `GOSTYLE-02`, `GOSTYLE-15`,
+Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle`.
+
+#### Sprint 28 — Risikoarme Services: Rule 2.2 + 2.3 (9 Tasks)
+
+Alle `main()`-Zerlegungen und Parameter-Struct-Umstellungen außerhalb von `control-server` —
+bewusst getrennt vom Sicherheitskern (siehe Sprint 29), damit dieser Sprint ohne Extra-Grill-Me
+und mit Standard-Sorgfalt durchlaufen kann.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| GOSTYLE-03 | `auth-service`: `main()` (67 Zeilen) auf <50 Zeilen zerlegen | S | 🔲 Backlog | Sprint 27 |
+| GOSTYLE-04 | `safety-service`: `main()` (57 Zeilen) zerlegen | S | 🔲 Backlog | — |
+| GOSTYLE-05 | `telemetry-service`: `main()` (57 Zeilen) zerlegen | S | 🔲 Backlog | — |
+| GOSTYLE-06 | `fleet-service`: `main()` (129 Zeilen) zerlegen | M | 🔲 Backlog | Sprint 27 |
+| GOSTYLE-07 | `webrtc-sfu`: `main()` (76 Zeilen) zerlegen + `internal/webrtcsfu/sfu.go` `SFU.SubscribeOperator` (74)/`CreateVehicleOffer` (56) prüfen/zerlegen | M | 🔲 Backlog | — |
+| GOSTYLE-08 | `vehicle-mock`: `runConnection` (73 Zeilen, 5 Parameter) zerlegen + Parameter in Struct bündeln (Rule 2.2 + 2.3) | S | 🔲 Backlog | — |
+| GOSTYLE-09 | `internal/recording/memory_recorder.go`: 3 `Record*`-Methoden mit je 6 Parametern auf Parameter-Struct umstellen (Rule 2.3) | S | 🔲 Backlog | — |
+| GOSTYLE-10 | `internal/controlserver/safety/bus_watchdog.go`: `NewSafetyBusWatchdog` (6 Parameter) auf Options-Struct umstellen | S | 🔲 Backlog | — |
+| GOSTYLE-11 | `internal/vehicleconnection/handler.go`: `NewHandler` (5 Parameter) prüfen/ggf. bündeln | S | 🔲 Backlog | — |
+
+#### Sprint 29 — `control-server` (hohes Risiko) + Abschlussverifikation (4 Tasks)
+
+Sicherheitskritischer Service, absichtlich als letzter und eigener Sprint. **GOSTYLE-12 braucht
+eine eigene Grill-Me-Session vor Start** (CLAUDE.MD Abschnitt 5, Pflicht bei Typ L) — nicht einfach
+lospatchen.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| GOSTYLE-12 | **`control-server`: `main()` (678 Zeilen) zerlegen** — höchstes Risiko im gesamten Scope: sicherheitskritische Bootstrap-Reihenfolge nur in Kommentaren dokumentiert (ADR-031 nennt diesen Service explizit "höchstes Risiko, geringste Testabdeckung"). Vorgehen: Extraktion entlang bestehender logischer Blöcke (State-Machine-Init, DB, Auth, Recording, SFU, WS-Routen, Server-Start), Reihenfolge 1:1 erhalten, nach jeder Extraktion vollständiger Testlauf + Diff-Review | L | 🔲 Backlog | Sprint 27, eigene Grill-Me |
+| GOSTYLE-13 | `internal/controlserver/transport/websocket.go`: `WSHandler.readLoop` (104)/`ServeWS` (61) zerlegen | M | 🔲 Backlog | GOSTYLE-12 (gleiche Datei-Familie — nach dem main.go-Umbau, um Merge-Konflikte zu vermeiden) |
+| GOSTYLE-14 | `internal/controlserver/command/engine.go`: `Engine.Handle` (82 Zeilen) zerlegen | M | 🔲 Backlog | — |
+| GOSTYLE-16 | Abschlussverifikation Phase 1 gesamt: `go build ./...`, `go vet ./...`, `gofmt -l .` (leer), vollständiger `go test ./...`-Lauf je betroffenem Service, Diff-Review aller Sprint-27/28/29-Tasks gegen "nur Struktur, kein Verhaltenswechsel" | S | 🔲 Backlog | alle vorherigen |
+
+**Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden, unabhängig einreihbar):**
+`gofmt -l` findet 13 unformatierte Dateien — trivialer `gofmt -w .`-Task (Typ S, keine
+Logikänderung), unabhängig von GOSTYLE-* erledigbar.
+
+### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031
+
+**Start erst nach `HEX-05`** (Hexagonal-Pilot fleet-service abgeschlossen) **und** nach
+AP2/AP3-Meilensteinen, analog zum ADR-031-Timing. Koordiniert mit dem Hexagonal-Epic oben —
+dieselben Interfaces, unterschiedlicher Fokus (dort: Repository-Port für `fleet-service`; hier:
+Methodenzahl/Konsumenten-Zuschnitt projektweit).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| GOSTYLE-IF-01 | `recording.SessionRecorder` (6 Methoden, aktuell nirgends als Interface-Typ konsumiert): klären, ob Interface tatsächlich verwendet werden soll (`*MemoryRecorder` → `SessionRecorder` in `cmd/control-server/main.go:102`) oder aufgelöst wird, solange nur eine Implementierung existiert (Rule 1.2 — Abstraktion ohne Konsument ist unbegründet) | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-02 | `fleetgateway.FleetGateway` (3 Methoden, ungenutzt als Typ): gleiche Frage wie IF-01. `fleetservice.Dispatcher` (1 Methode) ist bereits der korrekte konsumentenseitige Schnitt und bleibt unverändert | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-05 | `vehicleregistry.VehicleStore` (5 Methoden): `SeedDefault` (Bootstrap) aus Interface lösen, analog IF-04 | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-06 | `controlserver/safety.Publisher` (2 Methoden) in `PublishEvent`-only Interface für `Engine`/Watchdogs aufteilen; `TriggerEmergencyStop` bleibt eigener Zugriffspfad, analog zum bereits vorbildlichen `vehicleconnection.safetyPublisher`-Muster | S | 🔲 Backlog | HEX-05 |
+
+**Nebenbefund, nicht Teil dieses Style-Guide-Scopes (Sicherheitsauffälligkeit):** beim
+Duplikat-Scan (Rule 3.1) fiel auf, dass der JWT-Alg-Confusion-Check in 2 von 4 JWT-Parse-Stellen
+(`authservice`, `fleetservice`, `vehicleconnection`, `control-server`) fehlt. Kein Style-Guide-
+Thema — separat über `/security-review` oder einen eigenen Sicherheits-Task nachverfolgen.
+
+---
+
 ## Offene Entscheidungen (blockieren zukünftige Tasks)
 
 | Entscheidung | Blockiert | Referenz |

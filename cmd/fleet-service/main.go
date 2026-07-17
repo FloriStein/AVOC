@@ -2,42 +2,26 @@ package main
 
 import (
 	"net/http"
-	"os"
 	"time"
 
 	"avoc/internal/fleetgateway"
 	"avoc/internal/fleetservice"
 	pkgdb "avoc/pkg/db"
+	"avoc/pkg/env"
 	"avoc/pkg/logger"
 )
 
 var log = logger.New("fleet-service")
 
 func main() {
-	port := envOr("FLEET_PORT", "8085")
-	mqttBroker := envOr("MQTT_BROKER", "mosquitto:1883")
+	port := env.OptionalOr("FLEET_PORT", "8085")
+	mqttBroker := env.OptionalOr("MQTT_BROKER", "mosquitto:1883")
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL environment variable is required")
-	}
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
-	}
+	databaseURL := env.Require("DATABASE_URL", log)
+	jwtSecret := env.Require("JWT_SECRET", log)
 
-	db, err := pkgdb.Open(databaseURL)
-	if err != nil {
-		log.Fatal("failed to open database", "error", err)
-	}
+	db := pkgdb.OpenAndWait(databaseURL, log, "database not reachable after retries — proceeding anyway")
 	defer db.Close()
-
-	// See auth-service/control-server main.go: Docker's `restart: unless-stopped` policy does
-	// not honor `depends_on: service_healthy`, so a crash-restarted fleet-service can race
-	// Postgres's own startup.
-	if err := pkgdb.WaitForReady(db, pkgdb.DefaultConnectRetries, pkgdb.DefaultConnectRetryDelay); err != nil {
-		log.Warn("database not reachable after retries — proceeding anyway", "error", err)
-	}
 
 	// NewPostgresFleetStore extends the vehicles table (vehicle_type) and creates the
 	// zones/stations/tasks/vehicle_status/alerts tables — idempotent, safe regardless of
@@ -157,11 +141,4 @@ func connectGatewayWithRetry(broker string) (*fleetgateway.MQTTGateway, error) {
 		time.Sleep(pkgdb.DefaultConnectRetryDelay)
 	}
 	return nil, lastErr
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

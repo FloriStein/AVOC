@@ -1,0 +1,29 @@
+name: Lint
+
+# GOSTYLE-15 (docs/go-style-guide.md, tasks/backlog.md EPIC "Go Coding Style
+# Guide Rollout"): non-blocking style check. continue-on-error: true —
+# deliberately NOT a merge gate, since most of the existing codebase isn't
+# conformant yet (Rule 2.2/2.3 rollout is still in progress, see Sprint
+# 27/28/29). Makes lint findings visible per-PR without blocking merges.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  golangci-lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          args: --issues-exit-code=0

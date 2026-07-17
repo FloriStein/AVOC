@@ -24,6 +24,7 @@ import (
 	"avoc/internal/vehicleregistry"
 	"avoc/pkg/audit"
 	pkgdb "avoc/pkg/db"
+	"avoc/pkg/env"
 	"avoc/pkg/logger"
 	"avoc/pkg/ulid"
 )
@@ -34,42 +35,24 @@ var log = logger.New("control-server")
 var feLog = logger.New("frontend")
 
 func main() {
-	port := envOr("CONTROL_PORT", "8080")
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
-	}
+	port := env.OptionalOr("CONTROL_PORT", "8080")
+	secret := env.Require("JWT_SECRET", log)
 
-	safetyURL := envOr("SAFETY_SERVICE_URL", "http://safety-service:8082")
-	sfuURL := envOr("SFU_SERVICE_URL", "http://webrtc-sfu:8084")
-	authURL := envOr("AUTH_SERVICE_URL", "http://auth-service:8081")
+	safetyURL := env.OptionalOr("SAFETY_SERVICE_URL", "http://safety-service:8082")
+	sfuURL := env.OptionalOr("SFU_SERVICE_URL", "http://webrtc-sfu:8084")
+	authURL := env.OptionalOr("AUTH_SERVICE_URL", "http://auth-service:8081")
 	whipStreamKey := os.Getenv("WHIP_STREAM_KEY")
-	mediamtxAPIURL := envOr("MEDIAMTX_API_URL", "http://mediamtx:9997")
+	mediamtxAPIURL := env.OptionalOr("MEDIAMTX_API_URL", "http://mediamtx:9997")
 	turnExternalIP := os.Getenv("TURN_EXTERNAL_IP")
-	turnPort := envOr("TURN_PORT", "3478")
+	turnPort := env.OptionalOr("TURN_PORT", "3478")
 	turnUser := os.Getenv("TURN_USER")
 	turnPassword := os.Getenv("TURN_PASSWORD")
 	mtxClient := mediamtx.NewClient(mediamtxAPIURL)
 
 	// --- PostgreSQL (ADR-023) ---
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL environment variable is required")
-	}
-	db, err := pkgdb.Open(databaseURL)
-	if err != nil {
-		log.Fatal("failed to open database", "error", err)
-	}
+	databaseURL := env.Require("DATABASE_URL", log)
+	db := pkgdb.OpenAndWait(databaseURL, log, "database not reachable after retries — starting in degraded mode")
 	defer db.Close()
-
-	// Docker's `restart: unless-stopped` policy (unlike `docker compose up`)
-	// does not honor `depends_on: service_healthy` — a crash-restarted
-	// control-server can otherwise race Postgres's own startup and get stuck
-	// in permanent degraded mode (NoopWriter/NoopVehicleStore) until manually
-	// restarted (Sprint 18 Bugfix, found after ICE-Fix-Redeploy 2026-07-09).
-	if err := pkgdb.WaitForReady(db, pkgdb.DefaultConnectRetries, pkgdb.DefaultConnectRetryDelay); err != nil {
-		log.Warn("database not reachable after retries — starting in degraded mode", "error", err)
-	}
 
 	// --- Audit Writer (LOG-10/11 — ADR-018/023) ---
 	var auditWriter audit.AuditWriter
@@ -710,13 +693,6 @@ func main() {
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal("Control Server failed", "error", err)
 	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 type contextKey string
