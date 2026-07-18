@@ -138,6 +138,34 @@ CREATE TABLE IF NOT EXISTS task_status_history (
 CREATE INDEX IF NOT EXISTS idx_task_status_history_task_id ON task_status_history(task_id);
 `
 
+// vehiclePositionHistoryTable is the ADR-033 "gefahrene Route" table — one row per recorded
+// position sample per vehicle, throttled on write (see RecordPositionHistory) rather than one row
+// per telemetry update. `ON DELETE CASCADE` mirrors task_status_history's rationale (ADR-032):
+// no production vehicle-deletion endpoint exists, but history rows have no reason to outlive
+// their vehicle.
+const vehiclePositionHistoryTable = `
+CREATE TABLE IF NOT EXISTS vehicle_position_history (
+    id           TEXT PRIMARY KEY,
+    vehicle_id   TEXT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+    position_lat DOUBLE PRECISION NOT NULL,
+    position_lon DOUBLE PRECISION NOT NULL,
+    recorded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_position_history_vehicle_id_recorded_at
+    ON vehicle_position_history(vehicle_id, recorded_at);
+`
+
+// positionHistoryMinInterval throttles RecordPositionHistory writes (ADR-033) — vehicle-mock's
+// fleet simulation reports status every 3s (fleetSimulationTick), which would otherwise write
+// ~1,200 rows/hour/vehicle for a map polyline that doesn't need that resolution.
+const positionHistoryMinInterval = 10 * time.Second
+
+// positionHistoryRetention bounds table growth (ADR-033) — a deliberately coarse first guess
+// (demo/pilot scale, no contractual retention requirement known), applied both at startup and on
+// a periodic ticker (cmd/fleet-service/main.go) so a long-running process doesn't need a restart
+// to shed old rows.
+const positionHistoryRetention = 30 * 24 * time.Hour
+
 // Zone is an admin-managed spatial area (AP3 "Räumliche Zonenzuweisung") — indoor (SVG-based)
 // or outdoor (geo-referenced SVG overlay, ADR-029).
 type Zone struct {
@@ -208,6 +236,16 @@ type VehicleStatus struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// VehiclePositionHistoryPoint is one recorded position sample for a vehicle (ADR-033), returned
+// in chronological order (oldest first) by GetVehiclePositionHistory /
+// GET /fleet/vehicles/{id}/history — the "gefahrene Route" polyline source.
+type VehiclePositionHistoryPoint struct {
+	VehicleID   string    `json:"vehicle_id"`
+	PositionLat float64   `json:"position_lat"`
+	PositionLon float64   `json:"position_lon"`
+	RecordedAt  time.Time `json:"recorded_at"`
+}
+
 // Alert is a fleet-service-generated or vehicle-initiated notification (ADR-028: two sources,
 // same table/shape — threshold-based from fleet-service, or forwarded verbatim from a
 // vehicle-initiated "needs intervention" event).
@@ -251,6 +289,12 @@ func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 	}
 	if err := backfillTaskStatusHistory(db); err != nil {
 		return nil, fmt.Errorf("fleetservice: backfill task_status_history: %w", err)
+	}
+	if _, err := db.Exec(vehiclePositionHistoryTable); err != nil {
+		return nil, fmt.Errorf("fleetservice: create vehicle_position_history table: %w", err)
+	}
+	if err := pruneVehiclePositionHistory(db); err != nil {
+		return nil, fmt.Errorf("fleetservice: prune vehicle_position_history: %w", err)
 	}
 	return &PostgresFleetStore{db: db}, nil
 }
@@ -631,6 +675,84 @@ func (s *PostgresFleetStore) UpsertVehicleStatus(vs VehicleStatus) error {
 		return fmt.Errorf("fleetservice: upsert vehicle status: %w", err)
 	}
 	return nil
+}
+
+// ErrVehicleNotFound lets Handler.GetVehiclePositionHistory distinguish "no such vehicle" (404)
+// from "vehicle exists but has no recorded position samples yet" (empty, non-nil slice) — same
+// distinction ErrTaskNotFound draws for GetTaskStatusHistory (ADR-032).
+var ErrVehicleNotFound = errors.New("fleetservice: vehicle not found")
+
+// RecordPositionHistory appends a throttled position sample (ADR-033) — a no-op if the vehicle's
+// last recorded sample is younger than positionHistoryMinInterval, or if lat/lon is unknown. The
+// conditional INSERT is a single atomic statement, not a separate read-then-write.
+func (s *PostgresFleetStore) RecordPositionHistory(vehicleID string, lat, lon *float64) error {
+	if lat == nil || lon == nil {
+		return nil
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO vehicle_position_history (id, vehicle_id, position_lat, position_lon)
+		 SELECT $1, $2, $3, $4
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM vehicle_position_history
+		   WHERE vehicle_id = $2 AND recorded_at > NOW() - $5::INTERVAL
+		 )`,
+		ulid.Generate(), vehicleID, *lat, *lon, fmt.Sprintf("%d seconds", int(positionHistoryMinInterval.Seconds())),
+	)
+	if err != nil {
+		return fmt.Errorf("fleetservice: record position history: %w", err)
+	}
+	return nil
+}
+
+// GetVehiclePositionHistory returns a vehicle's recorded position samples in chronological order
+// (ADR-033), 404 (ErrVehicleNotFound) if the vehicle itself doesn't exist — distinguished from
+// "exists but never reported a position yet" (empty, non-nil slice).
+func (s *PostgresFleetStore) GetVehiclePositionHistory(vehicleID string) ([]VehiclePositionHistoryPoint, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM vehicles WHERE id = $1)`, vehicleID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("fleetservice: check vehicle exists: %w", err)
+	}
+	if !exists {
+		return nil, ErrVehicleNotFound
+	}
+
+	rows, err := s.db.Query(
+		`SELECT vehicle_id, position_lat, position_lon, recorded_at
+		 FROM vehicle_position_history WHERE vehicle_id = $1 ORDER BY recorded_at ASC`,
+		vehicleID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fleetservice: list vehicle position history: %w", err)
+	}
+	defer rows.Close()
+
+	points := []VehiclePositionHistoryPoint{}
+	for rows.Next() {
+		var p VehiclePositionHistoryPoint
+		if err := rows.Scan(&p.VehicleID, &p.PositionLat, &p.PositionLon, &p.RecordedAt); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
+// pruneVehiclePositionHistory deletes samples older than positionHistoryRetention (ADR-033).
+// Called once at startup (NewPostgresFleetStore) and on a periodic ticker
+// (cmd/fleet-service/main.go, via PruneVehiclePositionHistory below) so a long-running process
+// doesn't rely on a restart to shed old rows.
+func pruneVehiclePositionHistory(db *sql.DB) error {
+	_, err := db.Exec(
+		`DELETE FROM vehicle_position_history WHERE recorded_at < NOW() - $1::INTERVAL`,
+		fmt.Sprintf("%d seconds", int(positionHistoryRetention.Seconds())),
+	)
+	return err
+}
+
+// PruneVehiclePositionHistory exposes pruneVehiclePositionHistory to cmd/fleet-service/main.go's
+// periodic retention ticker.
+func (s *PostgresFleetStore) PruneVehiclePositionHistory() error {
+	return pruneVehiclePositionHistory(s.db)
 }
 
 func (s *PostgresFleetStore) ListVehicleStatus() ([]VehicleStatus, error) {

@@ -52,6 +52,7 @@
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + Registry; `~^vehicle-.*`-Regex aktiv |
 | WHEP Auth für mehrere Operatoren (Session-basiert) | offen | ADR-020 Folge |
 | E2E Smoke Test (Browser WiFi + 5G TURN-Relay) | offen | WEBRTC-09 Rest — WHIP-Quelle nötig |
+| ~~WebRTC SDP `a=setup:active`-Workaround inkompatibel mit aktuellem Chrome~~ | ✅ Sprint 32 | WEBRTC-10 — Workaround entfernt, Offer bleibt Standard-`actpass`; lokal gegen `mediamtx:latest` (Pion v4.2.12) verifiziert, DTLS/ICE-Handshake erreicht zuverlässig `Connected`. Produktiv-Verifikation mit echtem Chromium auf AWS bleibt offen (neue Zeile oben in `CONTEXT.MD`) |
 | vehicle-mock in Makefile GO_SERVICES | offen | ADR-021 Folge — `make build-prod` / `make push` bauen vehicle-mock nicht |
 | session_id in MQTT-TelemetryEvent | offen | ADR-021 Folge — vehicle-mock setzt kein session_id; Log-Korrelations-Gap |
 | Dev-Stack SSL-Fix | offen | Sprint-10-Regression — nginx.conf erwartet SSL-Cert; `make up` startet Frontend nicht |
@@ -64,7 +65,7 @@
 | `internal/authservice/handler_test.go` veraltet | offen | AUTH-TEST-01 — unabhängig von ADR-026, kompiliert nicht (`go vet`), entdeckt während Sprint-17-Verifikation |
 | Konkrete ROS2/DDS-Schnittstelle zum externen Fahrzeug-Backend | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1, IBATOUR) noch ausstehend; `FleetGateway` läuft bis dahin gegen Mock |
 | Handshake-basierte Autonomie-Rückgabe (statt einfachem Session-Ende) | offen | ADR-028 Folge — bewusst zurückgestellt, `endSession()` reicht für den Anfang |
-| Persistenzform für "gefahrene Route" (Historie) | offen | ADR-029 Folge — Zeitreihen-DB vs. einfache Tabelle noch nicht entschieden |
+| ~~Persistenzform für "gefahrene Route" (Historie)~~ | ✅ ADR-033 | Umgesetzt Sprint 32 — einfache `vehicle_position_history`-Tabelle (kein Zeitreihen-DB-Dienst), gedrosselter Schreibpfad (min. 10s Abstand), 30-Tage-Retention |
 | Indoor-Fahrzeugposition auf der Karte (`position_x/y` fehlt für Fahrzeuge) | offen | ADR-029 Folge — `VehicleStatus`/`FleetVehicle` haben nur `position_lat/lon`+`position_zone_id`, kein `position_x/y` wie `Station`; blockiert Indoor-Kartenrendering, Sprint 23 (MAP) bewusst auf Outdoor beschränkt (Grill-Me 2026-07-16); jetzt als `AP2-02` in `tasks/backlog.md` erfasst |
 | `GET /fleet/zones`/`/fleet/stations` liefern `null` statt `[]` bei leerer Tabelle | offen | Sprint 23 (MAP-01) gefunden — Frontend normalisiert defensiv (`?? []`), Backend-Fix (`ListZones`/`ListStations`/potenziell `ListVehiclesWithStatus`/`ListAlerts`) nicht in diesem Sprint; identisches Muster für `ListTasks` im `taskui`-Branch (Sprint 24) bereits gefixt, siehe dessen `TASKUI-04` |
 | Task-Status-Übergangstabelle dupliziert (Go Backend + TypeScript Frontend) | offen | ADR-030 Folge — Frontend spiegelt die Zustandsmaschine nur für UI-Button-Sichtbarkeit, Backend bleibt autoritativ; bei künftiger Änderung der Zustandsmaschine müssen beide Stellen angepasst werden |

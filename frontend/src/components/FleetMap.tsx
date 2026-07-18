@@ -1,8 +1,8 @@
 import { useEffect, useMemo } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { MapContainer, Marker, useMap } from 'react-leaflet'
-import type { Zone, Station, FleetVehicle } from '@/lib/api-client'
+import { MapContainer, Marker, Polyline, useMap } from 'react-leaflet'
+import type { Zone, Station, FleetVehicle, VehiclePositionHistoryPoint } from '@/lib/api-client'
 import { parseGeoBounds, parseSvgGeometry, autonomyMarkerColor, vehiclesWithPosition } from '@/lib/fleet-map'
 
 interface Props {
@@ -11,12 +11,17 @@ interface Props {
   vehicles: FleetVehicle[]
   selectedVehicleId: string | null
   onSelectVehicle: (vehicleId: string) => void
+  // ADR-033 "gefahrene Route" — already scoped to selectedVehicleId by the caller (fetched via
+  // useVehiclePositionHistory), not filtered again here. Only drawn for the selected vehicle, not
+  // all of them at once (avoids map clutter and unnecessary fetches for unselected vehicles).
+  positionHistory?: VehiclePositionHistoryPoint[]
   className?: string
 }
 
 // Sprint 23 (MAP-05) — outdoor-only zone/station/vehicle map. No <TileLayer>: ADR-029 explicitly
 // rules out external map tiles/SaaS, the zone's own svg_geometry is the only visual background.
-export function FleetMap({ zones, stations, vehicles, selectedVehicleId, onSelectVehicle, className }: Props) {
+// Sprint 32 (ADR-033) added the "gefahrene Route" historie-linie for the selected vehicle.
+export function FleetMap({ zones, stations, vehicles, selectedVehicleId, onSelectVehicle, positionHistory, className }: Props) {
   const zonesWithBounds = useMemo(
     () =>
       zones
@@ -33,6 +38,11 @@ export function FleetMap({ zones, stations, vehicles, selectedVehicleId, onSelec
     ])
     return L.latLngBounds(corners)
   }, [zonesWithBounds])
+
+  const historyPositions: L.LatLngExpression[] = useMemo(
+    () => (positionHistory ?? []).map((p) => [p.position_lat, p.position_lon]),
+    [positionHistory],
+  )
 
   if (!overallBounds) {
     return (
@@ -53,6 +63,10 @@ export function FleetMap({ zones, stations, vehicles, selectedVehicleId, onSelec
         {zonesWithBounds.map(({ zone, bounds }) => (
           <ZoneSvgOverlay key={zone.id} zone={zone} bounds={bounds} />
         ))}
+
+        {historyPositions.length >= 2 && (
+          <Polyline positions={historyPositions} pathOptions={{ color: '#38bdf8', weight: 2, opacity: 0.8 }} />
+        )}
 
         {stations
           .filter((s) => s.position_lat !== undefined && s.position_lon !== undefined)

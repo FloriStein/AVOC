@@ -124,7 +124,8 @@ t=0 0
 a=group:BUNDLE 0
 m=video 9 UDP/TLS/RTP/SAVPF 96
 a=rtpmap:96 H264/90000
-a=setup:active          ← DTLS-Client (Browser) — Fix für Pion v1.19.0 Bug
+a=setup:actpass         ← RFC 8842: der Offerer MUSS actpass senden (Sprint 32/WEBRTC-10 — kein
+                           erzwungenes "active" mehr, siehe unten)
 a=ice-ufrag:abc123
 a=ice-pwd:xyz789
 a=candidate:1 1 udp 2122260223 192.168.1.10 54321 typ host
@@ -132,14 +133,20 @@ a=candidate:2 1 udp 1686052607 18.196.24.10 54321 typ srflx raddr 192.168.1.10 r
 a=candidate:3 1 udp 33562623   18.196.24.10 49200 typ relay raddr 18.196.24.10 rport 3478
 ```
 
-**`a=setup:active`** ist ein gezielter Fix (`useWebRTC.ts` Zeile 93, `useWHIPSender.ts` Zeile 90):
-
-```typescript
-// Pion v1.19.0 DTLS-Client-Bug: Browser sendet a=setup:actpass (Browser kann beides).
-// Pion wählt dann "active" (Client-Modus), verarbeitet aber ServerHello nicht korrekt.
-// Fix: Browser erzwingt "active" → Pion bleibt "passive" (Server-Modus, stabil).
-const fixedSdp = offer.sdp!.replace(/a=setup:actpass/g, 'a=setup:active')
-```
+**Update Sprint 32 (WEBRTC-10):** Der frühere `actpass→active`-SDP-Zwang in `useWebRTC.ts`/
+`useWHIPSender.ts` (Fix für einen Pion-v1.19.0-DTLS-Client-Bug, Sprint 10) wurde entfernt.
+`createOffer()`/`setLocalDescription()` läuft jetzt unverändert (Standard-`actpass`-Offer,
+RFC-8842-konform). Grund: `mediamtx:latest` baut inzwischen gegen `pion/webrtc v4.2.x` — eine
+komplett andere Codebasis als das damalige `v1.19.0` — und der Zwang selbst war der aktuelle
+Fehler geworden (modernes Chromium lehnt einen Offer mit `a=setup:active` als Spec-Verstoß ab,
+"Offerer must use actpass"). Lokal gegen den echten `mediamtx:latest`-Container verifiziert
+(Sprint 32, isolierter Pion-WHIP-Client mit `pion/webrtc v4.2.12`, passend zur mediamtx-Version):
+ein Standard-`actpass`-Offer wird von MediaMTX mit `a=setup:active` beantwortet (RFC-8842-
+Empfehlung für den Answerer) und der DTLS/ICE-Handshake erreicht zuverlässig
+`PeerConnectionStateConnected` — genau die Rolle, die 2026-06-18 (Sprint 10) als fehlerhaft
+dokumentiert war, funktioniert mit der aktuellen MediaMTX-Version. Details, inkl. der zuerst
+irreführenden Ergebnisse durch die ungewöhnliche Multi-Interface-Netzwerktopologie der
+Verifikationsumgebung: `tasks/current-sprint.md` Sprint 32.
 
 ---
 
@@ -681,7 +688,7 @@ useWHIPSender.start()
   ├─ 3. new RTCPeerConnection({ iceServers })
   ├─ 4. stream.getTracks() → pc.addTrack() (sendonly)
   ├─ 5. pc.createOffer() → SDP Offer
-  ├─ 6. SDP-Fix: actpass → active (Pion DTLS-Bug)
+  ├─ 6. (entfällt seit Sprint 32/WEBRTC-10 — kein SDP-Fix mehr, Offer bleibt actpass)
   ├─ 7. pc.setLocalDescription() → ICE Gathering startet
   │      Browser → coturn STUN: "Was ist meine öffentliche IP?"
   │        → srflx Candidate: 18.196.24.10:54321
@@ -783,7 +790,7 @@ Alle 5 Root Causes aus der ICE-Migration und ihre Lösungen:
 |---|---------|---------|--------|
 | 1 | **Candidate Explosion** — ICE-Timeout 30–60s | `webrtcIPsFromInterfaces` fehlte → MediaMTX annoncierte alle Docker-Interfaces (172.x, 10.x, 127.x) | `webrtcIPsFromInterfaces: false` in `mediamtx.yml` |
 | 2 | **Srflx auf gesperrten Ports** — alle ICE-Pairs fail | `webrtcICEServers2` → MediaMTX gatherte eigene srflx-Candidates auf ephemeren Ports die nicht in der AWS Security Group offen waren | `webrtcICEServers2` komplett entfernt; Browser übernimmt vollständig das ICE-Gathering |
-| 3 | **Pion DTLS-Client-Bug** — Retransmit-Loop bis Timeout | Browser sendet `a=setup:actpass` → Pion wählt "active" → verarbeitet ServerHello nicht korrekt | SDP-Fix: `actpass → active` erzwingen in `useWebRTC.ts` und `useWHIPSender.ts` |
+| 3 | **Pion DTLS-Client-Bug** (Sprint 10, `pion/webrtc v1.19.0`-Ära) — Retransmit-Loop bis Timeout | Browser sendet `a=setup:actpass` → Pion wählt "active" → verarbeitet ServerHello nicht korrekt | Ursprünglich: SDP-Fix `actpass → active` erzwingen. **Seit Sprint 32 (WEBRTC-10) entfernt** — siehe Update unten |
 | 4 | **TURN-Relay nicht erreicht** auf 5G/CGNAT | `useWebRTC.ts` hatte nur STUN (falscher Port 3479), kein TURN UDP/TCP | `GET /api/ice-config` Endpoint im Control Server; liefert STUN + TURN UDP + TURN TCP |
 | 5 | **coturn relay-Adresse falsch** auf AWS | `external-ip=PUBLIC` ohne Private-Mapping → coturn advertised falsche Relay-Adresse | `--relay-ip=PRIVATE --external-ip=PUBLIC/PRIVATE` + `network_mode: host` + IMDSv2 für `TURN_PRIVATE_IP` |
 
@@ -794,6 +801,24 @@ Alle 5 Root Causes aus der ICE-Migration und ihre Lösungen:
 > Chrome erzwingt Spec-Konformität, die der Workaround verletzt). Nicht behoben — betrifft
 > potenziell auch den Produktiv-Video-Empfang auf AWS (`useWebRTC.ts`/WHEP), nicht nur lokale
 > Tests. Siehe `CONTEXT.MD` „Offene Fragen" und Backlog-Task `WEBRTC-10`.
+>
+> **Update Sprint 32 (2026-07-18, WEBRTC-10 — behoben):** Technische Vorab-Prüfung ergab:
+> `mediamtx:latest` (aktuell `v1.18.1`) baut gegen `pion/webrtc v4.2.12` — eine komplett andere
+> Codebasis als das 2026-06-18 referenzierte, längst abgelöste `v1.19.0`. Der `actpass → active`-
+> Zwang wurde entfernt (`useWebRTC.ts`, `useWHIPSender.ts`); der Offer bleibt jetzt Standard-
+> `actpass` (RFC 8842). Lokal gegen den echten `mediamtx:latest`-Container verifiziert (isolierter
+> WHIP-Publisher mit `pion/webrtc v4.2.12`, exakt passend zur mediamtx-Version, da eine ältere
+> Client-Version — `v4.0.14`, wie sonst im Repo gepinnt — im ersten Testlauf selbst hing und damit
+> ein Testartefakt statt eines echten mediamtx-Bugs gewesen wäre): MediaMTX beantwortet den
+> Standard-Offer mit `a=setup:active` (RFC-8842-Empfehlung für den Answerer — exakt die Rolle, die
+> 2026-06-18 als fehlerhaft dokumentiert war) und der DTLS/ICE-Handshake erreicht zuverlässig
+> `PeerConnectionStateConnected` (6/6 erfolgreiche Läufe bei kontrollierter, auf die
+> Loopback-Schnittstelle beschränkter ICE-Kandidatenauswahl — die Verifikationsumgebung hat
+> ungewöhnlich viele Netzwerk-Interfaces, was in ungefilterten Läufen zu ICE-Kandidatenpaar-
+> Flakiness führte, unabhängig von der eigentlichen DTLS-Frage). Damit ist der ursprüngliche
+> Pion-Bug in der aktuellen MediaMTX-Version nicht mehr reproduzierbar. Produktiv-Video-Empfang auf
+> AWS (echtes Chromium statt des Pion-Testclients) bleibt außerhalb dieses Sprints unverifiziert —
+> siehe `tasks/current-sprint.md` Sprint 32 für die vollständige Herleitung.
 
 ---
 

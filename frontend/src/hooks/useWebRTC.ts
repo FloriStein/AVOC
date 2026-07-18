@@ -86,12 +86,14 @@ export function useWebRTC(sessionId: string | null, vehicleId: string, token: st
       // Wenn eine neuere connect()-Instanz unsere PC ersetzt hat, still abbrechen.
       if (pc !== pcRef.current) return
 
-      // Pion v1.19.0 DTLS-Client-Bug: nach dem Senden von ClientHello verarbeitet Pion
-      // den ServerHello des Browsers nicht → Retransmit-Loop bis Timeout.
-      // Fix: Browser wird DTLS-Client (active), MediaMTX wird DTLS-Server (passive).
-      // Pions DTLS-Server-Pfad ist stabil; nur der Client-Pfad hat diesen Bug.
-      const fixedSdp = offer.sdp!.replace(/a=setup:actpass/g, 'a=setup:active')
-      await pc.setLocalDescription({ type: 'offer', sdp: fixedSdp })
+      // WEBRTC-10 (ADR-014/020, Sprint 32): der frühere actpass→active-SDP-Zwang (Fix für einen
+      // Pion-v1.19.0-DTLS-Client-Bug, Sprint 10) wurde entfernt. mediamtx:latest baut inzwischen
+      // gegen pion/webrtc v4.2.x (komplett andere Codebasis als das uralte v1.19.0) — der
+      // ursprüngliche Bug ist dort nicht mehr reproduzierbar, während der Zwang selbst mit
+      // aktuellem Chromium bricht (`setRemoteDescription`: "Offerer must use actpass"), da der
+      // Offerer laut RFC 8842 immer actpass senden muss. Standard-`createOffer()`-SDP unverändert
+      // gegen den lokalen Docker-Test-Stack verifiziert (WHIP-Ingest + WHEP-Playback erfolgreich).
+      await pc.setLocalDescription(offer)
       if (pc !== pcRef.current) return
 
       // WHEP: alle ICE-Candidates vollständig abwarten bevor der Offer gesendet wird.

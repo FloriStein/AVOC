@@ -84,6 +84,7 @@ func requirePostgresStore(t *testing.T) *fleetservice.PostgresFleetStore {
 
 	t.Cleanup(func() {
 		db.Exec(`DELETE FROM alerts WHERE vehicle_id = 'handler-test-vehicle'`)
+		db.Exec(`DELETE FROM vehicle_position_history WHERE vehicle_id = 'handler-test-vehicle'`)
 		db.Exec(`DELETE FROM vehicle_status WHERE vehicle_id = 'handler-test-vehicle'`)
 		db.Exec(`DELETE FROM tasks WHERE vehicle_id = 'handler-test-vehicle'`)
 		db.Exec(`DELETE FROM stations WHERE zone_id = 'handler-test-zone'`)
@@ -841,6 +842,58 @@ func TestGetTaskStatusHistory_ReturnsRecordedTransitions(t *testing.T) {
 	}
 	if entries[0]["from_status"] != "pending" {
 		t.Fatalf("expected from_status=pending, got %v", entries[0]["from_status"])
+	}
+}
+
+// ─── GetVehiclePositionHistory (ADR-033, Postgres required) ────────────────────
+
+func newVehicleHistoryMux(h *fleetservice.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /fleet/vehicles/{id}/history", h.GetVehiclePositionHistory)
+	return mux
+}
+
+func TestGetVehiclePositionHistory_NotFound_Returns404(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	req := httptest.NewRequest(http.MethodGet, "/fleet/vehicles/does-not-exist/history", nil)
+	rr := httptest.NewRecorder()
+	newVehicleHistoryMux(h).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetVehiclePositionHistory_ReturnsRecordedSamples drives the endpoint end-to-end: record a
+// position sample via the real store method, then verify the history endpoint reflects it —
+// proves the HTTP layer wiring (store_test.go's positionhistory_test.go already covers the store
+// method's throttling/retention edge cases in more detail).
+func TestGetVehiclePositionHistory_ReturnsRecordedSamples(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	lat, lon := 52.13, 11.64
+	if err := store.RecordPositionHistory("handler-test-vehicle", &lat, &lon); err != nil {
+		t.Fatalf("RecordPositionHistory: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/fleet/vehicles/handler-test-vehicle/history", nil)
+	rr := httptest.NewRecorder()
+	newVehicleHistoryMux(h).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var points []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &points); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(points) != 1 {
+		t.Fatalf("expected 1 point, got %d: %s", len(points), rr.Body.String())
+	}
+	if points[0]["position_lat"] != lat || points[0]["position_lon"] != lon {
+		t.Fatalf("unexpected point: %+v", points[0])
 	}
 }
 
