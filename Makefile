@@ -1,5 +1,17 @@
 .PHONY: proto-gen proto-gen-ts dev-frontend build up down test test-safety test-integration test-latency test-k6 lint clean build-prod push
 
+# ─── Dev-Stack Isolation über parallele Worktrees (TASKUI-05) ─────────────────
+# infrastructure/compose/docker-compose.yml pins `name: avoc` — every worktree checked out
+# against this repo shared that one Compose project, so `make up` from one worktree silently
+# stopped/replaced the containers another worktree's session was verifying against (real
+# incident: avoc-frontend-1 lost a component another session had just added). COMPOSE_PROJECT_NAME
+# takes precedence over the file's `name:` (verified via `docker compose config`), so exporting it
+# here — derived from the worktree directory, unique per `git worktree add` checkout — is enough;
+# no change to the compose file itself needed. Override with `make up COMPOSE_PROJECT_NAME=foo` if
+# ever needed.
+COMPOSE_PROJECT_NAME ?= $(shell basename $(CURDIR) | tr -d '\n' | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
+export COMPOSE_PROJECT_NAME
+
 # ─── Docker Hub / EC2 Deployment (ADR-019) ────────────────────────────────────
 # Set DOCKER_USERNAME via env or create a local .docker-username file (gitignored)
 DOCKER_USERNAME ?= $(shell cat .docker-username 2>/dev/null)

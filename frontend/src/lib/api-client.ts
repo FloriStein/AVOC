@@ -88,6 +88,9 @@ export interface VehicleInfo {
   display_name: string
   description: string
   online: boolean
+  // Live SYSTEM STATE (MV-09) — lets VehicleSelector show a SAFE_MODE badge without a
+  // second per-vehicle request. Same value space as SystemStateResponse['system'] below.
+  system_state: string
 }
 
 export async function listVehicles(): Promise<VehicleInfo[]> {
@@ -277,6 +280,10 @@ export interface Task {
   created_at: string
   completed_at?: string
   status_changed_by?: string
+  // Server-computed (TASKUI-02) — the target statuses reachable from `status`, derived from
+  // internal/fleetservice/store.go's taskTransitionSources. Single source of truth for the
+  // transition matrix; FleetTaskPanel.tsx renders buttons from this instead of its own copy.
+  allowed_transitions: Task['status'][]
 }
 
 export async function listFleetTasks(token: string): Promise<Task[]> {

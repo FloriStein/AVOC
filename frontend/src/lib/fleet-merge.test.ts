@@ -126,6 +126,7 @@ describe('upsertTask', () => {
     status: 'pending',
     priority: 0,
     created_at: 't1',
+    allowed_transitions: ['in_progress', 'cancelled'],
     ...overrides,
   })
 
@@ -159,6 +160,7 @@ describe('applyTaskStatusChanged', () => {
     status: 'pending',
     priority: 0,
     created_at: 't1',
+    allowed_transitions: ['in_progress', 'cancelled'],
     ...overrides,
   })
 

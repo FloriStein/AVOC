@@ -16,10 +16,11 @@ const STATION_B: Station = { id: 'station-b', zone_id: 'zone-1', name: 'Station 
 const PENDING: Task = {
   id: 't1', vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b',
   status: 'pending', priority: 1, created_at: '2026-01-01T10:00:00Z',
+  allowed_transitions: ['in_progress', 'cancelled'],
 }
-const IN_PROGRESS: Task = { ...PENDING, id: 't2', status: 'in_progress' }
-const COMPLETED: Task = { ...PENDING, id: 't3', status: 'completed', status_changed_by: 'op1' }
-const CANCELLED: Task = { ...PENDING, id: 't4', status: 'cancelled', status_changed_by: 'op1' }
+const IN_PROGRESS: Task = { ...PENDING, id: 't2', status: 'in_progress', allowed_transitions: ['completed', 'cancelled'] }
+const COMPLETED: Task = { ...PENDING, id: 't3', status: 'completed', status_changed_by: 'op1', allowed_transitions: [] }
+const CANCELLED: Task = { ...PENDING, id: 't4', status: 'cancelled', status_changed_by: 'op1', allowed_transitions: [] }
 
 describe('FleetTaskPanel', () => {
   beforeEach(() => {

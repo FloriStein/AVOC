@@ -301,7 +301,6 @@ func (s *controlServer) newMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions", auth(s.handleSessions))
 
 	// State + Health
-	mux.HandleFunc("GET /state", s.handleState)
 	mux.HandleFunc("GET /vehicles/{id}/state", s.handleVehicleState)
 
 	// ICE server config for WebRTC clients (WEBRTC-06 — Sprint 10).
@@ -717,6 +716,12 @@ func (s *controlServer) handleDevWhipKey(w http.ResponseWriter, _ *http.Request)
 	json.NewEncoder(w).Encode(map[string]string{"streamKey": s.cfg.whipStreamKey})
 }
 
+// handleVehiclesList includes each vehicle's live SYSTEM STATE (MV-09) alongside its identity —
+// lets the Vehicle-Dropdown show a SAFE_MODE badge without a second per-vehicle request.
+// s.vehicleContexts.Get is the same lazily-creating-per-ID lookup handleVehicleState already
+// uses for one vehicle (ADR-026: small fleet, contexts are cheap and permanently retained, no
+// GC — see tasks/backlog.md MV-10). A vehicle with no state yet defaults to IDLE, same as a
+// direct GET /vehicles/{id}/state on a never-connected vehicle.
 func (s *controlServer) handleVehiclesList(w http.ResponseWriter, _ *http.Request) {
 	vehicles, err := s.vehicleStore.List()
 	if err != nil {
@@ -728,10 +733,15 @@ func (s *controlServer) handleVehiclesList(w http.ResponseWriter, _ *http.Reques
 		DisplayName string `json:"display_name"`
 		Description string `json:"description"`
 		Online      bool   `json:"online"`
+		SystemState string `json:"system_state"`
 	}
 	result := make([]vehicleJSON, len(vehicles))
 	for i, v := range vehicles {
-		result[i] = vehicleJSON{ID: v.ID, DisplayName: v.DisplayName, Description: v.Description, Online: v.Online}
+		sys, _, _, _ := s.vehicleContexts.Get(v.ID).SM.Get()
+		result[i] = vehicleJSON{
+			ID: v.ID, DisplayName: v.DisplayName, Description: v.Description, Online: v.Online,
+			SystemState: string(sys),
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
@@ -812,35 +822,11 @@ func (s *controlServer) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// handleState is the legacy global view, kept for backward compat (k6 latency.js,
-// older clients). Resolves through the per-vehicle registry via whichever
-// session is "current" (ADR-026) — no session yet means everything IDLE,
-// matching pre-ADR-026 startup behavior exactly.
-func (s *controlServer) handleState(w http.ResponseWriter, _ *http.Request) {
-	resp := map[string]string{
-		"system":   string(statemachine.StateIdle),
-		"control":  string(statemachine.ControlInit),
-		"media":    string(statemachine.MediaInit),
-		"operator": string(statemachine.OpNoOperator),
-	}
-	if sess, ok := s.sessionMgr.GetCurrentSession(); ok {
-		vc := s.vehicleContexts.Get(sess.VehicleID)
-		sys, ctrl, media, op := vc.SM.Get()
-		resp["system"] = string(sys)
-		resp["control"] = string(ctrl)
-		resp["media"] = string(media)
-		resp["operator"] = string(op)
-		resp["session_id"] = sess.ID
-		resp["vehicle_id"] = sess.VehicleID
-		resp["role"] = sess.OperatorRole
-		resp["operator_id"] = sess.OperatorID
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
 // handleVehicleState returns the per-vehicle 4-layer state snapshot (ADR-026).
-// Replaces GET /state for live polling once a vehicleId is known.
+// MV-12: was previously also reachable via the now-removed legacy GET /state
+// (a "whichever session is current" global view) — all consumers migrated to this
+// per-vehicle endpoint (frontend since MV-07 already; k6 latency.js and
+// tests/integration/services_test.go in the same change that removed GET /state).
 func (s *controlServer) handleVehicleState(w http.ResponseWriter, r *http.Request) {
 	vehicleID := r.PathValue("id")
 	if vehicleID == "" {

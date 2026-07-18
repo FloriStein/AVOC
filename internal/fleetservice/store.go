@@ -95,23 +95,25 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 `
 
-// demoStationSeed provisions a minimal Zone + two Stations so Sprint 24's Task-creation UI has
-// valid from_station_id/to_station_id (FK) to pick from — zones/stations were completely empty
-// in the dev DB before ADR-030 (verified 2026-07-16). ON CONFLICT DO NOTHING keeps this
-// idempotent across repeated container starts. IDs are deliberately `-taskui`-suffixed: the
-// parallel Sprint 23 (map/zone visualization) session may independently seed its own
-// zones/stations for the same underlying gap, and this namespacing keeps a later merge conflict
-// a spottable, resolvable data-row duplicate rather than an ID collision (ADR-030, accepted risk).
-const demoStationSeed = `
-INSERT INTO zones (id, name, environment, svg_geometry)
-VALUES ('demo-zone-taskui', 'Demo-Betriebsgelände (Sprint 24 Seed)', 'indoor', '')
-ON CONFLICT (id) DO NOTHING;
+// taskuiDemoSeedCleanup removes the `-taskui`-suffixed placeholder Zone/Stations that Sprint 24
+// used to unblock the Task-creation UI before any real zones/stations existed in the dev DB
+// (ADR-030). The parallel Sprint 23 (map/zone visualization) session has since provided real
+// seed data (`scripts/seed-fleet-demo.sh`, MAP-01, zone `zone-betriebshof-nord`), making the
+// `-taskui` placeholder a redundant duplicate (TASKUI-01). Runs on every startup like the
+// ALTER-based migrations above; the NOT EXISTS guards make it a no-op both once the rows are
+// gone and in the (unexpected) case a real Task still references a `-taskui` station — deleting
+// would otherwise fail the tasks.from_station_id/to_station_id FK and break service startup.
+const taskuiDemoSeedCleanup = `
+DELETE FROM stations
+WHERE id LIKE '%-taskui'
+  AND NOT EXISTS (
+    SELECT 1 FROM tasks
+    WHERE tasks.from_station_id = stations.id OR tasks.to_station_id = stations.id
+  );
 
-INSERT INTO stations (id, zone_id, name, position_x, position_y)
-VALUES
-    ('demo-station-a-taskui', 'demo-zone-taskui', 'Station A (Demo)', 0, 0),
-    ('demo-station-b-taskui', 'demo-zone-taskui', 'Station B (Demo)', 100, 100)
-ON CONFLICT (id) DO NOTHING;
+DELETE FROM zones
+WHERE id LIKE '%-taskui'
+  AND NOT EXISTS (SELECT 1 FROM stations WHERE stations.zone_id = zones.id);
 `
 
 // Zone is an admin-managed spatial area (AP3 "Räumliche Zonenzuweisung") — indoor (SVG-based)
@@ -149,6 +151,11 @@ type Task struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	StatusChangedBy *string    `json:"status_changed_by,omitempty"` // ADR-030 — set on manual PATCH transitions, nil until the first one
+	// AllowedTransitions lists the target statuses reachable from Status, derived from
+	// taskTransitionSources below (TASKUI-02) — lets the frontend render the correct
+	// status-change buttons without duplicating the transition matrix itself. Never nil (see
+	// allowedTaskTransitions), so it marshals to `[]` rather than `null` for terminal statuses.
+	AllowedTransitions []string `json:"allowed_transitions"`
 }
 
 // VehicleStatus is the live fleet telemetry for one vehicle — separate from the vehicles
@@ -200,8 +207,8 @@ func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 	if _, err := db.Exec(taskStatusChangedByColumn); err != nil {
 		return nil, fmt.Errorf("fleetservice: extend tasks table: %w", err)
 	}
-	if _, err := db.Exec(demoStationSeed); err != nil {
-		return nil, fmt.Errorf("fleetservice: seed demo stations: %w", err)
+	if _, err := db.Exec(taskuiDemoSeedCleanup); err != nil {
+		return nil, fmt.Errorf("fleetservice: clean up taskui demo seed: %w", err)
 	}
 	return &PostgresFleetStore{db: db}, nil
 }
@@ -254,7 +261,8 @@ func (s *PostgresFleetStore) ListZones() ([]Zone, error) {
 	}
 	defer rows.Close()
 
-	var zones []Zone
+	// Non-nil even with zero rows — see ListTasks for why (TASKUI-04).
+	zones := []Zone{}
 	for rows.Next() {
 		var z Zone
 		if err := rows.Scan(&z.ID, &z.Name, &z.Environment, &z.SVGGeometry, &z.GeoBounds, &z.CreatedAt); err != nil {
@@ -284,7 +292,8 @@ func (s *PostgresFleetStore) ListStations() ([]Station, error) {
 	}
 	defer rows.Close()
 
-	var stations []Station
+	// Non-nil even with zero rows — see ListTasks for why (TASKUI-04).
+	stations := []Station{}
 	for rows.Next() {
 		var st Station
 		if err := rows.Scan(&st.ID, &st.ZoneID, &st.Name, &st.PositionX, &st.PositionY, &st.PositionLat, &st.PositionLon, &st.CreatedAt); err != nil {
@@ -308,6 +317,7 @@ func (s *PostgresFleetStore) CreateTask(t Task) (Task, error) {
 	if err != nil {
 		return Task{}, fmt.Errorf("fleetservice: create task: %w", err)
 	}
+	t.AllowedTransitions = allowedTaskTransitions(t.Status)
 	return t, nil
 }
 
@@ -327,6 +337,7 @@ func (s *PostgresFleetStore) ListTasks() ([]Task, error) {
 		if err := rows.Scan(&t.ID, &t.VehicleID, &t.FromStationID, &t.ToStationID, &t.Status, &t.Priority, &t.CreatedAt, &t.CompletedAt, &t.StatusChangedBy); err != nil {
 			return nil, err
 		}
+		t.AllowedTransitions = allowedTaskTransitions(t.Status)
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
@@ -346,6 +357,31 @@ var taskTransitionSources = map[string][]string{
 	"in_progress": {"pending"},
 	"completed":   {"in_progress"},
 	"cancelled":   {"pending", "in_progress"},
+}
+
+// taskTransitionOrder fixes the button order the frontend renders for a given current status
+// (e.g. "Abschließen" before "Stornieren" for in_progress) — map iteration in
+// allowedTaskTransitions would otherwise be non-deterministic. Must list every key of
+// taskTransitionSources.
+var taskTransitionOrder = []string{"in_progress", "completed", "cancelled"}
+
+// allowedTaskTransitions derives, for a task currently in status, the list of target statuses it
+// may transition to — the inverse of taskTransitionSources. This is the single source of truth
+// for the transition matrix (TASKUI-02): previously frontend/src/components/FleetTaskPanel.tsx
+// hand-maintained a duplicate copy (NEXT_TRANSITIONS) that had to be kept in sync manually.
+// Task.AllowedTransitions now carries this over the wire instead. Always returns a non-nil slice
+// (possibly empty for terminal statuses), matching the TASKUI-04 nil-slice convention.
+func allowedTaskTransitions(status string) []string {
+	targets := []string{}
+	for _, target := range taskTransitionOrder {
+		for _, source := range taskTransitionSources[target] {
+			if source == status {
+				targets = append(targets, target)
+				break
+			}
+		}
+	}
+	return targets
 }
 
 // UpdateTaskStatus atomically transitions a task to newStatus, but only if its current status is
@@ -393,6 +429,7 @@ func (s *PostgresFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (
 		}
 	}
 
+	t.AllowedTransitions = allowedTaskTransitions(t.Status)
 	return t, nil
 }
 
@@ -427,7 +464,8 @@ func (s *PostgresFleetStore) ListVehicleStatus() ([]VehicleStatus, error) {
 	}
 	defer rows.Close()
 
-	var statuses []VehicleStatus
+	// Non-nil even with zero rows — see ListTasks for why (TASKUI-04).
+	statuses := []VehicleStatus{}
 	for rows.Next() {
 		var vs VehicleStatus
 		if err := rows.Scan(&vs.VehicleID, &vs.BatteryPct, &vs.Speed, &vs.PositionLat, &vs.PositionLon, &vs.PositionZoneID, &vs.AutonomyMode, &vs.CurrentTaskID, &vs.UpdatedAt); err != nil {
@@ -473,7 +511,8 @@ func (s *PostgresFleetStore) ListVehiclesWithStatus() ([]FleetVehicle, error) {
 	}
 	defer rows.Close()
 
-	var vehicles []FleetVehicle
+	// Non-nil even with zero rows — see ListTasks for why (TASKUI-04).
+	vehicles := []FleetVehicle{}
 	for rows.Next() {
 		var v FleetVehicle
 		if err := rows.Scan(&v.ID, &v.DisplayName, &v.VehicleType,
@@ -507,7 +546,8 @@ func (s *PostgresFleetStore) ListAlerts() ([]Alert, error) {
 	}
 	defer rows.Close()
 
-	var alerts []Alert
+	// Non-nil even with zero rows — see ListTasks for why (TASKUI-04).
+	alerts := []Alert{}
 	for rows.Next() {
 		var a Alert
 		if err := rows.Scan(&a.ID, &a.VehicleID, &a.Severity, &a.Message, &a.CreatedAt, &a.AcknowledgedAt, &a.AcknowledgedBy); err != nil {

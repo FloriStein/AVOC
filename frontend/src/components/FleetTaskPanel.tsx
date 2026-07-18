@@ -24,21 +24,16 @@ const STATUS_STYLE: Record<Task['status'], string> = {
   cancelled: 'text-gray-500 bg-gray-800',
 }
 
-// Client-side mirror of ADR-030's backend transition matrix (internal/fleetservice/store.go's
-// taskTransitionSources) — the backend remains the authoritative validator (a stale/duplicated
-// mirror here only affects which buttons render, not correctness; a rejected transition still
-// surfaces as an inline error below). Documented as known duplication debt, see DECISIONS.MD.
-const NEXT_TRANSITIONS: Record<Task['status'], { status: string; label: string }[]> = {
-  pending: [
-    { status: 'in_progress', label: 'Starten' },
-    { status: 'cancelled', label: 'Stornieren' },
-  ],
-  in_progress: [
-    { status: 'completed', label: 'Abschließen' },
-    { status: 'cancelled', label: 'Stornieren' },
-  ],
-  completed: [],
-  cancelled: [],
+// Pure UI concern (button text for a target status) — unlike the transition matrix itself
+// (which statuses are reachable from which), this never needs to stay in sync with the backend:
+// every status has exactly one label regardless of the task's current status. The matrix moved
+// to the backend (TASKUI-02): buttons are now rendered from `task.allowed_transitions`
+// (internal/fleetservice/store.go's allowedTaskTransitions), not a duplicated local copy.
+const TRANSITION_LABEL: Record<Task['status'], string> = {
+  pending: '', // never a transition target — see allowedTaskTransitions
+  in_progress: 'Starten',
+  completed: 'Abschließen',
+  cancelled: 'Stornieren',
 }
 
 const emptyForm = { vehicle_id: '', from_station_id: '', to_station_id: '', priority: '0' }
@@ -195,14 +190,14 @@ export function FleetTaskPanel({ tasks, vehicles, token, onCreateTask, onUpdateS
                 {t.status_changed_by && <span>zuletzt: {t.status_changed_by}</span>}
               </div>
               <div className="flex items-center gap-2">
-                {NEXT_TRANSITIONS[t.status].map(({ status, label }) => (
+                {t.allowed_transitions.map((status) => (
                   <button
                     key={status}
                     onClick={() => handleStatusChange(t.id, status)}
                     disabled={pendingTaskId === t.id}
                     className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-gray-200 font-semibold transition-colors"
                   >
-                    {pendingTaskId === t.id ? '…' : label}
+                    {pendingTaskId === t.id ? '…' : TRANSITION_LABEL[status]}
                   </button>
                 ))}
                 {statusErrors[t.id] && <span className="text-red-400">{statusErrors[t.id]}</span>}
