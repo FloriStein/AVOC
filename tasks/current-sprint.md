@@ -1,3 +1,65 @@
+# Sprint 35 — GOSTYLE-IF-03/04 (Phase-2-Abschluss Interface-Segregation)
+
+Ziel: Sprint 34 hat 4 der 6 GOSTYLE-IF-Tasks abgeschlossen (IF-01/02/05/06) und bewusst die beiden
+größeren M-Tasks auf diesen Sprint verschoben (Token-Budget-Grill-Me 2026-07-18). Mit IF-03/04
+ist Phase 2 (Interface-Segregation, Rule 4.2/4.3) des Go-Coding-Style-Guide-EPICs vollständig
+abgeschlossen — keine weiteren Interface-Segregation-Folgetasks im Backlog offen.
+
+**Explizites Nutzer-Budget:** wie Sprint 34 ca. 200.000 Token — bei nur 2 Tasks unkritisch, aber
+beide sind Typ M (mehr Konsumenten, volle Teststandard-Pflicht nach CLAUDE.MD Abschnitt 17), daher
+kein dritter Task ergänzt.
+
+Vorrecherche (2026-07-18, vor Sprint-Start durchgeführt, damit die Tasks ohne erneute
+Grill-Me-Session direkt umsetzbar sind):
+
+- **GOSTYLE-IF-03** (`pkg/audit.AuditWriter`, 3 Methoden): `WriteSync` wird ausschließlich von 5
+  Safety-/Command-Consumern gebraucht (`command.Engine`, `transport.WSHandler`,
+  `vehiclecontext.Registry`, `safety.DeadmanWatchdog`, `safety.ACKTimeoutWatcher`,
+  `safety.VehicleACKWatchdog` — alle über `WithAuditWriter(aw audit.AuditWriter)`). `QueryBySession`
+  wird tatsächlich interface-typisiert gebraucht, aber von einem anderen Konsumenten:
+  `controlServer.auditWriter` (`cmd/control-server/main.go:615`, `GET /audit/events`-Handler) —
+  kein toter Methodenrest wie bei IF-01/02. `Close()` dagegen wird nur einmalig auf dem konkreten
+  `*PostgresAuditWriter` in `newAuditWriter`s Closure aufgerufen (`cmd/control-server/main.go:88`),
+  nie über das Interface — exakt das Bootstrap-Muster aus IF-05. Erwarteter Zuschnitt: schlankes
+  `WriteSync`-only Interface für die 5 Consumer, `AuditWriter` (breiter, `WriteSync`+`QueryBySession`)
+  bleibt für `newAuditWriter`s Rückgabetyp/`controlServer.auditWriter`, `Close` raus aus jedem
+  Interface (bleibt konkrete Methode auf `PostgresAuditWriter`).
+- **GOSTYLE-IF-04** (`authservice.UserStore`, 7 Methoden): `SeedAdmin` wird nur einmalig auf dem
+  konkreten `*PostgresUserStore` in `cmd/auth-service/main.go:30` aufgerufen, bevor der Store als
+  `UserStore`-Interface an `NewHandler` übergeben wird — nie über das Interface. Die verbleibenden 6
+  Methoden (`Create`, `Authenticate`, `FindByID`, `List`, `Delete`, `UpdateRole`) sind alle über
+  `h.userStore` (Interface-Feld in `authservice.Handler`) tatsächlich in Gebrauch — kein weiterer
+  Schnitt nötig, nur `SeedAdmin` raus, analog IF-05.
+  **Nebenbefund für die Umsetzung:** `internal/authservice/noop_userstore.go`s `NoopUserStore`
+  scheint komplett ungenutzt (keine Referenz außerhalb der eigenen Datei gefunden) — beim
+  Bearbeiten von IF-04 gegenprüfen, ob das stimmt; falls ja, als eigenen kleinen Fund im
+  Sprint-Ergebnis vermerken (nicht unaufgefordert zusätzlich aufräumen, nur dokumentieren/im
+  Anschluss dem Nutzer vorlegen — passt zum Sprint-34-Präzedenzfall `NoopVehicleStore.SeedDefault`).
+
+**Keine Signaturänderung nach außen ohne Zweck** (CLAUDE.MD Abschnitt 15) — beide Tasks entfernen
+lediglich Bootstrap-Methoden aus den jeweiligen Interfaces, kein API-/HTTP-Verhaltenswechsel. Kein
+neues ADR nötig (reine Interface-Verschlankung, keine Datenstruktur-/Architekturänderung).
+`docs/go-style-guide.md` gilt weiterhin für beide Tasks.
+
+Datum: 2026-07-18 | **Status: Geplant, noch nicht begonnen**
+Vorgänger: Sprint 34 ✅ (committed, Commit `6f50ba3`)
+Branch/Worktree: noch nicht festgelegt — kann in einem neuen Worktree von `main`/diesem Branch aus
+starten (Sprint 34 ist bereits committed, im Gegensatz zum Sprint-33/34-Übergang gibt es hier keine
+uncommitted Abhängigkeit, die einen bestimmten Worktree erzwingt).
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| GOSTYLE-IF-03 | `pkg/audit.AuditWriter`: `WriteSync`-only Interface für die 5 Safety-/Command-Consumer, `Close` aus jedem Interface entfernen | M | 🔲 |
+| GOSTYLE-IF-04 | `authservice.UserStore`: `SeedAdmin` aus Interface lösen, verbleibende 6 Methoden bestätigt in Gebrauch | M | 🔲 |
+
+## Ergebnisse
+
+_(wird nach Abschluss der Tasks ergänzt)_
+
+---
+
 # Sprint 34 — JWT-Alg-Confusion-Fix (SEC-01) + GOSTYLE-IF-01/02/05/06
 
 Ziel: Sprint 33 hat den Hexagonal-Pilot (HEX-05) abgeschlossen, damit sind GOSTYLE-IF-01..06
