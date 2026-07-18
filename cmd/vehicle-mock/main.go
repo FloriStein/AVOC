@@ -67,7 +67,10 @@ func main() {
 	// FLEET-04: independent fleet vehicles (Lastenrad/Lastenzug, ADR-029) simulated on the same
 	// MQTT connection — separate from the single Direct-Teleop vehicle above, which keeps its
 	// existing WS+MQTT behavior unchanged. See docs/adr/027-fleet-gateway-interface.md.
-	startFleetSimulation(mqttClient, os.Getenv("FLEET_VEHICLES"))
+	// fleetServiceURL lets the simulation fetch real Zone/Station data instead of hardcoded
+	// coordinates (FLEET-04) — falls back automatically if fleet-service is unreachable.
+	fleetServiceURL := envOr("FLEET_SERVICE_URL", "http://fleet-service:8085")
+	startFleetSimulation(mqttClient, os.Getenv("FLEET_VEHICLES"), fleetServiceURL, jwtSecret)
 
 	st := &state{battery: 85.0}
 
@@ -88,7 +91,14 @@ func main() {
 			if err != nil {
 				log.Fatal("JWT generation failed", "error", err)
 			}
-			if err := runConnection(wsURL, token, vehicleID, mqttClient, st); err != nil {
+			p := connectionParams{
+				wsURL:      wsURL,
+				token:      token,
+				vehicleID:  vehicleID,
+				mqttClient: mqttClient,
+				state:      st,
+			}
+			if err := runConnection(p); err != nil {
 				log.Warn("connection lost — reconnecting", "error", err, "delay", reconnectDelay)
 				time.Sleep(reconnectDelay)
 			}
@@ -99,22 +109,36 @@ func main() {
 	log.Info("vehicle-mock shutting down")
 }
 
-func runConnection(wsURL, token, vehicleID string, mqttClient mqtt.Client, st *state) error {
+// connectionParams bundles runConnection's per-attempt inputs (Rule 2.3 — more than 4 params).
+type connectionParams struct {
+	wsURL      string
+	token      string
+	vehicleID  string
+	mqttClient mqtt.Client
+	state      *state
+}
+
+func runConnection(p connectionParams) error {
 	header := map[string][]string{
-		"Authorization": {"Bearer " + token},
+		"Authorization": {"Bearer " + p.token},
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	conn, _, err := websocket.DefaultDialer.Dial(p.wsURL, header)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
 
-	log.Info("vehicle connected to control server", "vehicle_id", vehicleID, "url", wsURL)
+	log.Info("vehicle connected to control server", "vehicle_id", p.vehicleID, "url", p.wsURL)
 
-	// Telemetry publish loop
+	stopTelemetry := startTelemetryLoop(p.mqttClient, p.vehicleID, p.state)
+	defer stopTelemetry()
+
+	return receiveCommands(conn, p.vehicleID, p.state)
+}
+
+// startTelemetryLoop publishes telemetry on a ticker until the returned stop func is called.
+func startTelemetryLoop(mqttClient mqtt.Client, vehicleID string, st *state) func() {
 	ticker := time.NewTicker(telemetryHz)
-	defer ticker.Stop()
-
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -122,8 +146,12 @@ func runConnection(wsURL, token, vehicleID string, mqttClient mqtt.Client, st *s
 			publishTelemetry(mqttClient, vehicleID, st)
 		}
 	}()
+	return ticker.Stop
+}
 
-	// Command receive loop
+// receiveCommands runs the command receive loop: decode, apply, ACK. Returns once the
+// connection's ReadMessage or WriteMessage fails.
+func receiveCommands(conn *websocket.Conn, vehicleID string, st *state) error {
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -144,33 +172,42 @@ func runConnection(wsURL, token, vehicleID string, mqttClient mqtt.Client, st *s
 			}
 		}
 
-		// Send VehicleCommandAck
-		eventID := ""
-		if cmd.Header != nil {
-			eventID = cmd.Header.EventId
+		if err := sendCommandAck(conn, vehicleID, cmd, st); err != nil {
+			return err
 		}
-		ack := &vehiclev1.VehicleCommandAck{
-			Header: &commonv1.CorrelationHeader{
-				EventId:   ulid.Generate(),
-				VehicleId: vehicleID,
-				Timestamp: time.Now().UnixMilli(),
-				SessionId: st.sessionID,
-			},
-			CommandEventId: eventID,
-			Received:       true,
-			ReceivedAtMs:   time.Now().UnixMilli(),
-		}
-		ackBytes, err := proto.Marshal(ack)
-		if err != nil {
-			log.Warn("ack marshal failed", "error", err)
-			continue
-		}
-		if err := conn.WriteMessage(websocket.BinaryMessage, ackBytes); err != nil {
-			return fmt.Errorf("ack write: %w", err)
-		}
-		log.Debug("command received + ACK sent",
-			"type", cmd.Type, "value", cmd.Value, "event_id", eventID)
 	}
+}
+
+// sendCommandAck marshals and writes a VehicleCommandAck for cmd. A marshal failure is logged
+// and swallowed (matches the original inline loop's `continue`); a write failure is returned so
+// the caller treats it as a fatal connection error.
+func sendCommandAck(conn *websocket.Conn, vehicleID string, cmd *controlv1.ControlCommand, st *state) error {
+	eventID := ""
+	if cmd.Header != nil {
+		eventID = cmd.Header.EventId
+	}
+	ack := &vehiclev1.VehicleCommandAck{
+		Header: &commonv1.CorrelationHeader{
+			EventId:   ulid.Generate(),
+			VehicleId: vehicleID,
+			Timestamp: time.Now().UnixMilli(),
+			SessionId: st.sessionID,
+		},
+		CommandEventId: eventID,
+		Received:       true,
+		ReceivedAtMs:   time.Now().UnixMilli(),
+	}
+	ackBytes, err := proto.Marshal(ack)
+	if err != nil {
+		log.Warn("ack marshal failed", "error", err)
+		return nil
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, ackBytes); err != nil {
+		return fmt.Errorf("ack write: %w", err)
+	}
+	log.Debug("command received + ACK sent",
+		"type", cmd.Type, "value", cmd.Value, "event_id", eventID)
+	return nil
 }
 
 func applyCommand(cmd *controlv1.ControlCommand, st *state) {

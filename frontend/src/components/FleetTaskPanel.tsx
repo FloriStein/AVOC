@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FleetVehicle, Task, Station, CreateFleetTaskInput } from '@/lib/api-client'
 import { listFleetStations } from '@/lib/api-client'
 
@@ -24,24 +24,26 @@ const STATUS_STYLE: Record<Task['status'], string> = {
   cancelled: 'text-gray-500 bg-gray-800',
 }
 
-// Client-side mirror of ADR-030's backend transition matrix (internal/fleetservice/store.go's
-// taskTransitionSources) — the backend remains the authoritative validator (a stale/duplicated
-// mirror here only affects which buttons render, not correctness; a rejected transition still
-// surfaces as an inline error below). Documented as known duplication debt, see DECISIONS.MD.
-const NEXT_TRANSITIONS: Record<Task['status'], { status: string; label: string }[]> = {
-  pending: [
-    { status: 'in_progress', label: 'Starten' },
-    { status: 'cancelled', label: 'Stornieren' },
-  ],
-  in_progress: [
-    { status: 'completed', label: 'Abschließen' },
-    { status: 'cancelled', label: 'Stornieren' },
-  ],
-  completed: [],
-  cancelled: [],
+// Pure UI concern (button text for a target status) — unlike the transition matrix itself
+// (which statuses are reachable from which), this never needs to stay in sync with the backend:
+// every status has exactly one label regardless of the task's current status. The matrix moved
+// to the backend (TASKUI-02): buttons are now rendered from `task.allowed_transitions`
+// (internal/fleetservice/store.go's allowedTaskTransitions), not a duplicated local copy.
+const TRANSITION_LABEL: Record<Task['status'], string> = {
+  pending: '', // never a transition target — see allowedTaskTransitions
+  in_progress: 'Starten',
+  completed: 'Abschließen',
+  cancelled: 'Stornieren',
 }
 
 const emptyForm = { vehicle_id: '', from_station_id: '', to_station_id: '', priority: '0' }
+
+// AP2-04: no fixed priority scale exists elsewhere in the system (Task.priority is a free,
+// unbounded integer, default 0) — 5 was chosen as the "hoch" cutoff (Grill-Me 2026-07-18) as a
+// simple, predictable fixed threshold rather than a percentile of the currently visible tasks
+// (which would make the same priority value highlighted or not depending on what else happens
+// to be open).
+const HIGH_PRIORITY_THRESHOLD = 5
 
 // Sprint 24 (ADR-030) — Task-Management-UI: Liste aller Tasks (= Historie, alle Status),
 // Anlage-Formular und Status-Übergangs-Buttons. Styled per FleetAlertsPanel.tsx's conventions
@@ -67,6 +69,13 @@ export function FleetTaskPanel({ tasks, vehicles, token, onCreateTask, onUpdateS
 
   const vehicleName = (id: string) => vehicles.find((v) => v.id === id)?.display_name ?? id
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? id
+
+  // AP2-04: highest priority first; same priority keeps the backend's created_at DESC order
+  // (ListTasks) so sorting here never reorders same-priority tasks unpredictably on each render.
+  const sortedTasks = useMemo(
+    () => [...tasks].sort((a, b) => b.priority - a.priority),
+    [tasks],
+  )
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -177,10 +186,14 @@ export function FleetTaskPanel({ tasks, vehicles, token, onCreateTask, onUpdateS
         <p className="text-xs text-gray-500 text-center py-4">Keine Tasks</p>
       ) : (
         <div className="flex flex-col gap-1.5 overflow-y-auto max-h-64">
-          {tasks.map((t) => (
+          {sortedTasks.map((t) => {
+            const isHighPriority = t.priority >= HIGH_PRIORITY_THRESHOLD
+            return (
             <div
               key={t.id}
-              className="flex flex-col gap-1 rounded border border-gray-700 bg-gray-900/50 px-2 py-1.5 text-xs"
+              className={`flex flex-col gap-1 rounded border px-2 py-1.5 text-xs ${
+                isHighPriority ? 'border-amber-600 bg-amber-950/20' : 'border-gray-700 bg-gray-900/50'
+              }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-gray-200">
@@ -191,24 +204,27 @@ export function FleetTaskPanel({ tasks, vehicles, token, onCreateTask, onUpdateS
                 </span>
               </div>
               <div className="flex items-center justify-between text-gray-500">
-                <span>Priorität {t.priority} · {new Date(t.created_at).toLocaleTimeString()}</span>
+                <span className={isHighPriority ? 'text-amber-400 font-bold' : undefined}>
+                  Priorität {t.priority}{isHighPriority ? ' ⚠ Hoch' : ''} · {new Date(t.created_at).toLocaleTimeString()}
+                </span>
                 {t.status_changed_by && <span>zuletzt: {t.status_changed_by}</span>}
               </div>
               <div className="flex items-center gap-2">
-                {NEXT_TRANSITIONS[t.status].map(({ status, label }) => (
+                {t.allowed_transitions.map((status) => (
                   <button
                     key={status}
                     onClick={() => handleStatusChange(t.id, status)}
                     disabled={pendingTaskId === t.id}
                     className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-gray-200 font-semibold transition-colors"
                   >
-                    {pendingTaskId === t.id ? '…' : label}
+                    {pendingTaskId === t.id ? '…' : TRANSITION_LABEL[status]}
                   </button>
                 ))}
                 {statusErrors[t.id] && <span className="text-red-400">{statusErrors[t.id]}</span>}
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </section>

@@ -92,32 +92,20 @@ func (s *SFU) HandleSessionEvent(event SessionEvent) {
 	}
 }
 
-// CreateVehicleOffer accepts a WebRTC offer from a vehicle and returns an SDP answer.
-func (s *SFU) CreateVehicleOffer(sessionID, peerID, sdpOffer string) (string, error) {
+// newPeerConnection creates a PeerConnection with the SFU's shared ICE configuration.
+func (s *SFU) newPeerConnection() (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun-turn:3478"}},
 		},
 	}
+	return s.api.NewPeerConnection(config)
+}
 
-	pc, err := s.api.NewPeerConnection(config)
-	if err != nil {
-		return "", err
-	}
-
-	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		svcLog.Info("vehicle track received",
-			"session_id", sessionID, "kind", track.Kind(), "codec", track.Codec().MimeType)
-		go s.forwardTrack(sessionID, track)
-	})
-
-	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		svcLog.Info("vehicle ICE state changed", "state", state, "session_id", sessionID)
-		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
-			s.removePeer(peerID)
-		}
-	})
-
+// negotiateAnswer runs the offer/answer exchange shared by CreateVehicleOffer and
+// SubscribeOperator: apply the remote offer, create and set the local answer, then wait for ICE
+// gathering to complete before returning the final SDP.
+func negotiateAnswer(pc *webrtc.PeerConnection, sdpOffer string) (string, error) {
 	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdpOffer}
 	if err := pc.SetRemoteDescription(offer); err != nil {
 		pc.Close()
@@ -137,6 +125,34 @@ func (s *SFU) CreateVehicleOffer(sessionID, peerID, sdpOffer string) (string, er
 	gatherComplete := webrtc.GatheringCompletePromise(pc)
 	<-gatherComplete
 
+	return pc.LocalDescription().SDP, nil
+}
+
+// CreateVehicleOffer accepts a WebRTC offer from a vehicle and returns an SDP answer.
+func (s *SFU) CreateVehicleOffer(sessionID, peerID, sdpOffer string) (string, error) {
+	pc, err := s.newPeerConnection()
+	if err != nil {
+		return "", err
+	}
+
+	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		svcLog.Info("vehicle track received",
+			"session_id", sessionID, "kind", track.Kind(), "codec", track.Codec().MimeType)
+		go s.forwardTrack(sessionID, track)
+	})
+
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		svcLog.Info("vehicle ICE state changed", "state", state, "session_id", sessionID)
+		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
+			s.removePeer(peerID)
+		}
+	})
+
+	sdp, err := negotiateAnswer(pc, sdpOffer)
+	if err != nil {
+		return "", err
+	}
+
 	s.mu.Lock()
 	s.peers[peerID] = &Peer{
 		ID:        peerID,
@@ -147,7 +163,7 @@ func (s *SFU) CreateVehicleOffer(sessionID, peerID, sdpOffer string) (string, er
 	s.mu.Unlock()
 
 	svcLog.Info("vehicle peer connected", "peer_id", peerID, "session_id", sessionID)
-	return pc.LocalDescription().SDP, nil
+	return sdp, nil
 }
 
 // forwardTrack routes an incoming vehicle RTP track to all subscribed operator connections.
@@ -196,13 +212,7 @@ func (s *SFU) dropStreams(sessionID string) {
 
 // SubscribeOperator accepts a WebRTC offer from an operator browser and returns an SDP answer.
 func (s *SFU) SubscribeOperator(sessionID, operatorID, sdpOffer string) (string, error) {
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun-turn:3478"}},
-		},
-	}
-
-	pc, err := s.api.NewPeerConnection(config)
+	pc, err := s.newPeerConnection()
 	if err != nil {
 		return "", err
 	}
@@ -228,46 +238,44 @@ func (s *SFU) SubscribeOperator(sessionID, operatorID, sdpOffer string) (string,
 		}
 	})
 
-	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdpOffer}
-	if err := pc.SetRemoteDescription(offer); err != nil {
-		pc.Close()
-		return "", err
-	}
-
-	answer, err := pc.CreateAnswer(nil)
+	sdp, err := negotiateAnswer(pc, sdpOffer)
 	if err != nil {
-		pc.Close()
-		return "", err
-	}
-	if err := pc.SetLocalDescription(answer); err != nil {
-		pc.Close()
 		return "", err
 	}
 
-	gatherComplete := webrtc.GatheringCompletePromise(pc)
-	<-gatherComplete
+	if s.registerOperatorSubscription(sessionID, operatorID, pc, localTrack) {
+		svcLog.Info("operator already subscribed", "operator_id", operatorID)
+		return sdp, nil
+	}
 
+	svcLog.Info("operator subscribed", "operator_id", operatorID, "session_id", sessionID)
+	return sdp, nil
+}
+
+// registerOperatorSubscription stores the peer connection for operatorID and adds it to the
+// session's routing list unless already present. Preserves the pre-existing semantics where the
+// peer connection is replaced unconditionally, even for an already-subscribed operator — only
+// the routing list append is skipped in that case. Returns whether operatorID was already routed.
+func (s *SFU) registerOperatorSubscription(sessionID, operatorID string, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticRTP) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.peers[operatorID] = &Peer{
 		ID:         operatorID,
 		Role:       "operator",
 		SessionID:  sessionID,
 		Connection: pc,
-		Tracks:     []*webrtc.TrackLocalStaticRTP{localTrack},
+		Tracks:     []*webrtc.TrackLocalStaticRTP{track},
 	}
+
 	existing := s.routing[sessionID]
 	for _, id := range existing {
 		if id == operatorID {
-			s.mu.Unlock()
-			svcLog.Info("operator already subscribed", "operator_id", operatorID)
-			return pc.LocalDescription().SDP, nil
+			return true
 		}
 	}
 	s.routing[sessionID] = append(existing, operatorID)
-	s.mu.Unlock()
-
-	svcLog.Info("operator subscribed", "operator_id", operatorID, "session_id", sessionID)
-	return pc.LocalDescription().SDP, nil
+	return false
 }
 
 func (s *SFU) removePeer(peerID string) {

@@ -43,16 +43,18 @@ export function setup() {
 export default function (data) {
   const { token } = data
 
-  // Measure state endpoint as HTTP proxy for ACK latency
-  // (WebSocket binary framing in k6 requires additional setup)
+  // Measure an authenticated endpoint as HTTP proxy for ACK latency
+  // (WebSocket binary framing in k6 requires additional setup). GET /sessions instead of the
+  // removed GET /state (MV-12) — no vehicle_id/session set up in setup() above, and /sessions is
+  // the same no-vehicle reachability probe useSystemState.ts uses on the frontend.
   const t0 = Date.now()
-  const resp = http.get(`${BASE_URL}/state`, {
+  const resp = http.get(`${BASE_URL}/sessions`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   const latencyMs = Date.now() - t0
 
   const ok = check(resp, {
-    'state OK': (r) => r.status === 200,
+    'sessions OK': (r) => r.status === 200,
     'latency < 100ms': () => latencyMs < 100,
   })
 

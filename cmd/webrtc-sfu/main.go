@@ -18,10 +18,26 @@ func main() {
 	}
 
 	sfu := webrtcsfu.New()
-	mux := http.NewServeMux()
+	mux := newSFUMux(sfu)
 
+	log.Info("WebRTC SFU starting", "port", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal("WebRTC SFU failed", "error", err)
+	}
+}
+
+func newSFUMux(sfu *webrtcsfu.SFU) *http.ServeMux {
+	mux := http.NewServeMux()
 	// Session Event Consumer — receives SESSION_* events from Control Server (ADR-015).
-	mux.HandleFunc("POST /session/event", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /session/event", handleSessionEvent(sfu))
+	mux.HandleFunc("POST /offer/{sessionId}/{peerId}", handleVehicleOffer(sfu))
+	mux.HandleFunc("POST /subscribe/{sessionId}/{operatorId}", handleOperatorSubscribe(sfu))
+	mux.HandleFunc("GET /health", handleHealth)
+	return mux
+}
+
+func handleSessionEvent(sfu *webrtcsfu.SFU) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var event webrtcsfu.SessionEvent
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 			http.Error(w, "invalid event", http.StatusBadRequest)
@@ -29,9 +45,11 @@ func main() {
 		}
 		sfu.HandleSessionEvent(event)
 		w.WriteHeader(http.StatusAccepted)
-	})
+	}
+}
 
-	mux.HandleFunc("POST /offer/{sessionId}/{peerId}", func(w http.ResponseWriter, r *http.Request) {
+func handleVehicleOffer(sfu *webrtcsfu.SFU) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.PathValue("sessionId")
 		peerID := r.PathValue("peerId")
 
@@ -52,9 +70,11 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"sdp": answer})
-	})
+	}
+}
 
-	mux.HandleFunc("POST /subscribe/{sessionId}/{operatorId}", func(w http.ResponseWriter, r *http.Request) {
+func handleOperatorSubscribe(sfu *webrtcsfu.SFU) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.PathValue("sessionId")
 		operatorID := r.PathValue("operatorId")
 
@@ -75,15 +95,10 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"sdp": answer})
-	})
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "webrtc-sfu"})
-	})
-
-	log.Info("WebRTC SFU starting", "port", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal("WebRTC SFU failed", "error", err)
 	}
+}
+
+func handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "webrtc-sfu"})
 }

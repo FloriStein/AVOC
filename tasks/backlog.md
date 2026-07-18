@@ -181,7 +181,7 @@ LOG-10 → LOG-11 (nach LOG-02)
 | AUTH-01 | JWT-Pflicht REST-Endpoints (`requireJWT` Middleware, 9 Endpoints geschützt) | M | ✅ Sprint 14 | `cmd/control-server/main.go`; `api-client.ts` + `SafetyPanel.tsx` token-aware |
 | ROB-01 | Backend nicht erreichbar Banner + ControlPanel-Sperre | S | ✅ Sprint 14 | `useSystemState.ts` `unreachable`; rotes Banner in `App.tsx` |
 | UI-01 | Dual-Channel Status: Control (WS-ACK) + Video (ICE-RTT) in ConnectionPanel | M | ✅ Sprint 14 | `useWebRTC.ts` `getStats()`; `VideoPanel.tsx` Callback; `ConnectionPanel.tsx` 2 Zeilen |
-| OBS-01 | Vehicle "zuletzt gesehen" Heartbeat-Timestamp in AckBadge (Bonus) | S | 🔲 offen | — |
+| OBS-01 | Vehicle "zuletzt gesehen" Heartbeat-Timestamp in AckBadge (Bonus) | S | ✅ Sprint 31 | `useTelemetry.ts` liefert jetzt `timestampMs`/`ageSinceUpdateMs`; `InputIndicatorPanel.tsx`'s `AckBadge` zeigt "Zuletzt gesehen vor Xs" unabhängig vom ACK-Kommandofluss |
 
 **Nachtrag Bugfix:** `WSClient.disconnect()` setzt `ws.onclose = null` vor `ws.close()` — E-Stop Race Condition behoben.
 
@@ -197,10 +197,10 @@ LOG-10 → LOG-11 (nach LOG-02)
 
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
-| MV-09 | Vehicle-Dropdown Live-State-Badge (z.B. SAFE_MODE-Indikator neben Vehicle-002) | M | 🔲 Backlog | Grill-Me-Entscheidung 2026-06-14: separater Task nach Sprint 17; braucht `GET /vehicles` erweitert um System-State pro Fahrzeug |
-| MV-10 | GC für `VehicleContext`-Instanzen bei großer/dynamischer Flotte | M | 🔲 Backlog | Aktuell dauerhaft behalten (kleine Flotte) — nur relevant bei deutlichem Flottenwachstum |
-| MV-11 | Multi-Vehicle Handover — `HandoverManager` nutzt noch eine einzelne globale State Machine (`handoverSM`) für die OPERATOR-Schicht | M | 🔲 Backlog | Kein Safety-Risiko (transitioniert nie SAFE_MODE), aber Handover zwischen Operatoren ist bei >1 Fahrzeug nicht isoliert — entdeckt während MV-04-Implementierung, bewusst aus ADR-026 ausgeklammert |
-| MV-12 | `GET /state` entfernen, verbleibende Konsumenten (`latency.js`, `services_test.go`) auf `GET /vehicles/{id}/state` / `GET /sessions` migrieren | S | 🔲 Backlog | Frontend (`useSystemState`) nutzt es seit MV-07 nicht mehr — nur noch k6 + Integrationstests hängen daran |
+| MV-09 | Vehicle-Dropdown Live-State-Badge (z.B. SAFE_MODE-Indikator neben Vehicle-002) | M | ✅ Sprint 30 | `GET /vehicles` liefert jetzt `system_state`; `VehicleSelector.tsx` zeigt 🔴 SAFE_MODE-Badge |
+| MV-10 | GC für `VehicleContext`-Instanzen bei großer/dynamischer Flotte | M | 🔲 Backlog | Aktuell dauerhaft behalten (kleine Flotte) — nur relevant bei deutlichem Flottenwachstum. Sprint-30-Triage 2026-07-18: bewusst zurückgestellt |
+| MV-11 | Multi-Vehicle Handover — `HandoverManager` nutzt noch eine einzelne globale State Machine (`handoverSM`) für die OPERATOR-Schicht | M | ✅ bereits erledigt (Commit `f68346a`, 2026-07-15) | Bei Sprint-30-Bearbeitung 2026-07-18 als bereits behoben vorgefunden — `HandoverManager` löst seitdem pro Fahrzeug über `vehiclecontext.Registry` auf, Regressionstest `TestSafety_Handover_TwoVehicles_IndependentHandovers` in `tests/unit/safety_test.go`. Diese Zeile war nur nicht nachgepflegt worden |
+| MV-12 | `GET /state` entfernen, verbleibende Konsumenten (`latency.js`, `services_test.go`) auf `GET /vehicles/{id}/state` / `GET /sessions` migrieren | S | ✅ Sprint 30 | `GET /state`/`handleState` entfernt, beide Konsumenten migriert, gegen echten Docker-Test-Stack verifiziert |
 | AUTH-TEST-01 | `internal/authservice/handler_test.go` komplett veraltet (368 Zeilen, alte string-ID/`DisplayName`-API) — kompiliert nicht mit `go vet`/`go test` | M | ✅ Sprint 18 (AUTH-18-01) | 20 Tests auf neue API migriert (`User.ID int`, `Username`, neue `UserStore`-Signaturen); `go vet ./...` + alle Unit-Tests grün |
 
 ---
@@ -216,8 +216,8 @@ LOG-10 → LOG-11 (nach LOG-02)
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
 | WEBRTC-10 | SDP `a=setup:active`-Workaround (`useWebRTC.ts`, `useWHIPSender.ts`) inkompatibel mit aktuellem Chromium (`setRemoteDescription` wirft „Offerer must use actpass") | M/L | 🔲 Backlog | Entdeckt Sprint 19 (LOCAL-04) beim ersten Mal, dass WHIP tatsächlich bis zum SDP-Austausch kam. Ursprünglich dokumentierter Fix für Pion-v1.19.0-DTLS-Bug (`docs/webrtc.md`). Vor jeder Änderung prüfen: (1) hat `mediamtx:latest` den Pion-Bug noch (Version pinnen/prüfen), (2) betrifft `useWebRTC.ts` auch den Produktiv-Video-Empfang auf AWS — kein reines Lokal-Problem. Ggf. Grill-Me + eigenes ADR nötig, da Video-Hub-Architektur (ADR-014/020) berührt |
-| DOC-01 | `frontend/README.md` seit MediaMTX-WHIP/WHEP-Migration (Sprint 9/10) nicht mehr gepflegt | S | 🔲 Backlog | Entdeckt Sprint 19 bei MD-Datei-Review. Proxy-Tabelle fehlen `/whip/`, `/whep/`, `/vehicle/ws`; beschreibt `useWebRTC.ts` noch mit altem SFU-Signaling-Pfad (`/sfu/subscribe/`) statt aktuellem WHEP-Pfad; Komponenten-/Hooks-Liste fehlen `LoginPanel`, `UserManagementPanel`, `StreamSenderPanel`, `useWHIPSender`, `useVehicleAck` u.a.; „Implementierter Funktionsumfang" beschreibt nur Sprint 5 (kein Auth/Sprint 15, kein Multi-Vehicle/Sprint 17) |
-| DOC-02 | Kompilierte `control-server`-Binärdatei (~12 MB) liegt seit dem allerersten Commit im Repo-Root und ist versioniert — nicht durch `.gitignore` erfasst (nur `bin/` ist ausgeschlossen) | S | 🔲 Backlog | Entdeckt 2026-07-10 beim Verifizieren eines Kommentar-Edits (`go build ./cmd/control-server/...` hat die Datei am Repo-Root überschrieben, git zeigte danach eine Diff-Modifikation). Vermutlich versehentlicher Commit aus einer frühen Sprint-Phase. Prüfen ob die Datei irgendwo referenziert wird, bevor sie aus der History entfernt/zu `.gitignore` hinzugefügt wird |
+| DOC-01 | `frontend/README.md` seit MediaMTX-WHIP/WHEP-Migration (Sprint 9/10) nicht mehr gepflegt | S | ✅ Sprint 30 | Proxy-Tabelle, `useWebRTC`-Beschreibung (WHEP statt SFU), Komponenten-/Hooks-/Lib-Liste und Funktionsumfang (Nutzerverwaltung, Fleet Dashboard) auf aktuellen Stand gebracht |
+| DOC-02 | Kompilierte `control-server`-Binärdatei (~12 MB) liegt seit dem allerersten Commit im Repo-Root und ist versioniert — nicht durch `.gitignore` erfasst (nur `bin/` ist ausgeschlossen) | S | ✅ Sprint 30 | Keine Referenz im Repo gefunden. Per `git rm --cached` aus dem Tracking entfernt (lokale Datei bleibt), `.gitignore` ergänzt. Bewusst **keine** History-Rewrite |
 
 ---
 
@@ -235,13 +235,13 @@ sobald die Architektur final abgestimmt ist.
 |----|------|-----|--------|---------|
 | FLEET-01 | Handshake-basierte Autonomie-Rückgabe (statt einfachem `endSession()`) | M | 🔲 Backlog | `ADR-028` — bewusst zurückgestellt; Risiko: Fahrzeug könnte Kontrolle zurückerhalten, bevor es sicher verarbeitet ist. `endSession()` reicht für den Anfang |
 | FLEET-02 | Persistenzform für gefahrene Route (Historie) — Zeitreihen-DB vs. einfache Tabelle | M | 🔲 Backlog | `ADR-029` — noch nicht entschieden, betrifft Karten-Route-Darstellung (Historie-Linie) |
-| FLEET-03 | Bestehende `POST /vehicles`/`DELETE /vehicles/{id}` in `control-server` vs. neue `fleet-service`-Admin-API — Ablösung oder Koexistenz | S | 🔲 Backlog | `ADR-029` — kein Bruch im aktuellen Schritt, aber langfristig vermutlich durch reichhaltigere Fleet-Admin-API abgelöst |
-| FLEET-04 | `vehicle-mock`s Fleet-Simulation nutzt hartcodierte Demo-Stationskoordinaten (`cmd/vehicle-mock/fleet_simulator.go`) statt echter Zonen/Stationen | S | 🔲 Backlog | Sprint 21 (FLEET-04) — vehicle-mock hat keinen DB-Zugriff; sobald `fleet-service`s REST-API (FLEET-05) Zonen/Stationen liefert, könnte die Simulation echte Daten abfragen statt sie zu erfinden |
-| TASKUI-01 | Doppelte Demo-Stationsanlage bereinigen (`demo-zone-taskui`/`demo-station-*-taskui` aus Sprint 24 vs. `zone-betriebshof-nord`/echte Stationen aus der parallelen Sprint-23-Session) | S | 🔲 Backlog | `ADR-030` — bewusst akzeptiertes Merge-Risiko, real eingetreten (2026-07-16), aber folgenlos (kein ID-Konflikt dank `-taskui`-Namensraum). Beim Merge der Branches entscheiden, welche Stationsdaten bleiben; `demo-*-taskui`-Zeilen sind trivial per `DELETE ... WHERE id LIKE '%-taskui'` entfernbar |
-| TASKUI-02 | Task-Status-Übergangstabelle dupliziert (Go `internal/fleetservice/store.go` `taskTransitionSources` vs. TypeScript `frontend/src/components/FleetTaskPanel.tsx` `NEXT_TRANSITIONS`) | S | 🔲 Backlog | `ADR-030` — Backend bleibt autoritativ (Frontend-Kopie steuert nur Button-Sichtbarkeit), aber bei künftiger Änderung der Zustandsmaschine müssen beide Stellen angepasst werden. Ggf. per generiertem Konstanten-Export lösen, falls die Zustandsmaschine sich noch ändert |
-| TASKUI-03 | Vollständige Task-Status-Audit-Historie (mehrere Übergänge, nicht nur der letzte) | M | 🔲 Backlog | `ADR-030` — bewusst auf `tasks.status_changed_by` (nur letzter Übergang) begrenzt statt eigener `task_status_history`-Tabelle (Scope-Entscheidung, Grill-Me 2026-07-16). Bei Bedarf: neue Tabelle + Migration, kein Bruch des bestehenden ADRs |
-| TASKUI-04 | Nil-Slice-→-JSON-`null`-Muster in `ListZones`/`ListStations`/`ListVehicleStatus`/`ListVehiclesWithStatus`/`ListAlerts` (`internal/fleetservice/store.go`) | S | 🔲 Backlog | Gefunden bei der TASK-14-Folgeverifikation (2026-07-16): identisches Muster wie der in `ListTasks` gefixte Absturz (`var x []T` marshalt bei 0 Zeilen zu `null` statt `[]`), dort bisher folgenlos, da der Demo-Seed diese Listen nie leer lässt — aber ein latentes Risiko für jeden Frontend-Consumer, der `.length` ungeprüft aufruft |
-| TASKUI-05 | Geteiltes Docker-Compose-Projekt über alle Worktrees hinweg (`name: avoc` in `infrastructure/compose/docker-compose.yml`) | M | 🔲 Backlog | Gefunden bei der TASK-14-Folgeverifikation (2026-07-16): jeder Worktree (Haupt-Checkout, Sprint-23-, `-taskui`-Worktree) landet im selben Compose-Projekt/denselben Containern — ein `docker compose up --build` aus einem Worktree überschreibt kommentarlos den Stand, den eine andere parallele Session gerade verifiziert hat (real beobachtet: `avoc-frontend-1` enthielt `FleetMap`, aber kein `FleetTaskPanel`). Lösungsrichtung: `COMPOSE_PROJECT_NAME` pro Worktree (z. B. aus dem Branch-/Verzeichnisnamen ableiten) oder dokumentierte Konvention, dass nur eine Session gleichzeitig gegen den Dev-Stack baut |
+| FLEET-03 | Bestehende `POST /vehicles`/`DELETE /vehicles/{id}` in `control-server` vs. neue `fleet-service`-Admin-API — Ablösung oder Koexistenz | S | ✅ Sprint 31 | Reine Bestätigungsaufgabe, kein Code: `ADR-029` beantwortet die Frage bereits abschließend (Koexistenz, kein Bruch), Endpoints unverändert verifiziert |
+| FLEET-04 | `vehicle-mock`s Fleet-Simulation nutzt hartcodierte Demo-Stationskoordinaten (`cmd/vehicle-mock/fleet_simulator.go`) statt echter Zonen/Stationen | S | ✅ Sprint 31 | Neue `cmd/vehicle-mock/fleet_stations.go`: `resolveSimulationStations()` ruft `GET /fleet/stations` ab, fällt bei Fehler/<2 geo-verorteten Stationen auf `fallbackDemoStations` zurück |
+| TASKUI-01 | Doppelte Demo-Stationsanlage bereinigen (`demo-zone-taskui`/`demo-station-*-taskui` aus Sprint 24 vs. `zone-betriebshof-nord`/echte Stationen aus der parallelen Sprint-23-Session) | S | ✅ Sprint 30 | `demoStationSeed` (INSERT) durch `taskuiDemoSeedCleanup` (DELETE, FK-sicher via `NOT EXISTS`-Guard) ersetzt |
+| TASKUI-02 | Task-Status-Übergangstabelle dupliziert (Go `internal/fleetservice/store.go` `taskTransitionSources` vs. TypeScript `frontend/src/components/FleetTaskPanel.tsx` `NEXT_TRANSITIONS`) | S | ✅ Sprint 30 | Server-berechnetes `Task.AllowedTransitions`-Feld ersetzt die hartcodierte Frontend-Kopie; `FleetTaskPanel.tsx` rendert Buttons jetzt aus `task.allowed_transitions` |
+| TASKUI-03 | Vollständige Task-Status-Audit-Historie (mehrere Übergänge, nicht nur der letzte) | M | ✅ Sprint 31 | [ADR-032](../docs/adr/032-task-status-history.md) — neue `task_status_history`-Tabelle (additiv, `ADR-030` unverändert), `GET /fleet/tasks/{id}/history`, Backfill bestehender Tasks mit dokumentierten Näherungen |
+| TASKUI-04 | Nil-Slice-→-JSON-`null`-Muster in `ListZones`/`ListStations`/`ListVehicleStatus`/`ListVehiclesWithStatus`/`ListAlerts` (`internal/fleetservice/store.go`) | S | ✅ Sprint 30 | Gleiches `var x []T` → `x := []T{}`-Muster wie bei `ListTasks` angewendet |
+| TASKUI-05 | Geteiltes Docker-Compose-Projekt über alle Worktrees hinweg (`name: avoc` in `infrastructure/compose/docker-compose.yml`) | M | ✅ Sprint 30 | `COMPOSE_PROJECT_NAME` im `Makefile` aus dem Worktree-Verzeichnisnamen abgeleitet und exportiert (Datei-`name:` unverändert, env var hat Vorrang) |
 
 ---
 
@@ -305,7 +305,7 @@ am selben Tag `docs/adr/030-task-status-lifecycle.md` unter derselben Nummer. Be
 | AP2-01 | Merge-Integration: Sprint 24 (`-taskui`) und Sprint 25 (`-audio`) in `feature/fleet-service-foundation` zusammenführen (Sprint 23 ist bereits gemergt) | L | ✅ erledigt | ADR-030-Nummernkollision gelöst (siehe oben); verbleibende Merge-Konflikte (doppelte Demo-Stationsanlage `TASKUI-01`, additive `FleetOverview.tsx`-Änderungen aus Sprint 23/24/25) beim Merge selbst aufgelöst |
 | AP2-02 | Indoor-Kartenrendering — Backend-Erweiterung für Fahrzeug-Punktposition innerhalb einer Indoor-Zone | L | 🔲 Backlog | Bisher nur als "Offene Frage" in CONTEXT.MD/DECISIONS.MD geführt, hier erstmals als konkreter Task erfasst. Braucht eigene Datenmodell-Entscheidung (`vehicle_status`-Erweiterung) — vermutlich eigenes ADR, da Datenmodell-Änderung (ADR-029 nicht überschreiben) |
 | AP2-03 | Persistenzform für "gefahrene Route" entscheiden + implementieren | M | 🔲 Backlog | Verweist auf bestehenden `FLEET-02` — hier nur referenziert, nicht dupliziert |
-| AP2-04 | Prioritätenmanagement in der Task-UI über reine Zahlenanzeige hinaus ausbauen (Sortierung nach Priorität, visuelle Hervorhebung hoher Priorität) | M | 🔲 Backlog | Sprint 24 (`FleetTaskPanel.tsx`) hat `priority` als reines Eingabe-/Anzeigefeld ohne Sortierung/Hervorhebung umgesetzt — "Prioritätenmanagement" aus der Leistungsbeschreibung impliziert mehr als das; jetzt bearbeitbar (AP2-01 erledigt) |
+| AP2-04 | Prioritätenmanagement in der Task-UI über reine Zahlenanzeige hinaus ausbauen (Sortierung nach Priorität, visuelle Hervorhebung hoher Priorität) | M | ✅ Sprint 31 | `FleetTaskPanel.tsx`: `sortedTasks` (absteigend nach `priority`), Hervorhebung ab `priority >= 5` (fester Schwellenwert, Grill-Me 2026-07-18) |
 | AP2-05 | Klären, ob Meilenstein 2 ein eigenständiges Abnahme-Artefakt für den Auftraggeber braucht | S | 🔲 Zu klären | Analog `AP1-04` — kein Beleg im Repo für die genaue Abnahme-Form |
 
 **Nicht dupliziert, sondern nur referenziert (bereits auf den jeweiligen Branches dokumentiert,
@@ -351,6 +351,97 @@ für eine neue Session pro Task ein Verweis auf die Task-ID hier, keine lange Ü
 Reihenfolge auth-service (JWT-Port) bzw. telemetry-service (kleinster Fall) folgen — siehe
 Risikobewertung in ADR-031. `control-server` bleibt bis auf Weiteres ausdrücklich ausgeklammert
 (eigenes ADR nötig, siehe ADR-031 "Offene Punkte").
+
+---
+
+## EPIC: Go Coding Style Guide Rollout
+
+Style Guide selbst: [docs/go-style-guide.md](../docs/go-style-guide.md) (Wortlaut vom Nutzer
+vorgegeben, ergänzt um projektspezifische Anmerkungen). Referenziert aus CLAUDE.MD Abschnitt 12.
+
+**Quantifizierte Bestandsaufnahme (2026-07-17, AST-basiert über alle 7 Go-Services + `pkg/`, 404
+Funktionen/Methoden insgesamt):** 12 Funktionen >50 Zeilen (Rule 2.2, größtenteils `main()`-
+Funktionen), 6 Funktionen/Methoden >4 Parameter (Rule 2.3), 3 Interfaces >3 Methoden plus 2 an der
+Grenze (Rule 4.3), 0 generische utils/common/helpers-Pakete (Rule 4.1 — `pkg/db`, `pkg/logger`,
+`pkg/ulid`, `pkg/audit` bestätigt einzweckig), 2 echte Dreifach-Duplikate (Rule 3.1: `envOr`-Helper
+und DB-Open+WaitForReady-Block, je 3× identisch). Vertiefte Analyse aller Interfaces >1 Methode
+ergab: **alle** sind aktuell producer-definiert (`UserStore`, `SessionRecorder`, `VehicleStore`,
+`FleetGateway`, `AuditWriter`, `safety.Publisher`); `SessionRecorder` und `FleetGateway` werden
+nirgends als Interface-Typ konsumiert (Dead Ports, deckt sich mit ADR-031); jeweils mind. eine
+Bootstrap-/Lifecycle-Methode (`SeedAdmin`, `SeedDefault`, `Close`) ist nie über das Interface
+aufgerufen. Die kleinen 1-Methoden-Interfaces (`Dispatcher`, `safetyPublisher`, `VehicleAdder`
+u. a.) sind dagegen bereits vorbildlich konsumentenseitig geschnitten — Vorbild für Phase 2.
+
+Grill-Me 2026-07-17, vier Fragen, Antworten unten eingearbeitet:
+- **Umfang:** komplette Codebasis, alle 4 Regelblöcke (nicht nur ein Pilot-Service).
+- **Interface-Regeln (Rule 4.2/4.3):** eigene, spätere Phase — koordiniert mit ADR-031
+  (Hexagonal-Migration), da beide dieselben Interfaces anfassen würden.
+- **Priorität:** Rules 1-3 + Duplikat-Extraktion laufen **jetzt parallel** zu den laufenden
+  Dashboard-Strängen (keine Signaturänderungen nach außen, geringes Risiko). Rule 4 wartet auf
+  ADR-031 (Pilot-Abschluss `HEX-05` + Post-AP2/AP3-Timing).
+- **Durchsetzung:** `golangci-lint` wird eingerichtet, aber als **non-blocking Warn-Stufe** —
+  löst das Henne-Ei-Problem (kein hartes Gate vor Abschluss der Angleichung nötig) und macht
+  Fortschritt sprintübergreifend sichtbar, statt erst am Ende zu gaten.
+
+**Sprint-Nummern:** Phase 1 ist zu groß für einen einzelnen Sprint (CLAUDE.MD Abschnitt 10: "aktive
+Arbeit max. 3–10 Tasks") und wird daher in drei Sprints gesplittet (27/28/29 vorgeschlagen — **zur
+Verifikation beim Merge**: `Sprint 26` ist bereits durch die parallelen Worktrees `driftaudit`/
+`driftfix`/`drift-k1-k3-safety` belegt, analog zur ADR-030/031-Nummernkollision oben real möglich).
+
+**Keine Signaturänderung nach außen, kein Verhaltenswechsel** in allen drei Sprints — jeder Task
+endet mit vollem Testlauf des betroffenen Service + Diff-Review gegen genau diese Vorgabe
+(CLAUDE.MD Abschnitt 15).
+
+#### Sprint 27 — Fundament: `pkg/db`, `pkg/env`, non-blocking Linter-Gate — ✅ fertig
+
+Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-01`, `GOSTYLE-02`, `GOSTYLE-15`,
+Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle`.
+
+#### Sprint 28 — Risikoarme Services: Rule 2.2 + 2.3 (9 Tasks) — ✅ fertig
+
+Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-03` bis `GOSTYLE-11`,
+Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle28`.
+
+#### Sprint 29 — `control-server` (hohes Risiko) + Abschlussverifikation — ✅ fertig
+
+Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-12`, `GOSTYLE-13`,
+`GOSTYLE-14`, `GOSTYLE-16`, Details/Ergebnisse dort). Branch
+`feature/fleet-service-foundation-gostyle29`. Damit ist Phase 1 des EPICs (Sprints 27/28/29)
+vollständig abgeschlossen — Phase 2 (Interface-Segregation, Rule 4.2/4.3) folgt koordiniert mit
+ADR-031/HEX-05.
+
+**Neuer Folge-Task (aus GOSTYLE-13 gefunden, nicht Teil des Sprint-29-Scopes):** die drei
+WS-Integrationstests in `tests/integration/services_test.go`
+(`TestIntegration_SessionLifecycle_StartAndEnd`, `_MediaFailed_TriggersDegrade_NeverSafeMode`,
+`_EmergencyStop_TriggersSafeMode`) skippen im Docker-Test-Stack, weil ihre WS-Dial-URL nur
+`?token=` statt `?token=&session_id=` mitgibt — ein vorbestehender Test-Setup-Gap (nicht
+WebRTC/SFU-bedingt wie die anderen 3 bekannten Skips), der `WSHandler.readLoop` komplett ohne
+automatisierte Abdeckung lässt. Typ S, unabhängig von GOSTYLE-* erledigbar.
+
+**Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden, unabhängig einreihbar):**
+`gofmt -l` findet 13 unformatierte Dateien — trivialer `gofmt -w .`-Task (Typ S, keine
+Logikänderung), unabhängig von GOSTYLE-* erledigbar.
+
+### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031
+
+**Start erst nach `HEX-05`** (Hexagonal-Pilot fleet-service abgeschlossen) **und** nach
+AP2/AP3-Meilensteinen, analog zum ADR-031-Timing. Koordiniert mit dem Hexagonal-Epic oben —
+dieselben Interfaces, unterschiedlicher Fokus (dort: Repository-Port für `fleet-service`; hier:
+Methodenzahl/Konsumenten-Zuschnitt projektweit).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| GOSTYLE-IF-01 | `recording.SessionRecorder` (6 Methoden, aktuell nirgends als Interface-Typ konsumiert): klären, ob Interface tatsächlich verwendet werden soll (`*MemoryRecorder` → `SessionRecorder` in `cmd/control-server/main.go:102`) oder aufgelöst wird, solange nur eine Implementierung existiert (Rule 1.2 — Abstraktion ohne Konsument ist unbegründet) | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-02 | `fleetgateway.FleetGateway` (3 Methoden, ungenutzt als Typ): gleiche Frage wie IF-01. `fleetservice.Dispatcher` (1 Methode) ist bereits der korrekte konsumentenseitige Schnitt und bleibt unverändert | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-05 | `vehicleregistry.VehicleStore` (5 Methoden): `SeedDefault` (Bootstrap) aus Interface lösen, analog IF-04 | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-06 | `controlserver/safety.Publisher` (2 Methoden) in `PublishEvent`-only Interface für `Engine`/Watchdogs aufteilen; `TriggerEmergencyStop` bleibt eigener Zugriffspfad, analog zum bereits vorbildlichen `vehicleconnection.safetyPublisher`-Muster | S | 🔲 Backlog | HEX-05 |
+
+**Nebenbefund, nicht Teil dieses Style-Guide-Scopes (Sicherheitsauffälligkeit):** beim
+Duplikat-Scan (Rule 3.1) fiel auf, dass der JWT-Alg-Confusion-Check in 2 von 4 JWT-Parse-Stellen
+(`authservice`, `fleetservice`, `vehicleconnection`, `control-server`) fehlt. Kein Style-Guide-
+Thema — separat über `/security-review` oder einen eigenen Sicherheits-Task nachverfolgen.
 
 ---
 

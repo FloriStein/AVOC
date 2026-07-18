@@ -2,6 +2,7 @@ import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { useFleetOverview } from './useFleetOverview'
 import * as apiClient from '@/lib/api-client'
+import type { Task } from '@/lib/api-client'
 
 vi.mock('@/lib/api-client', () => ({
   listFleetVehicles: vi.fn(),
@@ -43,6 +44,7 @@ const A1 = { id: 'a1', vehicle_id: 'v1', severity: 'warning' as const, message: 
 const T1 = {
   id: 't1', vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b',
   status: 'pending' as const, priority: 1, created_at: 't1',
+  allowed_transitions: ['in_progress', 'cancelled'] as Task['status'][],
 }
 
 describe('useFleetOverview', () => {

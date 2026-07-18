@@ -1,3 +1,745 @@
+# Sprint 31 — AP2-Vervollständigung + Fleet-/Observability-Nacharbeiten
+
+Ziel: Fünf offene, bislang keinem Sprint zugeordnete Backlog-Tasks. Aus "AP2 — Web-Dashboard"
+(Meilenstein 2, IBATOUR): `AP2-04` (Prioritätenmanagement in der Task-UI über reine
+Zahlenanzeige hinaus — Sortierung, visuelle Hervorhebung). Aus "Fleet Dashboard Planung"
+(TASKUI-Nachträge, Sprint 24, in Sprint 30 zurückgestellt): `TASKUI-03` (vollständige
+Task-Status-Audit-Historie). Aus "Fleet Dashboard Planung" (Sprint-21-Nachträge): `FLEET-03`
+(Klärung `control-server`-Vehicle-Endpoints vs. `fleet-service`-Admin-API — reine Dokuaufgabe,
+kein Code), `FLEET-04` (`vehicle-mock` nutzt echte Zonen/Stationen statt hartcodierter
+Demo-Koordinaten). Aus "Security & Observability" (Sprint 14): `OBS-01` (Vehicle
+"zuletzt gesehen"-Heartbeat-Timestamp in AckBadge, Bonus).
+
+**TASKUI-03 Typ-L-Klärung 2026-07-18:** `ADR-030` merkt eine echte `task_status_history`-Tabelle
+explizit als "separates Folge-ADR" vor — nach CLAUDE.MD Abschnitt 1.1 damit Typ L (neue
+Datenstruktur), zwingend Grill-Me-Session + ADR vor Umsetzung. Nutzer hat sich für sofortige
+Grill-Me-Session in diesem Sprint entschieden (statt Zurückstellen). Ergebnis:
+[ADR-032](../docs/adr/032-task-status-history.md) — additive neue Tabelle, `ADR-030` bleibt
+unverändert gültig, Backfill bestehender Tasks beim Rollout (mit dokumentierten Näherungen für
+`changed_at`/`from_status` bei nicht mehr exakt rekonstruierbaren Alt-Übergängen), neuer Endpoint
+`GET /fleet/tasks/{id}/history`.
+
+**FLEET-03 Klärung:** `ADR-029` beantwortet die Frage (Koexistenz, kein Bruch im aktuellen
+Schritt, langfristig vermutlich Ablösung durch `fleet-service`-Admin-API) bereits vollständig —
+reine Bestätigungsaufgabe ohne Code-Änderung, siehe Ergebnisse-Abschnitt.
+
+**Keine Signaturänderung nach außen ohne Zweck, kein ungewollter Verhaltenswechsel** (CLAUDE.MD
+Abschnitt 15) — Ausnahme sind `TASKUI-03` (neue Historie ist der Taskzweck) und `AP2-04` (neues
+Sortier-/Hervorhebungsverhalten ist der Taskzweck); dort gegen die im Task beschriebene
+Zielsemantik getestet, nicht auf Unverändertheit. Bei den Go-Tasks (`TASKUI-03`, `FLEET-04`,
+`OBS-01`-Backend-Anteil) gilt zusätzlich `docs/go-style-guide.md` (Funktionslänge, Parameterzahl)
+für neuen/geänderten Code.
+
+Datum: 2026-07-18 | **Status: Alle Tasks ✅**
+Vorgänger: Sprint 30 ✅ (dieser Branch zweigt von `feature/fleet-service-foundation-cleanup30` ab,
+NICHT von `feature/fleet-service-foundation` direkt, da `TASKUI-03`/`AP2-04`
+`internal/fleetservice/store.go` bzw. `frontend/src/components/FleetTaskPanel.tsx` anfassen, die
+Sprint 30 bereits verändert hat — Nil-Slice-Fix, serverseitig berechnetes
+`allowed_transitions`-Feld statt `NEXT_TRANSITIONS`)
+Branch: `feature/fleet-service-foundation-backlog31`
+
+---
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| FLEET-03 | Klärung `control-server`-Vehicle-Endpoints vs. `fleet-service`-Admin-API | S | ✅ |
+| FLEET-04 | `vehicle-mock` nutzt echte Zonen/Stationen statt hartcodierter Demo-Koordinaten | S | ✅ |
+| OBS-01 | Vehicle "zuletzt gesehen"-Heartbeat-Timestamp in AckBadge | S | ✅ |
+| AP2-04 | Prioritätenmanagement in der Task-UI ausbauen | M | ✅ |
+| TASKUI-03 | Vollständige Task-Status-Audit-Historie (ADR-032) | M | ✅ |
+
+## Ergebnisse
+
+**FLEET-03 — Klärung `control-server`-Vehicle-Endpoints vs. `fleet-service`-Admin-API ✅**
+Reine Bestätigungsaufgabe, kein Code geändert. Verifiziert: `POST /vehicles` und
+`DELETE /vehicles/{id}` existieren unverändert in `cmd/control-server/main.go:297-298`
+(`handleVehiclesCreate`/`handleVehicleDelete`). `ADR-029` (Abschnitt "Schreibzuständigkeit") hat
+die Frage bereits abschließend beantwortet: Koexistenz ist die aktuelle, bewusste Entscheidung
+("kein Bruch in diesem Schritt, nur vorgemerkt") — `control-server` bleibt für
+`vehicles.id`/`vehicles.display_name` (Auto-Register) zuständig, `fleet-service` für
+`vehicle_type`/`description` sowie alle Fleet-Tabellen. Eine Ablösung der `control-server`-
+Endpoints ist als spätere, nicht terminierte Möglichkeit dokumentiert, keine offene Frage in
+diesem Sprint. Kein Folge-ADR nötig, da `ADR-029` diesen Fall bereits abdeckt.
+
+**FLEET-04 — `vehicle-mock` nutzt echte Zonen/Stationen ✅**
+Neue `cmd/vehicle-mock/fleet_stations.go`: `resolveSimulationStations()` ruft
+`GET /fleet/stations` gegen `fleet-service` auf (Auth per selbst signiertem JWT, gleiches
+Shared Secret wie die Telemetrie-Seite, ADR-004 — `RequireAuth` prüft nur die Signatur, keine
+Rolle) und nutzt die ersten 2 Stationen mit gesetztem `position_lat/lon`. Fällt automatisch auf
+die bisherigen hartcodierten Koordinaten (`fallbackDemoStations`, umbenannt aus `demoStations`)
+zurück bei Netzwerkfehler, Non-200, kaputtem JSON oder weniger als 2 geo-verorteten Stationen —
+`vehicle-mock` bleibt damit auch ohne laufenden `fleet-service` oder vor
+`scripts/seed-fleet-demo.sh` funktionsfähig (Verhalten unverändert in diesem Fall). `docker-
+compose.yml`: neue Env `FLEET_SERVICE_URL` (Default im Code: `http://fleet-service:8085`) +
+`depends_on: fleet-service` für den `vehicle-mock`-Service; `tests/docker-compose.test.yml`
+bewusst unverändert gelassen (fehlender `fleet-service` dort löst den bereits vorgesehenen
+Fallback-Pfad aus, kein Test-Stack-Ausbau nötig). `fleet_simulator.go`: `fleetVehicleSimulator`
+bekommt ein `stations []fleetStation`-Feld statt des globalen `demoStations`-Zugriffs (reines
+Pure-Logic-Verhalten von `tick()` unverändert, nur die Datenquelle ist jetzt injiziert).
+`go build`/`go vet`/`go test ./cmd/vehicle-mock/...` grün (15 Tests: 9 bestehende
+Simulator-Tests nach Umbenennung unverändert grün, 6 neue Tests für
+`resolveSimulationStations` — Erfolgsfall, Verbindungsfehler, <2 geo-verortete Stationen, leere
+Liste (JSON `null`, ADR-029-Muster), Non-200, kaputtes JSON). Nicht gegen den echten Docker-Stack
+verifiziert (keine Schema-/DB-Änderung, reiner HTTP-Client-Code — durch die httptest-Server-Tests
+bereits realistisch abgedeckt).
+
+**OBS-01 — Vehicle "zuletzt gesehen"-Heartbeat-Timestamp in AckBadge ✅**
+Gefundener eigentlicher Kern des Bonus-Tasks: die bestehende `AckBadge`-Zeile "ACK vor Xs"
+(`ack.ageSinceAckMs`, `useVehicleAck.ts`) beruht ausschließlich auf `VehicleCommandAck` — die
+`AckStore` (`internal/vehicleconnection/ackstore.go`) aktualisiert sich nur, wenn der Operator
+aktiv Kommandos sendet. Bei einem länger untätigen, aber weiterhin verbundenen Fahrzeug wird "ACK
+vor Xs" fälschlich alt, obwohl das Fahrzeug durchgehend Telemetrie sendet (`telemetry-service`
+liefert bereits `event.Header.GetTimestamp()` über `GET /telemetry/latest/{id}`, wurde vom
+Frontend bisher aber verworfen). Fix: `useTelemetry.ts` übernimmt jetzt `timestamp` als
+`timestampMs` + berechnet `ageSinceUpdateMs` (gleiches Zeitpunkt-der-Poll-Berechnungsmuster wie
+`useVehicleAck.ts`s `ageSinceAckMs`, keine neue Abstraktion). `InputIndicatorPanel.tsx`:
+`AckBadge` bekommt `telemetry`-Prop, neue Zeile "Zuletzt gesehen vor Xs" unterhalb von "ACK vor
+Xs" (echtes Heartbeat-Signal, unabhängig vom Kommandofluss), gemeinsame `formatAge()`-Hilfsfunktion
+für beide Zeilen extrahiert statt Duplikat. `npx tsc -b --noEmit` sauber (nach `make
+proto-gen-ts`, in diesem frischen Worktree noch nicht generiert gewesen — unabhängig von diesem
+Task, Docker-basierter Codegen-Schritt), `npx vitest run` komplett grün (259/259, keine
+Regression), davon 4 neue Fälle in `InputIndicatorPanel.test.tsx`: Heartbeat sichtbar bei
+vorhandenem Timestamp, nicht sichtbar bei `timestampMs=0`/`ageSinceUpdateMs=null`, nicht sichtbar
+bei `telemetry=null`, korrekte Sekunden-Formatierung (≥1000ms).
+
+**AP2-04 — Prioritätenmanagement in der Task-UI ausgebaut ✅**
+Grill-Me-Rückfrage 2026-07-18 zum Schwellenwert (kein festes Prioritäts-Schema im System, freies
+Integer-Feld ohne Min/Max): fester Wert `priority >= 5` als "hoch" gewählt (statt relativem
+Top-Quartil, das denselben Wert je nach aktuell offenen Tasks mal hervorheben, mal nicht
+hervorheben würde). `FleetTaskPanel.tsx`: neue `sortedTasks` (per `useMemo`, absteigend nach
+`priority`, stabiler Sort erhält bei Gleichstand die vom Backend gelieferte
+`created_at DESC`-Reihenfolge) ersetzt die Iteration über das rohe `tasks`-Prop. Hohe Priorität
+(`>= HIGH_PRIORITY_THRESHOLD`) wird zweifach hervorgehoben: Zeilen-Rahmen/Hintergrund
+(amber statt grau) sowie "Priorität N ⚠ Hoch" fett/amber in der Metazeile. `npx tsc -b --noEmit`
+sauber, `npx vitest run` komplett grün (262/262, keine Regression), davon 3 neue Fälle in
+`FleetTaskPanel.test.tsx`: Sortierreihenfolge unabhängig von der Prop-Reihenfolge, Hervorhebung
+bei `priority=5` (Schwelle selbst), keine Hervorhebung bei `priority=4` (Grenzwert-Test knapp
+unter der Schwelle). Kein Backend-Bruch — `priority` bleibt unverändert ein reines
+Integer-Feld, Sortierung/Hervorhebung sind rein clientseitig.
+
+**TASKUI-03 — Vollständige Task-Status-Audit-Historie ✅ ([ADR-032](../docs/adr/032-task-status-history.md))**
+Typ L bestätigt (neue Tabelle = Datenstruktur-Änderung, `ADR-030` verweist selbst explizit auf ein
+"separates Folge-ADR"), Grill-Me-Session + ADR-032 vor Umsetzung durchgeführt (siehe oben).
+Implementierung in `internal/fleetservice/store.go`:
+- Neue `task_status_history`-Tabelle (`id, task_id, from_status, to_status, changed_by,
+  changed_at`), `task_id REFERENCES tasks(id) ON DELETE CASCADE` — additiv zu `ADR-030`,
+  `tasks.status_changed_by` bleibt unverändert gepflegt.
+- `UpdateTaskStatus` liest den echten vorherigen Status jetzt über eine `WITH previous AS (SELECT
+  status FROM tasks WHERE id=$3) UPDATE ... FROM previous ...`-CTE — bleibt eine einzige atomare
+  Anweisung (kein separates read-then-write, Race-Safety aus ADR-030 unverändert, siehe
+  `TestUpdateTaskStatus_ConcurrentTransitions_ExactlyOneSucceeds`, weiterhin grün) — und schreibt
+  danach über die neue `recordTaskStatusTransition`-Methode eine Historie-Zeile.
+- `backfillTaskStatusHistory` läuft einmalig bei jedem Start (`NewPostgresFleetStore`, `NOT
+  EXISTS`-Guard = idempotent, gleiches Muster wie `taskuiDemoSeedCleanup`): `changed_at` =
+  `completed_at` falls vorhanden, sonst `created_at` (Näherung, dokumentierte Einschränkung);
+  `from_status` nur gesetzt wo eindeutig herleitbar (`in_progress`←`pending`,
+  `completed`←`in_progress`), bei `cancelled` bewusst `NULL` (Herkunft mehrdeutig).
+- Neuer Endpoint `GET /fleet/tasks/{id}/history` (`handler.go`, `cmd/fleet-service/main.go`),
+  404 bei unbekanntem Task, `[]` (nicht `null`) bei noch nie übergegangenem Task.
+- `go build`/`go vet ./...` reposweit sauber.
+- `go test ./internal/fleetservice/... -race` (gegen echten Postgres-Container, zweimal
+  hintereinander gegen frischen Zustand gelaufen, CLAUDE.MD Abschnitt 17
+  Flakiness-Anforderung): 6 neue Fälle — Historie-Eintrag mit korrektem from/to-Status,
+  chronologische Reihenfolge bei mehreren Übergängen, leeres nicht-`null`-Array bei
+  Pending-Task ohne Übergänge, 404 bei unbekanntem Task (Store- und Handler-Ebene), Backfill
+  inkl. Idempotenz bei wiederholtem Start (isoliertes Schema, direkt eingefügte "Legacy"-Zeilen
+  ohne `CreateTask`/`UpdateTaskStatus`). Alle 45 bestehenden Fleet-Service-Tests weiterhin grün
+  (keine Verhaltensänderung an bestehenden Übergängen/Fehlercodes).
+- **Gefundener und behobener Bug während der Verifikation:** die neue FK
+  `task_status_history.task_id → tasks(id)` brach ohne `ON DELETE CASCADE` die
+  Test-Cleanup-Routinen mehrerer bestehender Tests (`DELETE FROM tasks WHERE ...` schlug an der
+  RESTRICT-Constraint fehl, sobald für den Task eine Historie-Zeile existierte) — mit `-race`
+  reproduzierbar, ohne `-race` beim ersten Lauf nicht aufgefallen. `ON DELETE CASCADE` ergänzt
+  (es gibt ohnehin keinen Produktions-Lösch-Endpoint für Tasks); danach zwei aufeinanderfolgende
+  volle `-race`-Läufe grün.
+- **Gegen den echten Docker-Test-Stack verifiziert** (`docker compose -f
+  tests/docker-compose.test.yml up --build -d`, danach `down`): Tabelle korrekt inkl.
+  `ON DELETE CASCADE` angelegt, voller Task-Lifecycle per `curl` durchgespielt (Task anlegen →
+  leere Historie → zwei Übergänge → Historie zeigt beide chronologisch korrekt), 404 für
+  unbekannten Task bestätigt, Backfill-Migration nach Container-Neustart mit direkt eingefügter
+  "Legacy"-Zeile bestätigt (`from_status=in_progress`, `changed_at`≈`completed_at`), zweiter
+  Neustart bestätigt Idempotenz (weiterhin genau 1 Zeile).
+- **Bewusst nicht abgedeckt:** keine Nebenläufigkeits-/Race-Tests speziell für die
+  Historie-Schreibung selbst (die zugrunde liegende `UpdateTaskStatus`-Atomarität ist bereits
+  durch `TestUpdateTaskStatus_ConcurrentTransitions_ExactlyOneSucceeds` abgedeckt; der
+  Historie-INSERT läuft nur nach einem bereits gewonnenen, exklusiven Übergang, hat also keinen
+  eigenen Race-Fall).
+
+---
+
+# Sprint 30 — Restposten-Bereinigung (MV-Folge-Tasks, TASKUI-Nacharbeiten, Doku)
+
+Ziel: Neun bislang unzugeordnete Backlog-Tasks aus drei unterschiedlichen EPICs abarbeiten — kein
+gemeinsames fachliches Thema, daher als reiner Cleanup-Sprint zusammengefasst. Aus "Multi-Vehicle
+State Isolation" (Sprint 17): `MV-09` (Live-State-Badge im Vehicle-Dropdown), `MV-11` (Handover-
+State-Machine pro Fahrzeug isolieren), `MV-12` (`GET /state` entfernen). Aus "Fleet Dashboard
+Planung" (TASKUI-Nachträge, Sprint 24): `TASKUI-01` (doppelte Demo-Stationsanlage), `TASKUI-02`
+(Task-Status-Übergangstabelle Go/TS dedupliziert), `TASKUI-04` (Nil-Slice-→-JSON-`null`-Fix),
+`TASKUI-05` (`COMPOSE_PROJECT_NAME` pro Worktree). Aus "Lokaler Dev-Stack Verifikation"
+(Sprint 19): `DOC-01` (`frontend/README.md`), `DOC-02` (versionierte `control-server`-Binary aus
+Tracking entfernen).
+
+**Sprint-Zuschnitt-Rückfrage 2026-07-18** (CLAUDE.MD Abschnitt 10, max. 10 Tasks): 11 Kandidaten
+im Backlog gefunden. `MV-10` (GC für `VehicleContext`-Instanzen) zurückgestellt — Backlog-Text
+sagt selbst "aktuell nicht relevant (kleine Flotte)". `TASKUI-03` (vollständige Task-Status-
+Audit-Historie, neue Tabelle+Migration) auf Nutzerentscheidung ebenfalls vorab zurückgestellt —
+inhaltlich am wenigsten mit dem Rest verwandt, komfortabler Abstand zum 10er-Limit. Damit 9 Tasks
+in diesem Sprint.
+
+**Keine Signaturänderung nach außen ohne Zweck, kein ungewollter Verhaltenswechsel** (CLAUDE.MD
+Abschnitt 15) — Ausnahme sind `MV-09`/`MV-11`, wo die Verhaltensänderung explizit der Taskzweck
+ist (dort gegen die im Task beschriebene Zielsemantik getestet, nicht auf Unverändertheit). Bei
+den Go-Tasks (`MV-09`, `MV-11`, `MV-12`, `TASKUI-02`, `TASKUI-04`) gilt zusätzlich
+`docs/go-style-guide.md` (Funktionslänge, Parameterzahl) für neuen/geänderten Code.
+
+Datum: 2026-07-18 | **Status: Alle Tasks ✅**
+Vorgänger: Sprint 29 ✅ (dieser Branch zweigt von `feature/fleet-service-foundation-gostyle29` ab,
+NICHT von `feature/fleet-service-foundation` direkt, da `MV-09`/`MV-11`/`MV-12` `cmd/control-
+server/main.go` anfassen, das in Sprint 27/28/29 komplett auf das `controlServer`-Struct+Methoden-
+Muster umgebaut wurde)
+Branch: `feature/fleet-service-foundation-cleanup30`
+
+---
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| TASKUI-01 | Doppelte Demo-Stationsanlage bereinigen | S | ✅ |
+| DOC-01 | `frontend/README.md` aktualisieren | S | ✅ |
+| DOC-02 | Versionierte `control-server`-Binary aus Tracking entfernen | S | ✅ |
+| TASKUI-04 | Nil-Slice-→-JSON-`null`-Fix in `store.go` List*-Methoden | S | ✅ |
+| TASKUI-02 | Task-Status-Übergangstabelle Go/TS dedupliziert | S | ✅ |
+| MV-12 | `GET /state` entfernen, Konsumenten migrieren | S | ✅ |
+| TASKUI-05 | `COMPOSE_PROJECT_NAME` pro Worktree | M | ✅ |
+| MV-09 | Vehicle-Dropdown Live-State-Badge | M | ✅ |
+| MV-11 | Multi-Vehicle Handover — State Machine pro Fahrzeug isolieren | M | ✅ (bereits erledigt vorgefunden, siehe Ergebnisse) |
+
+## Ergebnisse
+
+**TASKUI-01 — Doppelte Demo-Stationsanlage bereinigt ✅**
+`demoStationSeed` (INSERT-basiert, `-taskui`-Platzhalterdaten) in `internal/fleetservice/store.go`
+durch `taskuiDemoSeedCleanup` (DELETE-basiert) ersetzt: die echte Seed-Quelle
+(`scripts/seed-fleet-demo.sh`, MAP-01, Zone `zone-betriebshof-nord`) macht den `-taskui`-
+Platzhalter aus Sprint 24 überflüssig. Läuft wie die bestehenden ALTER-Migrationen bei jedem
+Start; `NOT EXISTS`-Guards verhindern sowohl unnötige Wiederholung als auch einen FK-Fehler,
+falls ein echter Task doch auf eine `-taskui`-Station verweisen sollte (dann No-op statt Crash).
+`go build`/`go test ./internal/fleetservice/...` grün.
+
+**DOC-01 — `frontend/README.md` aktualisiert ✅**
+Proxy-Tabelle um `/vehicle/ws`, `/fleet/`, `/whip/`, `/whep/` ergänzt; `useWebRTC`-Beschreibung
+korrigiert (WHEP-Signaling statt altem `/sfu/subscribe/`-Pfad); Komponenten-/Hooks-/Lib-Liste
+komplett auf den aktuellen Stand gebracht (Fleet-Dashboard-Komponenten, `LoginPanel`,
+`UserManagementPanel`, `StreamSenderPanel`, `useWHIPSender`, `useVehicleAck` u. a. ergänzt);
+neuer Abschnitt "Nutzerverwaltung (Sprint 15)" und "Fleet Dashboard (Sprint 22–25)" im
+Funktionsumfang.
+
+**DOC-02 — Binary aus Tracking entfernt ✅**
+`control-server`-Binary (~12 MB) im Repo-Root per `git rm --cached` aus dem Tracking entfernt
+(lokale Datei bleibt erhalten), `/control-server` zu `.gitignore` hinzugefügt. Nur aktuelles
+Tracking bereinigt — **keine** History-Rewrite (per Vorgabe nicht eigenmächtig ausgeführt).
+
+**TASKUI-04 — Nil-Slice-Fix in fünf weiteren List*-Methoden ✅**
+Gleiches Muster wie das bereits gefixte `ListTasks` (`var x []T` → `x := []T{}`) auf `ListZones`,
+`ListStations`, `ListVehicleStatus`, `ListVehiclesWithStatus`, `ListAlerts` angewendet
+(`internal/fleetservice/store.go`). `go test ./internal/fleetservice/...`: 36/36 Tests grün.
+
+**TASKUI-02 — Task-Status-Übergangstabelle dedupliziert ✅**
+Statt eines Codegen-Schritts (im Backlog nur als "ggf." vorgeschlagen) wird die Übergangsmatrix
+jetzt serverseitig abgeleitet und über die Wire geschickt: `Task.AllowedTransitions
+[]string` (neues Feld, `json:"allowed_transitions"`) wird in `CreateTask`/`ListTasks`/
+`UpdateTaskStatus` über die neue Funktion `allowedTaskTransitions(status)` befüllt — die Inverse
+von `taskTransitionSources`, mit fixer `taskTransitionOrder` für deterministische Button-
+Reihenfolge. `FleetTaskPanel.tsx`s hartcodierte `NEXT_TRANSITIONS`-Map entfällt; die Buttons
+rendern jetzt aus `task.allowed_transitions`, nur noch eine reine Label-Zuordnung
+(`TRANSITION_LABEL`, unabhängig vom Ausgangsstatus) bleibt clientseitig. Damit gibt es nur noch
+eine Quelle für die Zustandsmaschine selbst (Backend); die Frontend-Seite kann nicht mehr
+divergieren. Bestehende Test-Fixtures (`FleetTaskPanel.test.tsx`, `fleet-merge.test.ts`,
+`useFleetOverview.test.ts`) um `allowed_transitions` ergänzt. Go: 36/36 Tests grün. Frontend:
+`tsc -b --noEmit` sauber, 255/255 Vitest-Tests grün.
+
+**MV-12 — `GET /state` entfernt, Konsumenten migriert ✅**
+Route `GET /state` sowie `handleState` aus `cmd/control-server/main.go` entfernt.
+`tests/performance/latency.js` auf `GET /sessions` migriert (keine Fahrzeug-Bindung in `setup()`
+— identischer No-Vehicle-Reachability-Probe-Pfad wie `useSystemState.ts` im Frontend).
+`tests/integration/services_test.go` (5 Aufrufstellen) auf `GET /vehicles/{id}/state` migriert,
+je mit dem im selben Testfall verwendeten `vehicle_id` (bzw. einer dedizierten ID für den
+Initial-State-Test ohne Session). Verifiziert gegen den echten Docker-Test-Stack
+(`docker compose -f tests/docker-compose.test.yml`): 26/29 PASS + 3 vorbestehende WS-Skips
+(session_id-Lücke, siehe Sprint 29 GOSTYLE-13-Notiz — nicht Teil dieses Tasks), `curl .../state`
+bestätigt 404. `sessionMgr.GetCurrentSession()` ist durch die Entfernung von `handleState` jetzt
+ohne Produktions-Aufrufer (nur noch eigene Unit-Tests) — bewusst nicht entfernt, da das eine
+andere Baustelle ist als "GET /state migrieren" (siehe "Bewusst nicht in diesem Sprint" unten).
+
+**TASKUI-05 — `COMPOSE_PROJECT_NAME` pro Worktree ✅**
+`infrastructure/compose/docker-compose.yml`s `name: avoc` bleibt unverändert — `COMPOSE_PROJECT_NAME`
+hat laut `docker compose config`-Test empirisch Vorrang vor dem Datei-`name:`. Fix stattdessen im
+`Makefile`: neue Variable `COMPOSE_PROJECT_NAME ?= $(shell basename $(CURDIR) | tr -d '\n' | tr
+'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')`, `export`iert für alle `docker compose`-Aufrufe in `up`/`down`.
+Verifiziert über `docker compose config` mit zwei verschiedenen worktree-abgeleiteten Projektnamen
+(`controlcenter-aws-cleanup30`, `controlcenter-aws-taskui`): vollständig getrennte Netzwerk-
+(`<project>_avoc-net`) und Container-Namensräume (`<project>-control-server-1` etc.) bestätigt —
+kein voller Parallel-Stack-Build nötig, da das der Mechanismus ist, den Compose selbst zur
+Container-Wiederverwendungs-Entscheidung nutzt. Ein initialer Bug (`basename`s eigener
+Trailing-Newline wurde von `tr -c ... '-'` in einen literalen Bindestrich umgewandelt, bevor
+Makes `$(shell ...)`-Trailing-Newline-Stripping greifen konnte) wurde beim Verifizieren gefunden
+und mit `tr -d '\n'` vor der Zeichen-Sanitisierung behoben.
+
+**MV-09 — Vehicle-Dropdown Live-State-Badge ✅**
+Backend: `handleVehiclesList` (`cmd/control-server/main.go`) liefert jetzt `system_state` pro
+Fahrzeug (`s.vehicleContexts.Get(v.ID).SM.Get()` — derselbe Mechanismus wie
+`handleVehicleState`/`GET /vehicles/{id}/state`, hier auf die ganze Liste angewendet). Frontend:
+`VehicleInfo.system_state` (neues Pflichtfeld) und `VehicleSelector.tsx` zeigt bei `SAFE_MODE`
+🔴 + " — SAFE_MODE" statt 🟢 (einziger badge-würdiger Zustand, analog zur bestehenden
+SAFE_MODE-Sonderbehandlung in `ConnectionPanel`/`SafetyPanel`/`SafeModeOverlay`). Neuer Test
+`VehicleSelector.test.tsx` (3 Fälle: normal, SAFE_MODE, gemischte Liste — badged nur das
+betroffene Fahrzeug). Verifiziert gegen den echten Docker-Test-Stack: `GET /vehicles` liefert das
+neue Feld korrekt (Default `IDLE` für neu registriertes Fahrzeug); der SAFE_MODE-Übergang selbst
+läuft über dieselbe, bereits durch `TestIntegration_MultiVehicle_ScopedEmergencyStop_...`
+abgedeckte `SM.Get()`-Quelle — keine zusätzliche Live-WS-Verifikation nötig, da kein neuer
+State-Übergangspfad entstanden ist, nur eine zusätzliche Lesestelle. Go: `go build`/`go vet ./...`
+sauber. Frontend: `tsc -b --noEmit` sauber, 255/255 Vitest-Tests grün (3 neue).
+
+**MV-11 — bereits erledigt vorgefunden, keine Neuimplementierung ✅**
+Vor der Umsetzung geprüft (`grep -rn "handoverSM"` → keine Treffer, `git log --follow
+internal/controlserver/session/handover.go`): der im Backlog beschriebene Bug (`HandoverManager`
+mit einer einzigen globalen State Machine) wurde bereits am 2026-07-15 in Commit `f68346a`
+("Mehrere Fahrzeuge gleichzeitig durch verschiedene Operatoren steuerbar") behoben —
+`HandoverManager.pending` ist seitdem eine `map[string]*pendingHandover` pro Fahrzeug, aufgelöst
+über dieselbe `vehiclecontext.Registry` wie State Machine/Watchdogs (ADR-026). Ein dedizierter
+Regressionstest existiert bereits: `tests/unit/safety_test.go`s
+`TestSafety_Handover_TwoVehicles_IndependentHandovers` (Kommentar im Test: "is the MV-11
+regression test") prüft exakt die im Backlog beschriebene Garantie — ein Handover auf Fahrzeug 1
+blockiert/leakt nicht in Fahrzeug 2. Alle 4 `TestSafety_Handover_*`-Tests erneut laufen lassen:
+4/4 PASS. Statt redundant erneut zu implementieren (Risiko: bestehenden, bereits korrekten und
+getesteten Code unnötig anzufassen, CLAUDE.MD Abschnitt 15), nur `tasks/backlog.md` auf den
+tatsächlichen Stand nachgezogen (Status 🔲 → ✅, Referenz auf Commit + Test ergänzt) — die
+Backlog-Zeile war schlicht nicht nachgepflegt worden, ein weiterer Fall der bereits mehrfach
+aufgetretenen Doku-Drift zwischen parallelen Sessions (analog ADR-030/031, Sprint-26-Kollision).
+
+**Verifikation (gesamt) ✅**
+`go build ./...`, `go vet ./...` sauber (kein `go build` im Repo-Root ohne Zielpfad, siehe
+Sprint-28-Binary-Vorfall). `go test $(go list ./... | grep -v /tests/integration)`: alle Pakete
+grün. `go test ./tests/integration/...` gegen den echten Docker-Test-Stack
+(`tests/docker-compose.test.yml`): 26/29 PASS + 3 vorbestehende WS-Skips (unverändert seit
+Sprint 29, session_id-Testlücke). Frontend: `npx tsc -b --noEmit` sauber, `npm test -- --run`:
+255/255 Tests grün (26 Dateien). `gofmt`/`golangci-lint` nicht erneut über den gesamten Bestand
+laufen lassen — außerhalb des Scopes dieses reinen Cleanup-Sprints, war bereits Gegenstand von
+Sprint 27–29.
+
+**Bewusst nicht in diesem Sprint:**
+- `session.Manager.GetCurrentSession()` ist seit der `GET /state`-Entfernung (MV-12) ohne
+  Produktions-Aufrufer (nur noch eigene Unit-Tests in `tests/unit/multioperator_test.go`) —
+  bleibt als exportierte, direkt getestete `Manager`-Methode bestehen; ihre Entfernung wäre ein
+  eigener, nicht angefragter Scope (würde auch mehrere bestehende Tests anfassen) und ist als
+  möglicher Folge-Task vorzumerken, nicht Teil von MV-12.
+- `MV-10` (GC für `VehicleContext`-Instanzen) und `TASKUI-03` (volle Task-Status-Audit-Historie)
+  wie in der Sprint-Zuschnitt-Rückfrage entschieden zurückgestellt, bleiben in `tasks/backlog.md`.
+- Kein neuer Codegen-Mechanismus für TASKUI-02 (Backlog nannte das nur als "ggf."-Option) — die
+  serverseitig-berechnete `allowed_transitions`-Lösung erreicht dieselbe Single-Source-of-Truth-
+  Garantie ohne zusätzliche Build-Infrastruktur.
+
+---
+
+# Sprint 29 — `control-server` (hohes Risiko) + Abschlussverifikation
+
+Ziel: Dritter und letzter Sprint (27/28/29) zum Rollout des Go Coding Style Guide
+(`docs/go-style-guide.md`, EPIC "Go Coding Style Guide Rollout" in `tasks/backlog.md`). Sprint 29
+zerlegt `main()` (683 Zeilen) im sicherheitskritischsten Service (`control-server`, laut ADR-031
+"höchstes Risiko, geringste Testabdeckung") sowie zwei weitere >50-Zeilen-Funktionen
+(`WSHandler.readLoop`/`ServeWS`, `Engine.Handle`), und schließt mit einer Abschlussverifikation
+über alle drei Sprints ab.
+
+**Pflicht-Grill-Me vor GOSTYLE-12** (CLAUDE.MD Abschnitt 5, Typ L) am 2026-07-18 durchgeführt, vier
+Fragen, alle empfohlenen Optionen bestätigt:
+- **Extraktionsmuster:** `controlServer`-Struct + Methoden statt eigenständiger Funktionen mit
+  Parametern — konsistent mit bereits bestehenden Mustern im selben Package (`transport.WSHandler`,
+  `command.Engine`, `vehicleconnection.Handler` folgen alle Builder+Methoden), vermeidet
+  Rule-2.3-Konflikte bei den ~15 geteilten Abhängigkeiten.
+- **Granularität:** Alle ~20 Routen einheitlich extrahiert, auch triviale (GET /health,
+  /ice-config, /dev/whip-key) — main() muss von ~680 auf <50 Zeilen, das geht nur vollständig.
+- **Reihenfolge-Doku:** Konsolidierter Kommentarblock über der Bootstrap-Sequenz in
+  `newControlServer` (zusätzlich zu den bereits vorhandenen Einzelkommentaren) — macht die von
+  ADR-031 als Kernrisiko benannte, bisher nur in Kommentaren dokumentierte Reihenfolge explizit.
+- **Testkadenz:** `make test-integration` nach jedem der vier großen Blöcke (Init/DB/Audit,
+  Core-Components, Route-Handler-Extraktion, Server-Start) statt nur am Sprint-Ende — main.go hat
+  keine direkten Unit-Tests (package `main`, nicht importierbar), einzige Absicherung ist der
+  Docker-Integrationstest.
+
+**Keine Signaturänderung nach außen, kein Verhaltenswechsel** (CLAUDE.MD Abschnitt 15) — jeder Task
+endet mit vollem Testlauf + Diff-Review gegen genau diese Vorgabe. Bei der `main()`-Zerlegung:
+Reihenfolge-Semantik 1:1 erhalten, Helper in derselben Datei (`docs/go-style-guide.md` Rule 2.2 —
+projektspezifische Anmerkung zu `control-server`).
+
+Datum: 2026-07-18 | **Status: Alle Tasks ✅**
+Vorgänger: Sprint 28 ✅ (dieser Branch zweigt von `feature/fleet-service-foundation-gostyle28` ab,
+NICHT von `feature/fleet-service-foundation` direkt, da GOSTYLE-16 alle drei Sprints 27/28/29
+zusammen prüfen muss und `control-server`s `main.go` bereits die in Sprint 28 umgestellten
+Call-Sites — `recording.StateSnapshotParams`/`SafetyEventParams`, `SafetyBusWatchdogOptions`,
+`vehicleconnection.HandlerOptions` — enthält)
+Branch: `feature/fleet-service-foundation-gostyle29`
+
+---
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| GOSTYLE-12 | `control-server`: `main()` (683 Zeilen) zerlegen | L | ✅ |
+| GOSTYLE-13 | `internal/controlserver/transport/websocket.go`: `WSHandler.readLoop`/`ServeWS` zerlegen | M | ✅ |
+| GOSTYLE-14 | `internal/controlserver/command/engine.go`: `Engine.Handle` zerlegen | M | ✅ |
+| GOSTYLE-16 | Abschlussverifikation Phase 1 gesamt (Sprint 27+28+29) | S | ✅ |
+
+## Ergebnisse
+
+**GOSTYLE-12 — `control-server`: `main()` zerlegt ✅**
+`main()` (683 Zeilen) auf 17 Zeilen reduziert. Struct+Methoden-Muster wie im Grill-Me festgelegt:
+- `serverConfig`-Struct + `loadConfig()` bündelt alle Umgebungsvariablen (Rule 2.4 — zu viele
+  Einzelwerte für Direct-Return). Reihenfolge der beiden `env.Require`-Aufrufe (`JWT_SECRET` vor
+  `DATABASE_URL`) 1:1 erhalten — bestimmt, welche fehlende Pflichtvariable zuerst gemeldet wird.
+- `newAuditWriter(db)` und `newVehicleStore(db, conn)` kapseln die beiden Postgres-mit-Fallback-
+  Blöcke (Audit Writer, Vehicle Registry) inkl. aller Log-Zeilen unverändert.
+- `controlServer`-Struct bündelt alle ~15 geteilten Abhängigkeiten (Rule 2.3 — vermeidet
+  Parameterlimit-Konflikte bei ~20 Route-Handlern); `newControlServer()` verdrahtet sie in exakt
+  der bisherigen Reihenfolge (dokumentiert jetzt zusätzlich in einem konsolidierten GoDoc-
+  Kommentarblock über der Funktion — die im Grill-Me beschlossene Reihenfolge-Doku-Maßnahme).
+  `startSafetyBusWatchdog()` und `(*controlServer).buildHandlers()` als weitere Unter-Helper
+  ausgelagert, da `newControlServer()` sonst selbst >50 Zeilen geblieben wäre (53→~40).
+- Alle ~20 Routen einheitlich zu `(*controlServer)`-Methoden extrahiert (auch triviale wie
+  `handleHealth`, `handleICEConfig`), `(*controlServer) newMux()` registriert sie nur noch.
+  `handleSessionStart` (58 Zeilen) zusätzlich in `advanceVehicleToActiveOperator` aufgeteilt.
+- `requireJWT` bewusst unverändert als eigenständige Funktion belassen (kein struct-Zugriff nötig,
+  Rule 1.1 — keine Abstraktion ohne Grund).
+- Alle 12 Handler-Methoden + 5 Konstruktor-/Helper-Funktionen unter 50 Zeilen
+  (`golangci-lint run` — `funlen`/`argument-limit` — 0 Findings für `cmd/control-server/`).
+
+**GOSTYLE-13 — `websocket.go`: `ServeWS`/`readLoop` zerlegt ✅**
+`ServeWS` (61→~24 Zeilen): `authenticateWS()` (JWT+Session-Auflösung, schreibt bei Fehler die
+HTTP-Response selbst und gibt `ok=false` zurück) und `recoverFromSafeMode()` (SAFE_MODE-Reconnect-
+Pfad) extrahiert. `readLoop` (104→~18 Zeilen): `handleWSDisconnect()` (deferred Disconnect-Logik,
+inkl. `auditWSDisconnect()`-Unter-Helper für den Audit-Write) und `processWSMessage()` (Message-
+Loop-Body) extrahiert. Neuer `wsConn`-Struct bündelt `conn`/`vc`/`claims`/`sess`/`isObserver`
+(Rule 2.3 — sonst 5 Parameter für `processWSMessage`/`handleWSDisconnect`). Die
+Continue-vs-Return-Verzweigung in `handleWSDisconnect` (aktiv/inaktive Session,
+SAFE_MODE-Transition ja/nein) wurde als Guard-Clause-Kette umgeschrieben, aber auf exakt dieselbe
+Fallunterscheidung geprüft (leerer sessionStillActive=false-Zweig verhält sich identisch zum
+Original-`else`).
+
+*Testlücke transparent gemacht (CLAUDE.MD Abschnitt 17):* `internal/controlserver/transport` hat
+keine eigenen Unit-Tests, und alle drei Integrationstests, die `/ws` anfahren
+(`TestIntegration_SessionLifecycle_StartAndEnd`, `_MediaFailed_...`, `_EmergencyStop_...`), skippen
+im minimalen Test-Stack — **nicht** wegen fehlendem WebRTC/SFU (wie bei den bereits bekannten
+3 SFU-bedingten Skips), sondern weil ihre eigene Dial-URL nur `?token=` statt `?token=&session_id=`
+mitgibt und dadurch am `session_id`-Required-Check scheitert (vorbestehender Test-Setup-Gap, im
+Testcode selbst kommentiert: "skip full WS in integration test"). Damit hatte `readLoop` vor UND
+nach diesem Sprint keinerlei automatisierte Abdeckung. Da dies die riskanteste Datei im Scope ist,
+zusätzlich manuell end-to-end gegen den echten Docker-Test-Stack verifiziert (Scratch-Skript, nicht
+Teil des Repos): Login → `POST /session/start` → WS-Dial **mit** `session_id` → Nachricht senden →
+Ack empfangen (116 Bytes, korrekt geparst) → Verbindung schließen → `GET /vehicles/{id}/state`
+bestätigt `SAFE_MODE` (beweist `handleWSDisconnect`s SAFE_MODE-Transition inkl. Audit-Write-Pfad
+funktioniert unverändert). Diese Testlücke selbst zu schließen (dauerhafter Testfix in
+`services_test.go`) ist außerhalb des Scopes von GOSTYLE-13 (reine Strukturaufgabe) — als
+Folge-Task für `tasks/backlog.md` vorgemerkt.
+
+**GOSTYLE-14 — `engine.go`: `Engine.Handle` zerlegt ✅**
+`Handle` (82→~42 Zeilen): `handleEmergencyStop(vc, sess)` (Audit-Write-vor-Transition + SAFE_MODE-
+Transition + Safety-Event-Publish, 2 Parameter) und `forwardMovementCommand(vc, sess, cmd, rawMsg)`
+(4 Parameter) extrahiert. Bei `forwardMovementCommand` wurde die ursprüngliche
+`if forwarder != nil && VehicleID != "" { if err != nil {log} else {watchdog} }`-Verschachtelung
+als Guard-Clause-Kette umgeschrieben (De-Morgan-äquivalent: früher Return, wenn Forwarder fehlt
+oder VehicleID leer ist) — exakt dieselbe Bedingung, nur ohne Verschachtelung.
+
+**Verifikation (alle vier Tasks zusammen) ✅**
+`go build ./...`, `go vet ./...` sauber. `gofmt -l .` findet 12 unformatierte Dateien — Vergleich
+gegen den exakten Branch-Ausgangspunkt (`e21f6d6`, per temporärem `git worktree add --detach`
+geprüft) bestätigt: alle 12 sind Teilmenge der dortigen 13 vorbestehenden Dateien, keine neue
+hinzugekommen. Die 13. (`cmd/control-server/main.go`) ist als Nebeneffekt der vollständigen
+Neufassung jetzt zufällig `gofmt`-clean — keine gezielte Formatierungsänderung, nur eine
+Beobachtung. `golangci-lint run --issues-exit-code=0 ./...`: 0 Findings mehr für `control-server`
+oder einen der drei bearbeiteten Pfade — alle verbleibenden `funlen`/`argument-limit`-Findings
+betreffen ausschließlich Testdateien (`internal/fleetservice/*_test.go`,
+`tests/integration/fleet_*_test.go`, `tests/performance/latency_test.go`), die in keinem der drei
+Sprints (27/28/29) im Scope waren. Damit ist die Rule-2.2/2.3-Bereinigung für den gesamten
+Produktionscode (`cmd/`, `internal/`, `pkg/`) abgeschlossen.
+
+`go test ./...`: alle Unit-Test-Pakete grün; `tests/integration/...` schlägt ohne laufenden
+Docker-Stack erwartungsgemäß mit "connection refused" fehl. Sicherheitsrelevante/nebenläufige
+Tests (`Watchdog`/`Safety`/`StateMachine`/`Deadman`/`ACK`-Suiten, 34 Tests) zusätzlich zweimal
+hintereinander mit `-race` gelaufen (CLAUDE.MD Abschnitt 17) — beide Male grün, keine Data Races.
+
+Vollständiger `make test-integration`-Lauf gegen den echten Docker-Test-Stack: zweimal ausgeführt
+(einmal nach GOSTYLE-12 allein, einmal final nach allen vier Tasks zusammen) — beide Male identisch
+26/29 PASS + 3 vorbestehende WebSocket-Skips (identisch zu Sprint 27/28, minimaler Test-Stack hat
+kein echtes WebRTC/SFU — siehe oben zur GOSTYLE-13-spezifischen Testlücke für die genaue Ursache
+dieser 3 Skips). `telemetry-service` und `webrtc-sfu` sind weiterhin nicht Teil dieses Test-Stacks
+(unverändert seit Sprint 27/28) — für `control-server` (alle drei geänderten Dateien) wurde
+zusätzlich der manuelle WS-Smoketest aus GOSTYLE-13 durchgeführt.
+
+**Diff-Review gegen "nur Struktur, kein Verhaltenswechsel" (CLAUDE.MD Abschnitt 15):**
+Zusätzlich zur manuellen Zeile-für-Zeile-Prüfung während der Zerlegung ein automatisierter
+Abgleich aller entfernten/hinzugefügten Zeilen in `main.go`: jeder `http.Error(...)`- und
+`w.WriteHeader(...)`-Aufruf kommt nach der Zerlegung in identischer Anzahl und identischem Wortlaut
+vor (kein Statuscode/keine Fehlermeldung verloren oder verändert). Bootstrap-Reihenfolge (DB → Audit
+→ Core-Components → Handlers → Mux → Server-Start) 1:1 erhalten, wie im konsolidierten GoDoc-Block
+auf `newControlServer` dokumentiert.
+
+**Bewusst nicht in diesem Sprint:** dauerhafter Fix der `session_id`-Lücke in den drei
+WS-Integrationstests (siehe GOSTYLE-13 — als Folge-Task vorgemerkt), Interface-Segregation nach
+Rule 4.2/4.3 (Phase 2, wartet auf ADR-031/HEX-05), `gofmt -w .` für die verbleibenden 12
+vorbestehenden Dateien (separater Bonus-Task außerhalb des Style-Guide-Scopes).
+
+**Damit ist Phase 1 des EPICs "Go Coding Style Guide Rollout" (Sprints 27/28/29, Rules 1–3 +
+Duplikat-Extraktion + non-blocking Linter-Gate) vollständig abgeschlossen.** Phase 2
+(Interface-Segregation, Rule 4.2/4.3) folgt koordiniert mit ADR-031/HEX-05.
+
+---
+
+# Sprint 28 — Risikoarme Services: Rule 2.2 + 2.3
+
+Ziel: Zweiter von drei Sprints (27/28/29) zum Rollout des Go Coding Style Guide
+(`docs/go-style-guide.md`, EPIC "Go Coding Style Guide Rollout" in `tasks/backlog.md`). Sprint 28
+zerlegt alle verbleibenden `main()`-Funktionen >50 Zeilen (Rule 2.2) und Funktionen/Methoden >4
+Parameter (Rule 2.3) außerhalb von `control-server` — bewusst getrennt vom sicherheitskritischen
+Kern (eigener Sprint 29 mit Pflicht-Grill-Me, siehe `tasks/backlog.md`), damit dieser Sprint ohne
+Extra-Grill-Me und mit Standard-Sorgfalt (Typ S/M, Normal-Track) durchlaufen kann. Baut auf den in
+Sprint 27 eingeführten Helpern `pkg/db.OpenAndWait`/`pkg/env.Require` auf (`auth-`/`fleet-service`
+nutzen diese bereits in `main()`).
+
+**Keine Signaturänderung nach außen, kein Verhaltenswechsel** (CLAUDE.MD Abschnitt 15) — jeder
+Task endet mit vollem Testlauf des betroffenen Service/Pakets + Diff-Review gegen genau diese
+Vorgabe. Bei jeder `main()`-Zerlegung: Reihenfolge-Semantik 1:1 erhalten, Helper in derselben Datei
+(`docs/go-style-guide.md` Rule 2.2). Explizit nicht Teil dieses Sprints: `control-server` (Sprint
+29, höchstes Risiko, eigene Grill-Me-Pflicht), Interface-Änderungen (Phase 2, wartet auf
+ADR-031/HEX-05).
+
+Datum: 2026-07-17 | **Status: Alle Tasks ✅**
+Vorgänger: Sprint 27 ✅ (dieser Branch zweigt von `feature/fleet-service-foundation-gostyle`
+ab, NICHT von `feature/fleet-service-foundation` direkt, da GOSTYLE-03/GOSTYLE-06 auf
+`pkg/db.OpenAndWait`/`pkg/env.Require` aufbauen)
+Branch: `feature/fleet-service-foundation-gostyle28`
+
+---
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| GOSTYLE-03 | `auth-service`: `main()` (67 Zeilen) auf <50 Zeilen zerlegen | S | ✅ |
+| GOSTYLE-04 | `safety-service`: `main()` (57 Zeilen) zerlegen | S | ✅ |
+| GOSTYLE-05 | `telemetry-service`: `main()` (57 Zeilen) zerlegen | S | ✅ |
+| GOSTYLE-06 | `fleet-service`: `main()` (129 Zeilen) zerlegen | M | ✅ |
+| GOSTYLE-07 | `webrtc-sfu`: `main()` (76 Zeilen) zerlegen + `internal/webrtcsfu/sfu.go` `SFU.SubscribeOperator` (74)/`CreateVehicleOffer` (56) prüfen/zerlegen | M | ✅ |
+| GOSTYLE-08 | `vehicle-mock`: `runConnection` (73 Zeilen, 5 Parameter) zerlegen + Parameter in Struct bündeln (Rule 2.2 + 2.3) | S | ✅ |
+| GOSTYLE-09 | `internal/recording/memory_recorder.go`: 3 `Record*`-Methoden mit je 6 Parametern auf Parameter-Struct umstellen (Rule 2.3) | S | ✅ |
+| GOSTYLE-10 | `internal/controlserver/safety/bus_watchdog.go`: `NewSafetyBusWatchdog` (6 Parameter) auf Options-Struct umstellen | S | ✅ |
+| GOSTYLE-11 | `internal/vehicleconnection/handler.go`: `NewHandler` (5 Parameter) prüfen/ggf. bündeln | S | ✅ |
+
+## Ergebnisse
+
+**GOSTYLE-03 — `auth-service` ✅ (kein Codeeingriff nötig)**
+`main()` liegt nach den in Sprint 27 eingeführten Helpern (`pkgdb.OpenAndWait`, `env.Require`/
+`env.OptionalOr`) bereits bei 42 Zeilen (`golangci-lint`/`funlen` bestätigt: keine Findung mehr für
+diese Datei) — die ursprünglich in der Bestandsaufnahme gezählten 67 Zeilen waren die Vor-Sprint-27-
+Größe. Rule 1.2 ("Justify Every Abstraction") verbietet eine Zerlegung ohne Größenproblem, daher
+keine weitere Änderung; nur verifiziert (Build/Lint/Test).
+
+**GOSTYLE-04 — `safety-service` ✅**
+`main()` (55 Zeilen) in `newSafetyMux(bus) *http.ServeMux` (Routenregistrierung, Reihenfolge 1:1)
+und `logSafetyEvent` (vormals inline Subscribe-Closure) zerlegt. `main()` jetzt ~15 Zeilen.
+
+**GOSTYLE-05 — `telemetry-service` ✅**
+Analog zu GOSTYLE-04: `main()` (55 Zeilen) in `newTelemetryMux(client) *http.ServeMux` extrahiert.
+
+**GOSTYLE-06 — `fleet-service` ✅**
+`main()` (92 Zeilen nach Sprint-27-Helpern, vorher 129) in drei Helper zerlegt: `newFleetMux
+(handler)` (Routenregistrierung), `subscribeVehicleStatus(gw, store, hub, alertEngine)` und
+`subscribeVehicleAlerts(gw, store, hub)` (die beiden MQTT-Gateway-Callback-Registrierungen, FLEET-
+06/07). `connectGatewayWithRetry` blieb unverändert (war bereits ein separater Helper).
+Reihenfolge der Registrierungen/Aufrufe 1:1 erhalten.
+
+**GOSTYLE-07 — `webrtc-sfu` ✅**
+`main()` (73 Zeilen) in vier Route-Handler-Funktionen zerlegt (`handleSessionEvent`,
+`handleVehicleOffer`, `handleOperatorSubscribe`, `handleHealth`) plus `newSFUMux(sfu)` für die
+Registrierung — analog zum Safety-/Telemetry-Muster, aber mit einer Zwischenstufe (erste Version
+von `newSFUMux` lag mit reinen Closures noch bei 64 Zeilen, daher zusätzlich in benannte Funktionen
+aufgeteilt). `internal/webrtcsfu/sfu.go`: `CreateVehicleOffer` (54→~27 Zeilen) und
+`SubscribeOperator` (72→~30 Zeilen) teilen sich jetzt `s.newPeerConnection()` (ICE-Konfiguration)
+und `negotiateAnswer(pc, sdpOffer)` (Offer/Answer-Austausch inkl. ICE-Gathering) — beide Methoden
+hatten exakt denselben Verhandlungsblock dupliziert. Zusätzlich `registerOperatorSubscription`
+extrahiert; dabei bewusst die bestehende (leicht überraschende) Semantik erhalten, dass die Peer-
+Connection eines Operators **immer** ersetzt wird, auch im "already subscribed"-Fall — nur der
+Eintrag in der Routing-Liste wird in diesem Fall übersprungen (Diff-Review gegen CLAUDE.MD
+Abschnitt 15 hat das explizit verglichen, um keine Verhaltensänderung einzuschleusen).
+
+**GOSTYLE-08 — `vehicle-mock` ✅**
+`runConnection` (73 Zeilen, 5 Parameter) auf `connectionParams`-Struct umgestellt (Rule 2.3) und in
+`startTelemetryLoop(mqttClient, vehicleID, st)`, `receiveCommands(conn, vehicleID, st)` und
+`sendCommandAck(conn, vehicleID, cmd, st)` zerlegt (Rule 2.2). Bei `sendCommandAck` wurde die
+ursprüngliche Continue-vs-Return-Unterscheidung bewusst erhalten: ein Marshal-Fehler wird geloggt
+und wie zuvor übersprungen (Helper gibt `nil` zurück, Aufrufer läuft weiter), ein Write-Fehler
+bricht die Verbindung wie zuvor fatal ab. `envOr` bewusst unangetastet gelassen — GOSTYLE-08s
+Aufgabenbeschreibung umfasst nur die `runConnection`-Zerlegung/Parameter-Struct, keine
+`pkg/env`-Migration; das wäre eine Scope-Erweiterung über den in `tasks/backlog.md` definierten
+Task hinaus gewesen.
+
+**GOSTYLE-09 — `internal/recording/memory_recorder.go` ✅**
+Drei neue Parameter-Structs (`ControlEventParams`, `StateSnapshotParams`, `SafetyEventParams`) in
+`recorder.go` neben dem `SessionRecorder`-Interface ergänzt (das Interface musste mitgeändert
+werden, da es dieselben drei Methoden mit denselben 6-Parameter-Signaturen deklariert). Zwei
+Call-Sites in `cmd/control-server/main.go` (`RecordStateSnapshot`, `RecordSafetyEvent`) mechanisch
+auf die neuen Structs umgestellt — reine Signaturanpassung, keine `control-server`-main()-
+Zerlegung (die bleibt Sprint 29). `RecordControlEvent` hat aktuell keinen Call-Site (bereits vor
+diesem Sprint so, siehe Bestandsaufnahme "Dead Ports" in `tasks/backlog.md" — außerhalb des
+Scopes, das ist Phase-2/GOSTYLE-IF-01-Thema).
+
+**GOSTYLE-10 — `internal/controlserver/safety/bus_watchdog.go` ✅**
+Neue `SafetyBusWatchdogOptions`-Struct (6 Felder) ersetzt die 6 Positionsparameter von
+`NewSafetyBusWatchdog`. Beide Call-Sites angepasst: `cmd/control-server/main.go` (mechanische
+Anpassung, keine main()-Zerlegung) und `tests/unit/watchdog_test.go`.
+
+**GOSTYLE-11 — `internal/vehicleconnection/handler.go` ✅**
+Geprüft: `NewHandler` (5 Parameter: `jwtSecret`, `vehicleContexts`, `publisher`, `registry`,
+`ackStore`) überschreitet Rule 2.3 um 1 Parameter — analog zu GOSTYLE-10 auf `HandlerOptions`-
+Struct umgestellt. Einziger externer Call-Site (`cmd/control-server/main.go`, mechanisch
+angepasst, Builder-Chain `.WithVehicleAdder(...)` bleibt unverändert erhalten).
+
+**Verifikation (alle neun Tasks zusammen) ✅**
+`go build ./...`, `go vet ./...` sauber. `gofmt -l .` findet weiterhin genau dieselben 13
+vorbestehenden unformatierten Dateien wie vor diesem Sprint (per `git stash`/`gofmt -l`-Vergleich
+gegen den Branch-Ausgangspunkt bestätigt, exakt identische Liste — keine neuen Abweichungen durch
+diese Änderungen). `golangci-lint run --issues-exit-code=0` zeigt für alle neun bearbeiteten
+Dateien keine `funlen`/`argument-limit`-Findings mehr; verbleibende Findings betreffen ausschließlich
+`control-server` (Sprint 29) und Testdateien (nicht Teil des Sprint-28-Scopes). `go test ./...`:
+alle Unit-Test-Pakete grün; `tests/integration/...` schlägt ohne laufenden Docker-Stack erwartungs-
+gemäß mit "connection refused" fehl (kein Code-Problem). Sicherheitsrelevante Watchdog-Tests
+zusätzlich zweimal hintereinander mit `-race` gelaufen (CLAUDE.MD Abschnitt 17) — beide Male grün,
+keine Data Races.
+
+Vollständiger `make test-integration`-Lauf gegen den echten Docker-Test-Stack
+(`tests/docker-compose.test.yml`, enthält `control-server`, `auth-`, `safety-`, `fleet-service`,
+`vehicle-mock`, `mosquitto`, `postgres`): alle 29 Integrationstests PASS, 3 vorbestehende
+WebSocket-Skips (identisch zu Sprint 27 — minimaler Test-Stack hat kein echtes WebRTC/SFU).
+`telemetry-service` und `webrtc-sfu` sind **nicht** Teil dieses Test-Stacks (begründet ausgelassen,
+per Vorgabe bei Nichtvorhandensein) — für beide wurden Build/Vet/Lint/Unit-Verifikation lokal
+durchgeführt, ein Integrationstest gegen den echten Prozess war für diese zwei Services mangels
+Stack-Anbindung nicht möglich.
+
+Ein zusätzlicher, aus dem Initial-Commit bereits eingecheckter Kompilat-Artefakt (`vehicle-mock`-
+Binary im Repo-Root, unrelated zum Style-Guide-Scope) wurde durch einen `go build ./...`-Lauf
+versehentlich überschrieben und vor dem Abschluss wieder auf den committeten Stand zurückgesetzt
+(`git checkout -- vehicle-mock`) — kein Bestandteil dieses Sprints, nur zur Sauberhaltung des
+Diffs vermerkt.
+
+**Bewusst nicht in diesem Sprint:** `control-server`-`main()`-Zerlegung (Sprint 29, höchstes
+Risiko, eigene Grill-Me-Pflicht), Interface-Segregation nach Rule 4.2/4.3 (Phase 2, wartet auf
+ADR-031/HEX-05), `gofmt -w .` (separater Bonus-Task außerhalb des Style-Guide-Scopes),
+`vehicle-mock`s `envOr` (nicht Teil von GOSTYLE-08s Aufgabenbeschreibung).
+
+---
+
+# Sprint 27 — Fundament: `pkg/db`, `pkg/env`, non-blocking Linter-Gate
+
+Ziel: Erster von drei Sprints (27/28/29) zum Rollout des Go Coding Style Guide
+(`docs/go-style-guide.md`, EPIC "Go Coding Style Guide Rollout" in `tasks/backlog.md`). Sprint 27
+ist bewusst das Fundament: die beiden echten Dreifach-Duplikate aus der Bestandsaufnahme (DB-
+Open+WaitForReady-Block, `envOr`-Helper + manuelle Required-Env-Var-Checks in `auth-`/`fleet-`/
+`control-server`-`main.go`) werden in `pkg/db`/`pkg/env` gebündelt, bevor in Sprint 28/29 einzelne
+`main()`-Funktionen zerlegt werden — unblockt beide Folge-Sprints und macht Fortschritt sofort
+sichtbar (`golangci-lint` als Metrik ab Tag 1, auch wenn der Großteil des Codes noch nicht
+konform ist).
+
+Grill-Me (2026-07-17, EPIC-weit, nicht sprintspezifisch — siehe `tasks/backlog.md`): Umfang
+komplette Codebasis/alle 4 Regelblöcke, Interface-Regeln (4.2/4.3) auf spätere, mit ADR-031
+koordinierte Phase verschoben, Rules 1–3 + Duplikat-Extraktion laufen jetzt parallel zu den
+laufenden Dashboard-Strängen (keine Signaturänderungen nach außen), `golangci-lint` bewusst
+non-blocking (Henne-Ei-Problem: Großteil des Codes noch nicht angeglichen).
+
+**Keine Signaturänderung nach außen, kein Verhaltenswechsel** (CLAUDE.MD Abschnitt 15) — jeder
+Task endet mit vollem Testlauf der drei betroffenen Services + Diff-Review gegen genau diese
+Vorgabe. Explizit nicht Teil dieses Sprints: `main()`-Zerlegungen (Sprint 28/29), Interface-
+Änderungen (Phase 2, wartet auf ADR-031/HEX-05).
+
+Datum: 2026-07-17 | **Status: Alle Tasks ✅**
+Vorgänger: Sprint 25 ✅ (dieser Branch zweigt vom bereits gemergten `feature/fleet-service-
+foundation`-Stand ab, unabhängig von parallelen Sessions in anderen Worktrees)
+Branch: `feature/fleet-service-foundation-gostyle`
+
+---
+
+## Tasks
+
+| ID | Task | Typ | Status |
+|----|------|-----|--------|
+| GOSTYLE-01 | `pkg/db`: `OpenAndWait`-Helper ergänzen (bündelt Open+WaitForReady+Degraded-Warn-Block, aktuell 3× identisch in `auth-`/`fleet-`/`control-server`-`main.go`) + alle 3 Call-Sites umstellen | M | ✅ |
+| GOSTYLE-02 | Neues `pkg/env`: `Require`/`OptionalOr`-Helper (ersetzt 3× identisches `envOr` + 3× manuellen Required-Var-Check in `auth-`/`fleet-`/`control-server`-`main.go`) | M | ✅ |
+| GOSTYLE-15 | `golangci-lint` einrichten (`funlen` max-func-lines=50, `revive` argument-limit=4) als **non-blocking Warn-Stufe** im CI (kein Merge-Gate) | M | ✅ |
+
+## Ergebnisse
+
+**GOSTYLE-01 — `pkg/db.OpenAndWait` ✅**
+Neue Funktion `OpenAndWait(databaseURL string, log *logger.Logger, degradedModeMsg string) *sql.DB`
+in `pkg/db/postgres.go`, bündelt `Open` + `WaitForReady(db, DefaultConnectRetries,
+DefaultConnectRetryDelay)` + die Degraded-Mode-Warnung. `degradedModeMsg` bleibt Parameter statt
+fest codiert, weil sich der Warntext zwischen den drei Services unterscheidet
+(`control-server`: "...— starting in degraded mode", `auth-`/`fleet-service`: "...— proceeding
+anyway") — CLAUDE.MD Abschnitt 15 verlangt identische Log-Ausgaben, nicht nur identisches
+Verhalten. Der `Open`-Fehlerfall bleibt `log.Fatal("failed to open database", ...)`, war an allen
+drei Call-Sites bereits wortgleich. Alle drei `main.go` umgestellt auf `db :=
+pkgdb.OpenAndWait(databaseURL, log, "...")`; die service-übergreifende Erklärung zum Docker-
+`restart: unless-stopped`-Problem (Sprint 18 Bugfix) ist jetzt zentral als GoDoc auf
+`OpenAndWait` dokumentiert statt dreifach (mit leicht unterschiedlichem Wortlaut) im Kommentar an
+jeder Call-Site — reine Lesbarkeits-Konsolidierung, keine inhaltliche Änderung.
+
+**GOSTYLE-02 — `pkg/env` ✅**
+Neues Paket mit `OptionalOr(key, fallback string) string` (identisch zum bisherigen `envOr`) und
+`Require(key string, log *logger.Logger) string` (loggt `"<KEY> environment variable is
+required"` und beendet den Prozess über `log.Fatal`, falls leer/unset — alle bisherigen manuellen
+Checks folgten exakt diesem Nachrichtenformat, daher reiner 1:1-Ersatz). `auth-service` hatte
+`envOr` bisher gar nicht als Funktion (nur ein einzelner Inline-Check für `AUTH_PORT`) — auch
+dieser Fall wird jetzt konsistent über `env.OptionalOr` gelöst. Lokale `envOr()`-Definitionen in
+`fleet-service` und `control-server` entfernt (jetzt unbenutzt); `vehicle-mock`s eigenes `envOr`
+bewusst unangetastet gelassen (nicht Teil des Aufgabenumfangs dieser Sitzung, siehe Sprint 28
+GOSTYLE-08).
+
+**GOSTYLE-15 — `golangci-lint` non-blocking ✅**
+`.golangci.yml` (nur `funlen` max 50 Zeilen + `revive` `argument-limit` max 4, alle anderen Linter
+deaktiviert) plus `.github/workflows/lint.yml` (`continue-on-error: true` auf Job-Ebene **und**
+`--issues-exit-code=0` als Tool-Flag — doppelt abgesichert non-blocking, damit der Check auch bei
+Findings grün statt "fehlgeschlagen, aber ignoriert" anzeigt). Kein bereits existierender
+`.github/workflows/`-Ordner im `-cicd`-Worktree zum Zeitpunkt dieser Sitzung gefunden (geprüft vor
+Beginn) — daher eigenständige Datei angelegt statt in eine bestehende Pipeline eingehängt, wie in
+der Aufgabenstellung als Fallback vorgesehen. Konfiguration lokal gegen den echten Code
+verifiziert (`golangci-lint v1.64.8` installiert, `golangci-lint run --issues-exit-code=0`
+ausgeführt): Ergebnis deckt sich mit der quantifizierten Bestandsaufnahme aus `tasks/backlog.md`
+(6 Funktionen mit >4 Parametern in Produktionscode — `bus_watchdog.go`, `memory_recorder.go` ×3,
+`vehicleconnection/handler.go`, `vehicle-mock/main.go` — plus mehrere `main()`-Funktionen und
+weitere Methoden >50 Zeilen, alles bereits als Sprint-28/29-Arbeit im Backlog vorgemerkt).
+YAML-Syntax mit `actionlint` geprüft (keine Fehler).
+
+**Verifikation (alle drei Tasks zusammen) ✅**
+`go build ./...`, `go vet ./...` sauber. `gofmt -l .` findet weiterhin genau die bereits vor
+diesem Sprint bekannten 13 unformatierten Dateien (siehe `tasks/backlog.md`, Bonus-Task
+außerhalb des Style-Guide-Scopes) — keine davon durch diese Änderungen neu hinzugekommen (geprüft
+per `gofmt -d` gegen jede der drei editierten Dateien: alle Abweichungen liegen an unberührten,
+bereits vorher unformatierten Zeilen). `go test ./...`: alle Unit-Tests grün, neue Tests für
+`pkg/db.OpenAndWait` (implizit über die bestehenden `WaitForReady`-Tests) und `pkg/env` (4 neue
+Tests, `OptionalOr` beide Zweige + leerer String, `Require`-Erfolgsfall — der `Fatal`/`os.Exit`-Pfad
+ist wie bei `pkg/logger` bereits zuvor nicht in-process testbar). Zusätzlich vollständiger
+`make test-integration`-Lauf gegen den echten Docker-Test-Stack (`tests/docker-compose.test.yml`)
+für genau die drei geänderten Services: alle Tests grün (3 vorbestehende WebSocket-Skips, unrelated
+— minimaler Test-Stack hat kein echtes WebRTC/SFU), inklusive Health-Checks, JWT/DB-Required-Var-
+Checks und Operator-Login — bestätigt, dass `env.Require`/`pkgdb.OpenAndWait` in echten
+Container-Startups identisch funktionieren wie die vorherigen Inline-Blöcke.
+
+**Bewusst nicht in diesem Sprint:** keine `main()`-Zerlegungen (Sprint 28/29), keine Interface-
+Änderungen (Phase 2, wartet auf ADR-031/HEX-05), kein `gofmt -w .` (separater Bonus-Task,
+unabhängig vom Style-Guide-Scope), `vehicle-mock`s `envOr`/Parameter-Duplikate unangetastet
+(Sprint 28 GOSTYLE-08).
+
+---
+
 # Sprint 24 — Task-Management-UI
 
 Ziel: Task-Management-UI im Fleet-Overview-Dashboard (AP2) — Aufgaben erstellen/zuweisen,

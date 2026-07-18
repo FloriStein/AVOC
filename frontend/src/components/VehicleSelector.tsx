@@ -24,7 +24,8 @@ export function VehicleSelector({ onStartSession, defaultVehicleId }: Props) {
         </option>
         {online.map(v => (
           <option key={v.id} value={v.id}>
-            🟢 {v.display_name}
+            {v.system_state === 'SAFE_MODE' ? '🔴' : '🟢'} {v.display_name}
+            {v.system_state === 'SAFE_MODE' ? ' — SAFE_MODE' : ''}
           </option>
         ))}
       </select>

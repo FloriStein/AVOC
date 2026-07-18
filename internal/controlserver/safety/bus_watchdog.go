@@ -48,14 +48,24 @@ type SafetyBusWatchdog struct {
 	client    *http.Client
 }
 
-func NewSafetyBusWatchdog(healthURL string, interval time.Duration, threshold int, vehicles VehicleStates, sessions SessionSource, publisher Publisher) *SafetyBusWatchdog {
+// SafetyBusWatchdogOptions bundles NewSafetyBusWatchdog's inputs (Rule 2.3 — more than 4 params).
+type SafetyBusWatchdogOptions struct {
+	HealthURL string
+	Interval  time.Duration
+	Threshold int
+	Vehicles  VehicleStates
+	Sessions  SessionSource
+	Publisher Publisher
+}
+
+func NewSafetyBusWatchdog(opts SafetyBusWatchdogOptions) *SafetyBusWatchdog {
 	return &SafetyBusWatchdog{
-		healthURL: healthURL,
-		interval:  interval,
-		threshold: threshold,
-		vehicles:  vehicles,
-		sessions:  sessions,
-		publisher: publisher,
+		healthURL: opts.HealthURL,
+		interval:  opts.Interval,
+		threshold: opts.Threshold,
+		vehicles:  opts.Vehicles,
+		sessions:  opts.Sessions,
+		publisher: opts.Publisher,
 		client:    &http.Client{Timeout: 3 * time.Second},
 	}
 }

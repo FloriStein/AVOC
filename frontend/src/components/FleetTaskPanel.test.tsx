@@ -16,10 +16,11 @@ const STATION_B: Station = { id: 'station-b', zone_id: 'zone-1', name: 'Station 
 const PENDING: Task = {
   id: 't1', vehicle_id: 'v1', from_station_id: 'station-a', to_station_id: 'station-b',
   status: 'pending', priority: 1, created_at: '2026-01-01T10:00:00Z',
+  allowed_transitions: ['in_progress', 'cancelled'],
 }
-const IN_PROGRESS: Task = { ...PENDING, id: 't2', status: 'in_progress' }
-const COMPLETED: Task = { ...PENDING, id: 't3', status: 'completed', status_changed_by: 'op1' }
-const CANCELLED: Task = { ...PENDING, id: 't4', status: 'cancelled', status_changed_by: 'op1' }
+const IN_PROGRESS: Task = { ...PENDING, id: 't2', status: 'in_progress', allowed_transitions: ['completed', 'cancelled'] }
+const COMPLETED: Task = { ...PENDING, id: 't3', status: 'completed', status_changed_by: 'op1', allowed_transitions: [] }
+const CANCELLED: Task = { ...PENDING, id: 't4', status: 'cancelled', status_changed_by: 'op1', allowed_transitions: [] }
 
 describe('FleetTaskPanel', () => {
   beforeEach(() => {
@@ -122,6 +123,30 @@ describe('FleetTaskPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /starten/i }))
 
     expect(await screen.findByText(/statuswechsel fehlgeschlagen/i)).toBeInTheDocument()
+  })
+
+  // AP2-04: Sortierung nach Priorität + visuelle Hervorhebung ab HIGH_PRIORITY_THRESHOLD (5)
+  it('sortiert Tasks nach Priorität absteigend, unabhängig von der Reihenfolge im tasks-Prop', () => {
+    const low = { ...PENDING, id: 't-low', priority: 1 }
+    const high = { ...PENDING, id: 't-high', priority: 9 }
+    const mid = { ...PENDING, id: 't-mid', priority: 4 }
+    render(<FleetTaskPanel tasks={[low, high, mid]} vehicles={[V1]} token="tok" onCreateTask={vi.fn()} onUpdateStatus={vi.fn()} />)
+
+    const priorityTexts = screen.getAllByText(/Priorität \d/).map((el) => el.textContent)
+    const order = priorityTexts.map((t) => (t?.includes('9') ? 9 : t?.includes('4') ? 4 : 1))
+    expect(order).toEqual([9, 4, 1])
+  })
+
+  it('hebt Tasks mit priority >= 5 visuell hervor (⚠ Hoch)', () => {
+    const high = { ...PENDING, id: 't-high', priority: 5 }
+    render(<FleetTaskPanel tasks={[high]} vehicles={[V1]} token="tok" onCreateTask={vi.fn()} onUpdateStatus={vi.fn()} />)
+    expect(screen.getByText(/⚠ Hoch/)).toBeInTheDocument()
+  })
+
+  it('hebt Tasks mit priority knapp unter der Schwelle nicht hervor', () => {
+    const notHigh = { ...PENDING, id: 't-notso', priority: 4 }
+    render(<FleetTaskPanel tasks={[notHigh]} vehicles={[V1]} token="tok" onCreateTask={vi.fn()} onUpdateStatus={vi.fn()} />)
+    expect(screen.queryByText(/⚠ Hoch/)).not.toBeInTheDocument()
   })
 
   it('Nebenläufigkeit: Statuswechsel eines Tasks deaktiviert nicht die Buttons eines anderen Tasks', () => {

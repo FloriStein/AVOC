@@ -169,7 +169,10 @@ func TestIntegration_Auth_VehicleRegister_ReturnsJWT(t *testing.T) {
 // --- Control Server: Initial State ---
 
 func TestIntegration_ControlServer_InitialState_IsIDLE(t *testing.T) {
-	m := getJSON(t, controlURL+"/state")
+	// GET /vehicles/{id}/state (MV-12, replaces removed GET /state): a vehicle context is
+	// created on first access and defaults to IDLE (ADR-026) — any never-before-seen id works,
+	// so a dedicated one avoids interference from other tests' sessions.
+	m := getJSON(t, controlURL+"/vehicles/vehicle-initial-state-test/state")
 	assert.Equal(t, "IDLE", m["system"])
 	assert.Equal(t, "CONTROL_INIT", m["control"])
 	assert.Equal(t, "MEDIA_INIT", m["media"])
@@ -200,8 +203,11 @@ func TestIntegration_SessionLifecycle_StartAndEnd(t *testing.T) {
 	defer conn.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	// State should now be AUTHENTICATED or CONNECTED
-	state := getJSON(t, controlURL+"/state")
+	// State should now be AUTHENTICATED or CONNECTED. No vehicle_id yet at this point (session
+	// hasn't started) — GET /sessions as a reachability probe won't carry per-vehicle state, so
+	// this uses the same vehicle_id the session/start call below is about to use (MV-12: the
+	// vehicle context for an id is created lazily and is stable across the whole test).
+	state := getJSON(t, controlURL+"/vehicles/vehicle-int-1/state")
 	sys, _ := state["system"].(string)
 	assert.Contains(t, []string{"AUTHENTICATED", "CONNECTED", "CONNECTING"}, sys)
 
@@ -220,7 +226,7 @@ func TestIntegration_SessionLifecycle_StartAndEnd(t *testing.T) {
 		assert.Greater(t, len(sessionID), 10, "session_id must be ULID")
 
 		// 4. SYSTEM STATE should be CONNECTED
-		state2 := getJSON(t, controlURL+"/state")
+		state2 := getJSON(t, controlURL+"/vehicles/vehicle-int-1/state")
 		assert.Equal(t, "CONNECTED", state2["system"])
 
 		// 5. End session
@@ -258,7 +264,7 @@ func TestIntegration_MediaFailed_TriggersDegrade_NeverSafeMode(t *testing.T) {
 	resp2.Body.Close()
 	assert.Equal(t, 202, resp2.StatusCode)
 
-	state := getJSON(t, controlURL+"/state")
+	state := getJSON(t, controlURL+"/vehicles/vehicle-media/state")
 	sys := state["system"].(string)
 	assert.Equal(t, "DEGRADED", sys, "MEDIA_FAILED must → DEGRADED, never SAFE_MODE (Invariante 1)")
 
@@ -291,6 +297,6 @@ func TestIntegration_EmergencyStop_TriggersSafeMode(t *testing.T) {
 	resp2.Body.Close()
 	assert.Equal(t, 202, resp2.StatusCode)
 
-	state := getJSON(t, controlURL+"/state")
+	state := getJSON(t, controlURL+"/vehicles/vehicle-estop/state")
 	assert.Equal(t, "SAFE_MODE", state["system"])
 }

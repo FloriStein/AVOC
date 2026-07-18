@@ -32,44 +32,44 @@ func (r *MemoryRecorder) EndSession(sessionID string) {
 	log.Printf("[RECORDING] session ended: id=%s entries=%d", sessionID, count)
 }
 
-func (r *MemoryRecorder) RecordControlEvent(sessionID, eventID, vehicleID, operatorID, commandType string, value float32) {
+func (r *MemoryRecorder) RecordControlEvent(p ControlEventParams) {
 	r.append(Entry{
-		SessionID:   sessionID,
-		EventID:     eventID,
-		VehicleID:   vehicleID,
-		OperatorID:  operatorID,
+		SessionID:   p.SessionID,
+		EventID:     p.EventID,
+		VehicleID:   p.VehicleID,
+		OperatorID:  p.OperatorID,
 		Timestamp:   time.Now(),
 		EntryType:   "control",
-		CommandType: commandType,
-		Value:       value,
+		CommandType: p.CommandType,
+		Value:       p.Value,
 	})
 }
 
-func (r *MemoryRecorder) RecordStateSnapshot(sessionID, eventID, vehicleID, operatorID, systemState, ctrlState string) {
+func (r *MemoryRecorder) RecordStateSnapshot(p StateSnapshotParams) {
 	r.append(Entry{
-		SessionID:   sessionID,
-		EventID:     eventID,
-		VehicleID:   vehicleID,
-		OperatorID:  operatorID,
+		SessionID:   p.SessionID,
+		EventID:     p.EventID,
+		VehicleID:   p.VehicleID,
+		OperatorID:  p.OperatorID,
 		Timestamp:   time.Now(),
 		EntryType:   "state",
-		SystemState: systemState,
-		CtrlState:   ctrlState,
+		SystemState: p.SystemState,
+		CtrlState:   p.CtrlState,
 	})
 }
 
-func (r *MemoryRecorder) RecordSafetyEvent(sessionID, eventID, vehicleID, operatorID, eventType, reason string) {
+func (r *MemoryRecorder) RecordSafetyEvent(p SafetyEventParams) {
 	r.append(Entry{
-		SessionID:  sessionID,
-		EventID:    eventID,
-		VehicleID:  vehicleID,
-		OperatorID: operatorID,
+		SessionID:  p.SessionID,
+		EventID:    p.EventID,
+		VehicleID:  p.VehicleID,
+		OperatorID: p.OperatorID,
 		Timestamp:  time.Now(),
 		EntryType:  "safety",
-		EventType:  eventType,
-		Reason:     reason,
+		EventType:  p.EventType,
+		Reason:     p.Reason,
 	})
-	log.Printf("[RECORDING] safety event: session=%s type=%s reason=%s", sessionID, eventType, reason)
+	log.Printf("[RECORDING] safety event: session=%s type=%s reason=%s", p.SessionID, p.EventType, p.Reason)
 }
 
 func (r *MemoryRecorder) GetEntries(sessionID string) []Entry {
