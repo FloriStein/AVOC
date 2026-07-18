@@ -116,6 +116,28 @@ WHERE id LIKE '%-taskui'
   AND NOT EXISTS (SELECT 1 FROM stations WHERE stations.zone_id = zones.id);
 `
 
+// taskStatusHistoryTable is the ADR-032 audit table — one row per PATCH-driven status
+// transition, additive to `tasks.status_changed_by` (ADR-030, unchanged, still the fast "last
+// changer" lookup). `from_status` is nullable: always populated going forward (UpdateTaskStatus
+// reads the true prior status atomically before overwriting it), but left NULL by the one-time
+// backfill below for pre-existing `cancelled` tasks, where the prior status (`pending` or
+// `in_progress`) can no longer be determined from `tasks` alone.
+// `ON DELETE CASCADE`: there is no production task-deletion endpoint (tasks only transition
+// status), but history rows have no reason to outlive their task if it's ever removed (test
+// cleanup, or future admin tooling) — a plain RESTRICT here would otherwise block deleting a task
+// that has any recorded transition.
+const taskStatusHistoryTable = `
+CREATE TABLE IF NOT EXISTS task_status_history (
+    id          TEXT PRIMARY KEY,
+    task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    from_status TEXT,
+    to_status   TEXT NOT NULL,
+    changed_by  TEXT NOT NULL,
+    changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_task_status_history_task_id ON task_status_history(task_id);
+`
+
 // Zone is an admin-managed spatial area (AP3 "Räumliche Zonenzuweisung") — indoor (SVG-based)
 // or outdoor (geo-referenced SVG overlay, ADR-029).
 type Zone struct {
@@ -156,6 +178,20 @@ type Task struct {
 	// status-change buttons without duplicating the transition matrix itself. Never nil (see
 	// allowedTaskTransitions), so it marshals to `[]` rather than `null` for terminal statuses.
 	AllowedTransitions []string `json:"allowed_transitions"`
+}
+
+// TaskStatusHistoryEntry is one recorded status transition for a Task (ADR-032), returned in
+// chronological order (oldest first) by GetTaskStatusHistory / GET /fleet/tasks/{id}/history.
+type TaskStatusHistoryEntry struct {
+	ID     string `json:"id"`
+	TaskID string `json:"task_id"`
+	// FromStatus is nil only for backfilled `cancelled` rows predating ADR-032, where the true
+	// prior status (pending or in_progress) can no longer be determined — see
+	// backfillTaskStatusHistory. Always set for transitions recorded going forward.
+	FromStatus *string   `json:"from_status"`
+	ToStatus   string    `json:"to_status"`
+	ChangedBy  string    `json:"changed_by"`
+	ChangedAt  time.Time `json:"changed_at"`
 }
 
 // VehicleStatus is the live fleet telemetry for one vehicle — separate from the vehicles
@@ -210,7 +246,90 @@ func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 	if _, err := db.Exec(taskuiDemoSeedCleanup); err != nil {
 		return nil, fmt.Errorf("fleetservice: clean up taskui demo seed: %w", err)
 	}
+	if _, err := db.Exec(taskStatusHistoryTable); err != nil {
+		return nil, fmt.Errorf("fleetservice: create task_status_history table: %w", err)
+	}
+	if err := backfillTaskStatusHistory(db); err != nil {
+		return nil, fmt.Errorf("fleetservice: backfill task_status_history: %w", err)
+	}
 	return &PostgresFleetStore{db: db}, nil
+}
+
+// legacyTransition is one pre-ADR-032 task needing a backfilled task_status_history row.
+type legacyTransition struct {
+	taskID      string
+	status      string
+	changedBy   string
+	completedAt *time.Time
+	createdAt   time.Time
+}
+
+// backfillTaskStatusHistory (ADR-032) runs once per startup, populating task_status_history for
+// tasks that transitioned before this table existed and have no history row yet (NOT EXISTS
+// guard — idempotent across repeated restarts, same pattern as taskuiDemoSeedCleanup above).
+func backfillTaskStatusHistory(db *sql.DB) error {
+	legacy, err := queryLegacyTransitions(db)
+	if err != nil {
+		return err
+	}
+	for _, lt := range legacy {
+		if err := insertBackfilledHistoryRow(db, lt); err != nil {
+			return fmt.Errorf("insert backfilled history for task %s: %w", lt.taskID, err)
+		}
+	}
+	return nil
+}
+
+func queryLegacyTransitions(db *sql.DB) ([]legacyTransition, error) {
+	rows, err := db.Query(`
+		SELECT t.id, t.status, t.status_changed_by, t.completed_at, t.created_at
+		FROM tasks t
+		WHERE t.status != 'pending' AND t.status_changed_by IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM task_status_history h WHERE h.task_id = t.id)`)
+	if err != nil {
+		return nil, fmt.Errorf("query tasks needing backfill: %w", err)
+	}
+	defer rows.Close()
+
+	var legacy []legacyTransition
+	for rows.Next() {
+		var lt legacyTransition
+		if err := rows.Scan(&lt.taskID, &lt.status, &lt.changedBy, &lt.completedAt, &lt.createdAt); err != nil {
+			return nil, fmt.Errorf("scan task for backfill: %w", err)
+		}
+		legacy = append(legacy, lt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tasks for backfill: %w", err)
+	}
+	return legacy, nil
+}
+
+// insertBackfilledHistoryRow approximates changed_at (completed_at when available, else
+// created_at — the exact original transition timestamp for in_progress/cancelled tasks was never
+// recorded) and sets from_status only where ADR-030's transition table makes it unambiguous
+// (in_progress came only from pending, completed only from in_progress) — cancelled is left NULL
+// since it could have come from either.
+func insertBackfilledHistoryRow(db *sql.DB, lt legacyTransition) error {
+	var fromStatus *string
+	switch lt.status {
+	case "in_progress":
+		s := "pending"
+		fromStatus = &s
+	case "completed":
+		s := "in_progress"
+		fromStatus = &s
+	}
+	changedAt := lt.createdAt
+	if lt.completedAt != nil {
+		changedAt = *lt.completedAt
+	}
+	_, err := db.Exec(
+		`INSERT INTO task_status_history (id, task_id, from_status, to_status, changed_by, changed_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		ulid.Generate(), lt.taskID, fromStatus, lt.status, lt.changedBy, changedAt,
+	)
+	return err
 }
 
 // EnsureVehicleExists auto-registers a bare vehicle identity row (id + a display_name defaulted
@@ -397,16 +516,23 @@ func (s *PostgresFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (
 		return Task{}, fmt.Errorf("fleetservice: unknown target status %q: %w", newStatus, ErrInvalidTransition)
 	}
 
+	// ADR-032: `previous` is a CTE evaluated once against the pre-UPDATE snapshot (Postgres MVCC
+	// semantics within a single statement) — reading the true prior status this way stays inside
+	// the same atomic statement as the UPDATE itself, no separate read-then-write step added.
 	var t Task
+	var previousStatus string
 	err := s.db.QueryRow(
-		`UPDATE tasks
+		`WITH previous AS (SELECT status FROM tasks WHERE id = $3)
+		 UPDATE tasks
 		 SET status = $1,
 		     completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE completed_at END,
 		     status_changed_by = $2
-		 WHERE id = $3 AND status = ANY($4)
-		 RETURNING id, vehicle_id, from_station_id, to_station_id, status, priority, created_at, completed_at, status_changed_by`,
+		 FROM previous
+		 WHERE tasks.id = $3 AND tasks.status = ANY($4)
+		 RETURNING tasks.id, tasks.vehicle_id, tasks.from_station_id, tasks.to_station_id, tasks.status,
+		           tasks.priority, tasks.created_at, tasks.completed_at, tasks.status_changed_by, previous.status`,
 		newStatus, changedBy, id, pq.Array(sources),
-	).Scan(&t.ID, &t.VehicleID, &t.FromStationID, &t.ToStationID, &t.Status, &t.Priority, &t.CreatedAt, &t.CompletedAt, &t.StatusChangedBy)
+	).Scan(&t.ID, &t.VehicleID, &t.FromStationID, &t.ToStationID, &t.Status, &t.Priority, &t.CreatedAt, &t.CompletedAt, &t.StatusChangedBy, &previousStatus)
 
 	if err == sql.ErrNoRows {
 		var current string
@@ -420,17 +546,67 @@ func (s *PostgresFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (
 		return Task{}, fmt.Errorf("fleetservice: update task status: %w", err)
 	}
 
-	if newStatus == "completed" || newStatus == "cancelled" {
-		if _, err := s.db.Exec(
-			`UPDATE vehicle_status SET current_task_id = NULL WHERE vehicle_id = $1 AND current_task_id = $2`,
-			t.VehicleID, t.ID,
-		); err != nil {
-			return Task{}, fmt.Errorf("fleetservice: clear current_task_id: %w", err)
-		}
+	if err := s.recordTaskStatusTransition(t, previousStatus, changedBy); err != nil {
+		return Task{}, err
 	}
 
 	t.AllowedTransitions = allowedTaskTransitions(t.Status)
 	return t, nil
+}
+
+// recordTaskStatusTransition clears a stale vehicle_status.current_task_id on a terminal
+// transition (ADR-030 bugfix) and appends the ADR-032 audit row — both side effects of a
+// successful UpdateTaskStatus, split out to keep that function within Rule 2.2's length limit.
+func (s *PostgresFleetStore) recordTaskStatusTransition(t Task, previousStatus, changedBy string) error {
+	if t.Status == "completed" || t.Status == "cancelled" {
+		if _, err := s.db.Exec(
+			`UPDATE vehicle_status SET current_task_id = NULL WHERE vehicle_id = $1 AND current_task_id = $2`,
+			t.VehicleID, t.ID,
+		); err != nil {
+			return fmt.Errorf("fleetservice: clear current_task_id: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO task_status_history (id, task_id, from_status, to_status, changed_by) VALUES ($1, $2, $3, $4, $5)`,
+		ulid.Generate(), t.ID, previousStatus, t.Status, changedBy,
+	); err != nil {
+		return fmt.Errorf("fleetservice: record task status history: %w", err)
+	}
+	return nil
+}
+
+// GetTaskStatusHistory returns a task's recorded status transitions in chronological order
+// (ADR-032). Distinguishes "task does not exist" (ErrTaskNotFound, 404) from "task exists but has
+// no transitions yet" (empty, non-nil slice, still pending) — an empty array on a non-existent
+// task would otherwise be indistinguishable from the latter.
+func (s *PostgresFleetStore) GetTaskStatusHistory(taskID string) ([]TaskStatusHistoryEntry, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1)`, taskID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("fleetservice: check task exists: %w", err)
+	}
+	if !exists {
+		return nil, ErrTaskNotFound
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, task_id, from_status, to_status, changed_by, changed_at
+		 FROM task_status_history WHERE task_id = $1 ORDER BY changed_at ASC`,
+		taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fleetservice: list task status history: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []TaskStatusHistoryEntry{}
+	for rows.Next() {
+		var e TaskStatusHistoryEntry
+		if err := rows.Scan(&e.ID, &e.TaskID, &e.FromStatus, &e.ToStatus, &e.ChangedBy, &e.ChangedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 // UpsertVehicleStatus writes the latest live telemetry for a vehicle — one row per vehicle,

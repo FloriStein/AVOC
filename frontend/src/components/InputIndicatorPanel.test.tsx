@@ -16,6 +16,8 @@ const baseTelemetry: TelemetryData = {
   brakeCommanded: 0,
   steerActual: 0,
   throttleActual: 0,
+  timestampMs: Date.now() - 800,
+  ageSinceUpdateMs: 800,
 }
 
 const connectedAck: VehicleAckData = {
@@ -63,5 +65,28 @@ describe('InputIndicatorPanel', () => {
     const disconnectedAck: VehicleAckData = { ...connectedAck, vehicleConnected: false }
     render(<InputIndicatorPanel telemetry={baseTelemetry} ack={disconnectedAck} />)
     expect(screen.getByText('Getrennt')).toBeInTheDocument()
+  })
+
+  // OBS-01: "zuletzt gesehen" heartbeat, sourced from telemetry (independent of command ACKs)
+  it('shows Zuletzt gesehen heartbeat when telemetry has a timestamp', () => {
+    render(<InputIndicatorPanel telemetry={baseTelemetry} ack={connectedAck} />)
+    expect(screen.getByText(/Zuletzt gesehen vor/)).toBeInTheDocument()
+  })
+
+  it('does not show Zuletzt gesehen when telemetry has no timestamp yet', () => {
+    const tel = { ...baseTelemetry, timestampMs: 0, ageSinceUpdateMs: null }
+    render(<InputIndicatorPanel telemetry={tel} ack={connectedAck} />)
+    expect(screen.queryByText(/Zuletzt gesehen vor/)).not.toBeInTheDocument()
+  })
+
+  it('does not show Zuletzt gesehen when telemetry is null', () => {
+    render(<InputIndicatorPanel telemetry={noTelemetry} ack={connectedAck} />)
+    expect(screen.queryByText(/Zuletzt gesehen vor/)).not.toBeInTheDocument()
+  })
+
+  it('shows heartbeat age in seconds when >= 1000ms', () => {
+    const tel = { ...baseTelemetry, ageSinceUpdateMs: 2500 }
+    render(<InputIndicatorPanel telemetry={tel} ack={connectedAck} />)
+    expect(screen.getByText('Zuletzt gesehen vor 2.5s')).toBeInTheDocument()
   })
 })

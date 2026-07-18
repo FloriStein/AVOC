@@ -262,8 +262,13 @@ services:
       # Direct-Teleop-Fahrzeug oben — Format "id:typ,id:typ", publizieren über MQTT
       # (fleet/{id}/status|alert, siehe internal/fleetgateway).
       FLEET_VEHICLES: "lastenzug-01:lastenzug,lastenrad-01:lastenrad"
+      # FLEET-04: Startpunkt für echte Zonen/Stationen aus fleet-service (GET /fleet/stations)
+      # statt hartcodierter Demo-Koordinaten; fällt automatisch auf die Demo-Koordinaten zurück,
+      # falls fleet-service nicht erreichbar ist oder noch keine 2 geo-verorteten Stationen hat.
+      FLEET_SERVICE_URL: "http://fleet-service:8085"
     depends_on:
       - control-server
+      - fleet-service
       - mosquitto
     networks:
       - avoc-net

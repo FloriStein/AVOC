@@ -787,6 +787,63 @@ func TestUpdateTaskStatus_TerminalTransition_ClearsVehicleCurrentTaskID(t *testi
 	t.Fatal("handler-test-vehicle status not found")
 }
 
+// ─── GetTaskStatusHistory (ADR-032, Postgres required) ─────────────────────────
+
+func newTaskHistoryMux(h *fleetservice.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /fleet/tasks/{id}/history", h.GetTaskStatusHistory)
+	return mux
+}
+
+func TestGetTaskStatusHistory_NotFound_Returns404(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+
+	req := httptest.NewRequest(http.MethodGet, "/fleet/tasks/does-not-exist/history", nil)
+	rr := httptest.NewRecorder()
+	newTaskHistoryMux(h).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetTaskStatusHistory_ReturnsRecordedTransitions drives the endpoint end-to-end: create a
+// task, PATCH its status via the real UpdateTaskStatus handler, then verify the history endpoint
+// reflects that transition — proves the HTTP layer wiring, not just the store method in isolation
+// (store_test.go already covers the store method's own edge cases in more detail).
+func TestGetTaskStatusHistory_ReturnsRecordedTransitions(t *testing.T) {
+	store := requirePostgresStore(t)
+	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
+	task := newTaskStatusTestFixture(t, store)
+
+	patchRR := patchTaskStatus(newTaskStatusMux(h), task.ID, map[string]string{"status": "in_progress", "changed_by": "operator-7"})
+	if patchRR.Code != http.StatusOK {
+		t.Fatalf("expected PATCH to succeed, got %d: %s", patchRR.Code, patchRR.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/fleet/tasks/"+task.ID+"/history", nil)
+	rr := httptest.NewRecorder()
+	newTaskHistoryMux(h).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 history entry, got %d: %s", len(entries), rr.Body.String())
+	}
+	if entries[0]["to_status"] != "in_progress" || entries[0]["changed_by"] != "operator-7" {
+		t.Fatalf("unexpected history entry: %+v", entries[0])
+	}
+	if entries[0]["from_status"] != "pending" {
+		t.Fatalf("expected from_status=pending, got %v", entries[0]["from_status"])
+	}
+}
+
 // ─── Alerts (Postgres required) ────────────────────────────────────────────────
 
 func TestAcknowledgeAlert_NotFound_Returns404(t *testing.T) {

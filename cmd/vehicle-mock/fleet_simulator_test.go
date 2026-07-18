@@ -5,12 +5,12 @@ import (
 )
 
 func TestFleetVehicleSimulator_InitialState(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenrad)
+	s := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
 	if s.battery != 90 {
 		t.Fatalf("expected initial battery 90, got %v", s.battery)
 	}
-	if s.lat != demoStations[0].lat || s.lon != demoStations[0].lon {
-		t.Fatalf("expected to start at demoStations[0], got lat=%v lon=%v", s.lat, s.lon)
+	if s.lat != fallbackDemoStations[0].lat || s.lon != fallbackDemoStations[0].lon {
+		t.Fatalf("expected to start at fallbackDemoStations[0], got lat=%v lon=%v", s.lat, s.lon)
 	}
 	if s.charging {
 		t.Fatal("expected not charging initially")
@@ -18,7 +18,7 @@ func TestFleetVehicleSimulator_InitialState(t *testing.T) {
 }
 
 func TestFleetVehicleSimulator_Tick_ProducesValidStatus(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenrad)
+	s := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
 	status, _ := s.tick()
 
 	if status.VehicleID != "v1" {
@@ -39,8 +39,8 @@ func TestFleetVehicleSimulator_Tick_ProducesValidStatus(t *testing.T) {
 }
 
 func TestFleetVehicleSimulator_MovesTowardTarget(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenrad)
-	target := demoStations[s.targetIdx]
+	s := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
+	target := fallbackDemoStations[s.targetIdx]
 
 	startDist := distance(s.lat, s.lon, target.lat, target.lon)
 	s.tick()
@@ -52,7 +52,7 @@ func TestFleetVehicleSimulator_MovesTowardTarget(t *testing.T) {
 }
 
 func TestFleetVehicleSimulator_BatteryDrainsWhileMoving(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenzug)
+	s := newFleetVehicleSimulator("v1", typeLastenzug, fallbackDemoStations)
 	initial := s.battery
 	s.tick()
 	if s.battery >= initial {
@@ -61,7 +61,7 @@ func TestFleetVehicleSimulator_BatteryDrainsWhileMoving(t *testing.T) {
 }
 
 func TestFleetVehicleSimulator_ArrivesAndSwitchesTarget_WhenBatteryHigh(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenrad)
+	s := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
 	s.battery = 90       // stays above chargeBelow throughout
 	s.speedPerTick = 1.0 // arrive in a single tick for a deterministic test
 
@@ -74,14 +74,14 @@ func TestFleetVehicleSimulator_ArrivesAndSwitchesTarget_WhenBatteryHigh(t *testi
 	if s.targetIdx == initialTarget {
 		t.Fatal("expected targetIdx to switch to the other station after arrival")
 	}
-	arrived := demoStations[initialTarget]
+	arrived := fallbackDemoStations[initialTarget]
 	if s.lat != arrived.lat || s.lon != arrived.lon {
 		t.Fatalf("expected position to snap exactly to arrived station, got lat=%v lon=%v", s.lat, s.lon)
 	}
 }
 
 func TestFleetVehicleSimulator_ArrivesAndStartsCharging_WhenBatteryLow(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenrad)
+	s := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
 	s.battery = 25 // below chargeBelow (30)
 	s.speedPerTick = 1.0
 
@@ -97,7 +97,7 @@ func TestFleetVehicleSimulator_ArrivesAndStartsCharging_WhenBatteryLow(t *testin
 }
 
 func TestFleetVehicleSimulator_ChargingIncreasesBatteryUntilFull_ThenResumes(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenrad)
+	s := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
 	s.charging = true
 	s.battery = 99.9
 	initialTarget := s.targetIdx
@@ -114,7 +114,7 @@ func TestFleetVehicleSimulator_ChargingIncreasesBatteryUntilFull_ThenResumes(t *
 }
 
 func TestFleetVehicleSimulator_BatteryNeverGoesBelowZero(t *testing.T) {
-	s := newFleetVehicleSimulator("v1", typeLastenzug)
+	s := newFleetVehicleSimulator("v1", typeLastenzug, fallbackDemoStations)
 	s.battery = 0.01
 	s.chargeBelow = -1 // never charge, force draining to the floor
 
@@ -127,8 +127,8 @@ func TestFleetVehicleSimulator_BatteryNeverGoesBelowZero(t *testing.T) {
 }
 
 func TestFleetVehicleSimulator_LastenzugSlowerThanLastenrad(t *testing.T) {
-	rad := newFleetVehicleSimulator("v1", typeLastenrad)
-	zug := newFleetVehicleSimulator("v2", typeLastenzug)
+	rad := newFleetVehicleSimulator("v1", typeLastenrad, fallbackDemoStations)
+	zug := newFleetVehicleSimulator("v2", typeLastenzug, fallbackDemoStations)
 
 	if !(zug.speedPerTick < rad.speedPerTick) {
 		t.Fatalf("expected lastenzug to move slower than lastenrad: zug=%v rad=%v", zug.speedPerTick, rad.speedPerTick)

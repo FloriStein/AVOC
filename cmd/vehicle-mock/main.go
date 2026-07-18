@@ -67,7 +67,10 @@ func main() {
 	// FLEET-04: independent fleet vehicles (Lastenrad/Lastenzug, ADR-029) simulated on the same
 	// MQTT connection — separate from the single Direct-Teleop vehicle above, which keeps its
 	// existing WS+MQTT behavior unchanged. See docs/adr/027-fleet-gateway-interface.md.
-	startFleetSimulation(mqttClient, os.Getenv("FLEET_VEHICLES"))
+	// fleetServiceURL lets the simulation fetch real Zone/Station data instead of hardcoded
+	// coordinates (FLEET-04) — falls back automatically if fleet-service is unreachable.
+	fleetServiceURL := envOr("FLEET_SERVICE_URL", "http://fleet-service:8085")
+	startFleetSimulation(mqttClient, os.Getenv("FLEET_VEHICLES"), fleetServiceURL, jwtSecret)
 
 	st := &state{battery: 85.0}
 

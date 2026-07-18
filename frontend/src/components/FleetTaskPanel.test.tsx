@@ -125,6 +125,30 @@ describe('FleetTaskPanel', () => {
     expect(await screen.findByText(/statuswechsel fehlgeschlagen/i)).toBeInTheDocument()
   })
 
+  // AP2-04: Sortierung nach Priorität + visuelle Hervorhebung ab HIGH_PRIORITY_THRESHOLD (5)
+  it('sortiert Tasks nach Priorität absteigend, unabhängig von der Reihenfolge im tasks-Prop', () => {
+    const low = { ...PENDING, id: 't-low', priority: 1 }
+    const high = { ...PENDING, id: 't-high', priority: 9 }
+    const mid = { ...PENDING, id: 't-mid', priority: 4 }
+    render(<FleetTaskPanel tasks={[low, high, mid]} vehicles={[V1]} token="tok" onCreateTask={vi.fn()} onUpdateStatus={vi.fn()} />)
+
+    const priorityTexts = screen.getAllByText(/Priorität \d/).map((el) => el.textContent)
+    const order = priorityTexts.map((t) => (t?.includes('9') ? 9 : t?.includes('4') ? 4 : 1))
+    expect(order).toEqual([9, 4, 1])
+  })
+
+  it('hebt Tasks mit priority >= 5 visuell hervor (⚠ Hoch)', () => {
+    const high = { ...PENDING, id: 't-high', priority: 5 }
+    render(<FleetTaskPanel tasks={[high]} vehicles={[V1]} token="tok" onCreateTask={vi.fn()} onUpdateStatus={vi.fn()} />)
+    expect(screen.getByText(/⚠ Hoch/)).toBeInTheDocument()
+  })
+
+  it('hebt Tasks mit priority knapp unter der Schwelle nicht hervor', () => {
+    const notHigh = { ...PENDING, id: 't-notso', priority: 4 }
+    render(<FleetTaskPanel tasks={[notHigh]} vehicles={[V1]} token="tok" onCreateTask={vi.fn()} onUpdateStatus={vi.fn()} />)
+    expect(screen.queryByText(/⚠ Hoch/)).not.toBeInTheDocument()
+  })
+
   it('Nebenläufigkeit: Statuswechsel eines Tasks deaktiviert nicht die Buttons eines anderen Tasks', () => {
     const onUpdateStatus = vi.fn(() => new Promise<void>(() => {}))
     render(

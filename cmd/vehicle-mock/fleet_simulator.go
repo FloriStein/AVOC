@@ -17,15 +17,19 @@ import (
 // Independent of telemetryHz (Direct-Teleop) — the fleet vehicles aren't in a teleop session.
 const fleetSimulationTick = 3 * time.Second
 
-// fleetStation is placeholder demo geo data for FLEET-04 — vehicle-mock has no DB access, so
-// station coordinates are hardcoded here. Once fleet-service's REST API exists (FLEET-05) this
-// could fetch real Zone/Station data instead; documented as a known simplification.
+// fleetStation is the geo data a simulated vehicle drives between.
 type fleetStation struct {
 	id       string
 	lat, lon float64
 }
 
-var demoStations = []fleetStation{
+// fallbackDemoStations is used when fleet-service's real Station data can't be fetched (service
+// unreachable, or fewer than 2 stations with a geo-position exist yet — e.g. a fresh dev DB
+// before scripts/seed-fleet-demo.sh has run). Coordinates deliberately match
+// scripts/seed-fleet-demo.sh's "station-ladezone-a"/"station-ladezone-b" so a simulated vehicle's
+// path lines up with the seeded zone regardless of which source is active (FLEET-04, resolved by
+// resolveSimulationStations in fleet_stations.go).
+var fallbackDemoStations = []fleetStation{
 	{id: "demo-station-a", lat: 52.130100, lon: 11.640100},
 	{id: "demo-station-b", lat: 52.130500, lon: 11.641200},
 }
@@ -50,6 +54,7 @@ const arrivalThresholdDegrees = 0.00005
 type fleetVehicleSimulator struct {
 	vehicleID string
 	vType     fleetVehicleType
+	stations  []fleetStation // FLEET-04: real fleet-service stations, or fallbackDemoStations
 
 	battery   float64
 	lat, lon  float64
@@ -62,16 +67,19 @@ type fleetVehicleSimulator struct {
 	chargeBelow   float64 // start charging when battery drops below this, once arrived
 }
 
-func newFleetVehicleSimulator(vehicleID string, vType fleetVehicleType) *fleetVehicleSimulator {
+// newFleetVehicleSimulator starts a simulated vehicle at stations[0], initially heading for
+// stations[1]. Callers (startFleetSimulation) guarantee len(stations) >= 2 — see
+// resolveSimulationStations in fleet_stations.go.
+func newFleetVehicleSimulator(vehicleID string, vType fleetVehicleType, stations []fleetStation) *fleetVehicleSimulator {
 	// Lastenrad: nimbler/faster, smaller battery (drains and charges faster in relative terms).
 	// Lastenzug: slower, larger battery (drains and charges more slowly in relative terms).
 	speed, drain, charge := 0.08, 0.15, 0.6
 	if vType == typeLastenzug {
 		speed, drain, charge = 0.03, 0.08, 0.3
 	}
-	start := demoStations[0]
+	start := stations[0]
 	return &fleetVehicleSimulator{
-		vehicleID: vehicleID, vType: vType,
+		vehicleID: vehicleID, vType: vType, stations: stations,
 		battery: 90, lat: start.lat, lon: start.lon, targetIdx: 1,
 		speedPerTick: speed, drainPerTick: drain, chargePerTick: charge, chargeBelow: 30,
 	}
@@ -81,7 +89,7 @@ func newFleetVehicleSimulator(vehicleID string, vType fleetVehicleType) *fleetVe
 // one was triggered this tick (nil otherwise — alerts are rare, per ADR-028 they represent a
 // problem the vehicle cannot resolve itself, not routine telemetry).
 func (s *fleetVehicleSimulator) tick() (fleetgateway.VehicleStatusEvent, *fleetgateway.VehicleAlertEvent) {
-	target := demoStations[s.targetIdx]
+	target := s.stations[s.targetIdx]
 
 	if s.charging {
 		s.battery += s.chargePerTick
@@ -102,7 +110,7 @@ func (s *fleetVehicleSimulator) tick() (fleetgateway.VehicleStatusEvent, *fleetg
 			if s.battery < s.chargeBelow {
 				s.charging = true
 			} else {
-				s.targetIdx = (s.targetIdx + 1) % len(demoStations)
+				s.targetIdx = (s.targetIdx + 1) % len(s.stations)
 			}
 		}
 	}
@@ -135,11 +143,15 @@ func (s *fleetVehicleSimulator) tick() (fleetgateway.VehicleStatusEvent, *fleetg
 // on the given MQTT client — the concrete transport realization of ADR-027 until the real
 // ROS2/DDS interface is confirmed. No-op if spec is empty (default: no fleet vehicles simulated,
 // keeps the existing single-vehicle Direct-Teleop behavior as the default docker-compose setup).
-func startFleetSimulation(client mqtt.Client, spec string) {
+// fleetServiceURL/jwtSecret let it fetch real Zone/Station data (FLEET-04) instead of always
+// using fallbackDemoStations — see resolveSimulationStations in fleet_stations.go.
+func startFleetSimulation(client mqtt.Client, spec, fleetServiceURL, jwtSecret string) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return
 	}
+
+	stations := resolveSimulationStations(fleetServiceURL, jwtSecret)
 
 	for _, entry := range strings.Split(spec, ",") {
 		entry = strings.TrimSpace(entry)
@@ -153,7 +165,7 @@ func startFleetSimulation(client mqtt.Client, spec string) {
 			vType = typeLastenrad
 		}
 
-		sim := newFleetVehicleSimulator(id, vType)
+		sim := newFleetVehicleSimulator(id, vType, stations)
 		go runFleetVehicleSimulation(client, sim)
 		log.Info("fleet vehicle simulation started", "vehicle_id", id, "type", vType)
 	}

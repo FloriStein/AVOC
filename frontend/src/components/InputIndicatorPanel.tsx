@@ -64,7 +64,12 @@ function ActuationBar({
   )
 }
 
-function AckBadge({ ack }: { ack: VehicleAckData | null }) {
+// formatAge renders an age in ms as a short human-readable duration ("420ms" / "1.3s").
+function formatAge(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
+function AckBadge({ ack, telemetry }: { ack: VehicleAckData | null; telemetry: TelemetryData | null }) {
   if (!ack) {
     return (
       <div className="flex flex-col gap-0.5">
@@ -76,6 +81,9 @@ function AckBadge({ ack }: { ack: VehicleAckData | null }) {
 
   const connected = ack.vehicleConnected
   const age = ack.ageSinceAckMs
+  // OBS-01: telemetry keeps arriving independent of operator commands, so this is a heartbeat
+  // ("zuletzt gesehen") even while "ACK vor ..." below goes stale during idle periods.
+  const heartbeatAge = telemetry?.ageSinceUpdateMs ?? null
 
   return (
     <div className="flex flex-col gap-1 min-w-24">
@@ -87,12 +95,15 @@ function AckBadge({ ack }: { ack: VehicleAckData | null }) {
         </span>
       </div>
       {ack.received && age !== null && (
-        <span className="text-xs text-gray-500">
-          ACK vor {age < 1000 ? `${age}ms` : `${(age / 1000).toFixed(1)}s`}
-        </span>
+        <span className="text-xs text-gray-500">ACK vor {formatAge(age)}</span>
       )}
       {!ack.received && (
         <span className="text-xs text-yellow-600">Kein ACK</span>
+      )}
+      {heartbeatAge !== null && (
+        <span className="text-xs text-gray-600" title="Letztes Telemetrie-Signal vom Fahrzeug">
+          Zuletzt gesehen vor {formatAge(heartbeatAge)}
+        </span>
       )}
     </div>
   )
@@ -158,7 +169,7 @@ export function InputIndicatorPanel({ telemetry, ack }: Props) {
 
       {/* ACK status */}
       <div className="ml-auto">
-        <AckBadge ack={ack} />
+        <AckBadge ack={ack} telemetry={telemetry} />
       </div>
     </div>
   )

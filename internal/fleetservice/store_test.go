@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -287,5 +288,245 @@ func TestUpdateTaskStatus_ConcurrentTransitions_ExactlyOneSucceeds(t *testing.T)
 		if tk.ID == task.ID && tk.Status != "in_progress" {
 			t.Fatalf("expected final status in_progress, got %q", tk.Status)
 		}
+	}
+}
+
+// ─── TaskStatusHistory (ADR-032, Postgres required) ────────────────────────────
+
+// taskStatusHistoryTestFixture creates a fresh vehicle/zone/2 stations/task for one test's
+// exclusive use — same rationale as newTaskStatusTestFixture in handler_test.go (this file is
+// package fleetservice, so it can't reuse that unexported-field-free but still test-local helper).
+func taskStatusHistoryTestFixture(t *testing.T, db *sql.DB, store *PostgresFleetStore) Task {
+	t.Helper()
+	suffix := t.Name()
+	vehicleID := "history-test-vehicle-" + suffix
+	zoneID := "history-test-zone-" + suffix
+	stationAID := "history-test-station-a-" + suffix
+	stationBID := "history-test-station-b-" + suffix
+
+	if _, err := db.Exec(`INSERT INTO vehicles (id, display_name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, vehicleID); err != nil {
+		t.Fatalf("seed vehicle: %v", err)
+	}
+	if err := store.AddZone(Zone{ID: zoneID, Name: "Zone", Environment: "indoor"}); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	if err := store.AddStation(Station{ID: stationAID, ZoneID: zoneID, Name: "A"}); err != nil {
+		t.Fatalf("AddStation A: %v", err)
+	}
+	if err := store.AddStation(Station{ID: stationBID, ZoneID: zoneID, Name: "B"}); err != nil {
+		t.Fatalf("AddStation B: %v", err)
+	}
+	task, err := store.CreateTask(Task{VehicleID: vehicleID, FromStationID: stationAID, ToStationID: stationBID})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM task_status_history WHERE task_id = $1`, task.ID)
+		db.Exec(`DELETE FROM tasks WHERE id = $1`, task.ID)
+		db.Exec(`DELETE FROM stations WHERE zone_id = $1`, zoneID)
+		db.Exec(`DELETE FROM zones WHERE id = $1`, zoneID)
+		db.Exec(`DELETE FROM vehicles WHERE id = $1`, vehicleID)
+	})
+	return task
+}
+
+// TestUpdateTaskStatus_RecordsHistoryEntry_WithCorrectFromAndToStatus proves ADR-032's core
+// write path: a PATCH-driven transition appends exactly one task_status_history row with the
+// true prior status (read atomically via the UPDATE's CTE, not guessed).
+func TestUpdateTaskStatus_RecordsHistoryEntry_WithCorrectFromAndToStatus(t *testing.T) {
+	db, store := openTestStore(t)
+	task := taskStatusHistoryTestFixture(t, db, store)
+
+	if _, err := store.UpdateTaskStatus(task.ID, "in_progress", "operator-1"); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+
+	history, err := store.GetTaskStatusHistory(task.ID)
+	if err != nil {
+		t.Fatalf("GetTaskStatusHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(history))
+	}
+	e := history[0]
+	if e.FromStatus == nil || *e.FromStatus != "pending" {
+		t.Fatalf("expected from_status=pending, got %v", e.FromStatus)
+	}
+	if e.ToStatus != "in_progress" || e.ChangedBy != "operator-1" || e.TaskID != task.ID {
+		t.Fatalf("unexpected history entry: %+v", e)
+	}
+}
+
+// TestGetTaskStatusHistory_MultipleTransitions_ChronologicalOrder proves entries accumulate (not
+// overwrite, unlike tasks.status_changed_by) and are returned oldest-first for a timeline view.
+func TestGetTaskStatusHistory_MultipleTransitions_ChronologicalOrder(t *testing.T) {
+	db, store := openTestStore(t)
+	task := taskStatusHistoryTestFixture(t, db, store)
+
+	if _, err := store.UpdateTaskStatus(task.ID, "in_progress", "operator-1"); err != nil {
+		t.Fatalf("transition 1: %v", err)
+	}
+	if _, err := store.UpdateTaskStatus(task.ID, "completed", "operator-2"); err != nil {
+		t.Fatalf("transition 2: %v", err)
+	}
+
+	history, err := store.GetTaskStatusHistory(task.ID)
+	if err != nil {
+		t.Fatalf("GetTaskStatusHistory: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history entries, got %d", len(history))
+	}
+	if history[0].ToStatus != "in_progress" || history[1].ToStatus != "completed" {
+		t.Fatalf("expected chronological order [in_progress, completed], got [%s, %s]", history[0].ToStatus, history[1].ToStatus)
+	}
+	if history[1].FromStatus == nil || *history[1].FromStatus != "in_progress" {
+		t.Fatalf("expected second entry's from_status=in_progress, got %v", history[1].FromStatus)
+	}
+}
+
+// TestGetTaskStatusHistory_EmptyNonNil_ForTaskWithNoTransitionsYet mirrors the TASKUI-04
+// nil-slice convention: a still-pending task (never PATCHed) has no history rows, but the
+// response must still be `[]`, not `null` — the same class of frontend crash TASKUI-04 fixed for
+// ListTasks/ListZones/etc.
+func TestGetTaskStatusHistory_EmptyNonNil_ForTaskWithNoTransitionsYet(t *testing.T) {
+	db, store := openTestStore(t)
+	task := taskStatusHistoryTestFixture(t, db, store)
+
+	history, err := store.GetTaskStatusHistory(task.ID)
+	if err != nil {
+		t.Fatalf("GetTaskStatusHistory: %v", err)
+	}
+	if history == nil {
+		t.Fatal("expected non-nil empty slice for a task with no transitions yet, got nil (marshals to JSON null)")
+	}
+	if len(history) != 0 {
+		t.Fatalf("expected 0 entries for a never-transitioned task, got %d", len(history))
+	}
+}
+
+func TestGetTaskStatusHistory_NotFound_ForNonexistentTask(t *testing.T) {
+	_, store := openTestStore(t)
+
+	_, err := store.GetTaskStatusHistory("does-not-exist-" + t.Name())
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("expected ErrTaskNotFound, got %v", err)
+	}
+}
+
+// TestBackfillTaskStatusHistory_PopulatesLegacyTransitionsIdempotently verifies the ADR-032
+// rollout migration against tasks that transitioned before task_status_history existed (rows
+// inserted directly via raw SQL, bypassing CreateTask/UpdateTaskStatus, to simulate genuinely
+// pre-existing data) — and that a repeated startup does not duplicate the backfilled rows.
+// Isolated schema (like TestListTasks_ReturnsEmptySliceNotNull_WhenNoTasksExist) so pre-existing
+// rows in the shared `public` schema from other tests can't interfere with the legacy-data setup.
+func TestBackfillTaskStatusHistory_PopulatesLegacyTransitionsIdempotently(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set — skipping Postgres integration test")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+
+	const schemaName = "fleet_backfill_history_test"
+	if _, err := db.Exec("DROP SCHEMA IF EXISTS " + schemaName + " CASCADE"); err != nil {
+		t.Fatalf("drop schema: %v", err)
+	}
+	if _, err := db.Exec("CREATE SCHEMA " + schemaName); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DROP SCHEMA IF EXISTS " + schemaName + " CASCADE") })
+	if _, err := db.Exec("SET search_path TO " + schemaName); err != nil {
+		t.Fatalf("set search_path: %v", err)
+	}
+
+	// First startup bootstraps the (empty) schema — no legacy tasks exist yet, so this is a no-op
+	// backfill run, exercising that NewPostgresFleetStore tolerates having nothing to do.
+	if _, err := NewPostgresFleetStore(db); err != nil {
+		t.Fatalf("bootstrap store: %v", err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO vehicles (id, display_name) VALUES ('legacy-vehicle', 'Legacy Vehicle')`); err != nil {
+		t.Fatalf("seed vehicle: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO zones (id, name, environment) VALUES ('legacy-zone', 'Zone', 'indoor')`); err != nil {
+		t.Fatalf("seed zone: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO stations (id, zone_id, name) VALUES ('legacy-station-a', 'legacy-zone', 'A'), ('legacy-station-b', 'legacy-zone', 'B')`); err != nil {
+		t.Fatalf("seed stations: %v", err)
+	}
+
+	completedAt := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	createdAt := time.Now().Add(-3 * time.Hour).Truncate(time.Second)
+	if _, err := db.Exec(
+		`INSERT INTO tasks (id, vehicle_id, from_station_id, to_station_id, status, status_changed_by, completed_at, created_at)
+		 VALUES ('legacy-task-completed', 'legacy-vehicle', 'legacy-station-a', 'legacy-station-b', 'completed', 'legacy-operator', $1, $2)`,
+		completedAt, createdAt,
+	); err != nil {
+		t.Fatalf("seed legacy completed task: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO tasks (id, vehicle_id, from_station_id, to_station_id, status, status_changed_by, created_at)
+		 VALUES ('legacy-task-cancelled', 'legacy-vehicle', 'legacy-station-a', 'legacy-station-b', 'cancelled', 'legacy-operator', $1)`,
+		createdAt,
+	); err != nil {
+		t.Fatalf("seed legacy cancelled task: %v", err)
+	}
+
+	// Second startup is the actual backfill under test — mirrors the real rollout (existing dev
+	// DB with pre-ADR-032 tasks, service restarts once the migration ships).
+	store, err := NewPostgresFleetStore(db)
+	if err != nil {
+		t.Fatalf("NewPostgresFleetStore (backfill run): %v", err)
+	}
+
+	completedHistory, err := store.GetTaskStatusHistory("legacy-task-completed")
+	if err != nil {
+		t.Fatalf("GetTaskStatusHistory (completed): %v", err)
+	}
+	if len(completedHistory) != 1 {
+		t.Fatalf("expected 1 backfilled entry for completed task, got %d", len(completedHistory))
+	}
+	ce := completedHistory[0]
+	if ce.FromStatus == nil || *ce.FromStatus != "in_progress" {
+		t.Fatalf("expected backfilled from_status=in_progress for a completed task, got %v", ce.FromStatus)
+	}
+	if ce.ToStatus != "completed" || ce.ChangedBy != "legacy-operator" {
+		t.Fatalf("unexpected backfilled entry: %+v", ce)
+	}
+	if ce.ChangedAt.Unix() != completedAt.Unix() {
+		t.Fatalf("expected changed_at to use completed_at (%v), got %v", completedAt, ce.ChangedAt)
+	}
+
+	cancelledHistory, err := store.GetTaskStatusHistory("legacy-task-cancelled")
+	if err != nil {
+		t.Fatalf("GetTaskStatusHistory (cancelled): %v", err)
+	}
+	if len(cancelledHistory) != 1 {
+		t.Fatalf("expected 1 backfilled entry for cancelled task, got %d", len(cancelledHistory))
+	}
+	xe := cancelledHistory[0]
+	if xe.FromStatus != nil {
+		t.Fatalf("expected from_status=nil for a backfilled cancelled task (ambiguous prior status), got %v", *xe.FromStatus)
+	}
+	if xe.ChangedAt.Unix() != createdAt.Unix() {
+		t.Fatalf("expected changed_at to fall back to created_at (%v) for a cancelled task without completed_at, got %v", createdAt, xe.ChangedAt)
+	}
+
+	// Idempotency: a third startup (simulating another restart) must not duplicate rows.
+	if _, err := NewPostgresFleetStore(db); err != nil {
+		t.Fatalf("NewPostgresFleetStore (third run): %v", err)
+	}
+	completedHistoryAgain, err := store.GetTaskStatusHistory("legacy-task-completed")
+	if err != nil {
+		t.Fatalf("GetTaskStatusHistory after third run: %v", err)
+	}
+	if len(completedHistoryAgain) != 1 {
+		t.Fatalf("expected backfill to stay idempotent (still 1 entry), got %d", len(completedHistoryAgain))
 	}
 }

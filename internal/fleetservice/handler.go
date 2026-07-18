@@ -263,6 +263,23 @@ type TaskStatusChangedEvent struct {
 	ChangedBy   string     `json:"status_changed_by"`
 }
 
+// GetTaskStatusHistory handles GET /fleet/tasks/{id}/history (ADR-032) — the full recorded
+// transition history for one task, chronologically ordered. 404 if the task itself doesn't
+// exist (distinguishes that from "exists but never transitioned yet", which is `[]`).
+func (h *Handler) GetTaskStatusHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	entries, err := h.store.GetTaskStatusHistory(id)
+	switch {
+	case errors.Is(err, ErrTaskNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, entries)
+}
+
 // ─── Alerts ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListAlerts(w http.ResponseWriter, _ *http.Request) {
