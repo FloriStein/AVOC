@@ -98,35 +98,7 @@ func (e *Engine) Handle(rawMsg []byte, sess session.Session) ([]byte, error) {
 		// Intentionally do NOT reset — watchdog fires after timeout → SAFE_MODE.
 
 	case controlv1.CommandType_COMMAND_TYPE_EMERGENCY_STOP:
-		svcLog.Event(logger.EventEmergencyStop, "EMERGENCY_STOP received → SAFE_MODE",
-			"session_id", sess.ID, "vehicle_id", sess.VehicleID, "operator_id", sess.OperatorID)
-
-		// Write to audit store BEFORE state transition (ADR-018)
-		if e.auditWriter != nil {
-			sys, ctrl, _, _ := vc.SM.Get()
-			if err := e.auditWriter.WriteSync(audit.SafetyAuditEvent{
-				EventID:     ulid.Generate(),
-				SessionID:   sess.ID,
-				VehicleID:   sess.VehicleID,
-				OperatorID:  sess.OperatorID,
-				EventType:   logger.EventEmergencyStop,
-				Reason:      "operator EMERGENCY_STOP command",
-				SystemState: string(sys),
-				CtrlState:   string(ctrl),
-				Timestamp:   time.Now(),
-			}); err != nil {
-				svcLog.Error("audit write failed — proceeding to SAFE_MODE", "error", err)
-			}
-		}
-
-		vc.SM.TransitionSystem(statemachine.StateSafeMode)
-		e.safetyPub.PublishEvent(safetyservice.SafetyEvent{
-			SessionID: sess.ID,
-			VehicleID: sess.VehicleID,
-			Type:      safetyservice.EventEmergencyStop,
-			Reason:    "operator EMERGENCY_STOP command",
-			Timestamp: time.Now(),
-		})
+		e.handleEmergencyStop(vc, sess)
 
 	case controlv1.CommandType_COMMAND_TYPE_STEER,
 		controlv1.CommandType_COMMAND_TYPE_THROTTLE,
@@ -136,23 +108,65 @@ func (e *Engine) Handle(rawMsg []byte, sess session.Session) ([]byte, error) {
 		if sess.OperatorRole == "OBSERVER" {
 			return e.ack(sess, eventID, false, "observer role: control commands not allowed")
 		}
-		svcLog.Debug("control command",
-			"type", cmd.Type, "value", cmd.Value, "session_id", sess.ID)
-		// Forward raw Protobuf bytes to vehicle (ADR-021). Fire-and-forget.
-		if e.vehicleForwarder != nil && sess.VehicleID != "" {
-			if err := e.vehicleForwarder.ForwardCommand(sess.VehicleID, rawMsg); err != nil {
-				svcLog.Debug("vehicle forward failed", "vehicle_id", sess.VehicleID, "error", err)
-			} else {
-				// Command reached the vehicle — expect ACK within timeout (ADR-009).
-				vc.VehicleACKWatchdog.CommandForwarded()
-			}
-		}
+		e.forwardMovementCommand(vc, sess, cmd, rawMsg)
 
 	default:
 		svcLog.Warn("unhandled command type", "type", cmd.Type)
 	}
 
 	return e.ack(sess, eventID, true, "")
+}
+
+// handleEmergencyStop writes the audit event (before the state transition,
+// ADR-018), transitions the vehicle to SAFE_MODE, and publishes the safety
+// event to safety-service.
+func (e *Engine) handleEmergencyStop(vc *vehiclecontext.VehicleContext, sess session.Session) {
+	svcLog.Event(logger.EventEmergencyStop, "EMERGENCY_STOP received → SAFE_MODE",
+		"session_id", sess.ID, "vehicle_id", sess.VehicleID, "operator_id", sess.OperatorID)
+
+	// Write to audit store BEFORE state transition (ADR-018)
+	if e.auditWriter != nil {
+		sys, ctrl, _, _ := vc.SM.Get()
+		if err := e.auditWriter.WriteSync(audit.SafetyAuditEvent{
+			EventID:     ulid.Generate(),
+			SessionID:   sess.ID,
+			VehicleID:   sess.VehicleID,
+			OperatorID:  sess.OperatorID,
+			EventType:   logger.EventEmergencyStop,
+			Reason:      "operator EMERGENCY_STOP command",
+			SystemState: string(sys),
+			CtrlState:   string(ctrl),
+			Timestamp:   time.Now(),
+		}); err != nil {
+			svcLog.Error("audit write failed — proceeding to SAFE_MODE", "error", err)
+		}
+	}
+
+	vc.SM.TransitionSystem(statemachine.StateSafeMode)
+	e.safetyPub.PublishEvent(safetyservice.SafetyEvent{
+		SessionID: sess.ID,
+		VehicleID: sess.VehicleID,
+		Type:      safetyservice.EventEmergencyStop,
+		Reason:    "operator EMERGENCY_STOP command",
+		Timestamp: time.Now(),
+	})
+}
+
+// forwardMovementCommand forwards raw Protobuf bytes to the vehicle
+// (ADR-021, fire-and-forget) and arms the VehicleACKWatchdog once the
+// command has actually reached the vehicle (ADR-009).
+func (e *Engine) forwardMovementCommand(vc *vehiclecontext.VehicleContext, sess session.Session, cmd *controlv1.ControlCommand, rawMsg []byte) {
+	svcLog.Debug("control command",
+		"type", cmd.Type, "value", cmd.Value, "session_id", sess.ID)
+	if e.vehicleForwarder == nil || sess.VehicleID == "" {
+		return
+	}
+	if err := e.vehicleForwarder.ForwardCommand(sess.VehicleID, rawMsg); err != nil {
+		svcLog.Debug("vehicle forward failed", "vehicle_id", sess.VehicleID, "error", err)
+		return
+	}
+	// Command reached the vehicle — expect ACK within timeout (ADR-009).
+	vc.VehicleACKWatchdog.CommandForwarded()
 }
 
 func (e *Engine) ack(sess session.Session, eventID string, success bool, errMsg string) ([]byte, error) {

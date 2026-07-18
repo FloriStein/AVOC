@@ -66,26 +66,33 @@ func (h *WSHandler) WithAuditWriter(aw audit.AuditWriter) *WSHandler {
 	return h
 }
 
-// ServeWS upgrades the connection and validates the JWT + session_id (ADR-004/025).
-// The session_id query parameter is required — it links this WS connection to a
-// previously created session (POST /session/start). Role is derived from the session.
-func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
+// wsAuth bundles the JWT claims + session resolved for one WS upgrade
+// request (Rule 2.4 — bundles what would otherwise be 2+ related return values).
+type wsAuth struct {
+	claims *Claims
+	sess   session.Session
+}
+
+// authenticateWS validates the JWT + session_id (ADR-004/025) for a WS
+// upgrade request. On failure it writes the appropriate HTTP error response
+// itself and returns ok=false — callers must return immediately in that case.
+func (h *WSHandler) authenticateWS(w http.ResponseWriter, r *http.Request) (wsAuth, bool) {
 	tokenStr := extractToken(r)
 	if tokenStr == "" {
 		http.Error(w, "missing token", http.StatusUnauthorized)
-		return
+		return wsAuth{}, false
 	}
 
 	claims, err := h.validateJWT(tokenStr)
 	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
+		return wsAuth{}, false
 	}
 
 	sessionID := r.URL.Query().Get("session_id")
 	if sessionID == "" {
 		http.Error(w, "session_id required", http.StatusBadRequest)
-		return
+		return wsAuth{}, false
 	}
 
 	sess, ok := h.sessionMgr.GetSession(sessionID)
@@ -94,9 +101,41 @@ func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			"WS upgrade rejected — session_id not found",
 			"session_id", sessionID, "remote", r.RemoteAddr)
 		http.Error(w, "session not found", http.StatusNotFound)
-		return
+		return wsAuth{}, false
 	}
 
+	return wsAuth{claims: claims, sess: sess}, true
+}
+
+// recoverFromSafeMode resumes an ACTIVE_OPERATOR reconnecting after SAFE_MODE
+// (ADR-009/011). POST /session/start already set the machine to CONNECTED for
+// a fresh session — only the WS reconnect path (resume after SAFE_MODE) needs
+// to transition back.
+func (h *WSHandler) recoverFromSafeMode(sess session.Session) {
+	vc := h.vehicleContexts.Get(sess.VehicleID)
+	current, _, _, _ := vc.SM.Get()
+	if current != statemachine.StateSafeMode {
+		return
+	}
+	vc.SM.TransitionSystem(statemachine.StateRecovering)
+	vc.SM.TransitionSystem(statemachine.StateAuthenticated)
+	vc.SM.TransitionToConnected()
+	vc.SM.TransitionOperator(statemachine.OpActive)
+	vc.Deadman.Start(sess.ID, sess.VehicleID)
+	svcLog.Event(logger.EventStateTransition,
+		"ACTIVE_OPERATOR reconnected — recovered from SAFE_MODE, deadman restarted",
+		"session_id", sess.ID)
+}
+
+// ServeWS upgrades the connection and validates the JWT + session_id (ADR-004/025).
+// The session_id query parameter is required — it links this WS connection to a
+// previously created session (POST /session/start). Role is derived from the session.
+func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
+	auth, ok := h.authenticateWS(w, r)
+	if !ok {
+		return
+	}
+	claims, sess := auth.claims, auth.sess
 	isObserver := sess.OperatorRole == "OBSERVER"
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -106,22 +145,8 @@ func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Recovery path for ACTIVE_OPERATOR reconnecting after SAFE_MODE (ADR-009/011).
-	// POST /session/start already set the machine to CONNECTED for a fresh session.
-	// Only the WS reconnect path (resume after SAFE_MODE) needs to transition back.
 	if !isObserver {
-		vc := h.vehicleContexts.Get(sess.VehicleID)
-		current, _, _, _ := vc.SM.Get()
-		if current == statemachine.StateSafeMode {
-			vc.SM.TransitionSystem(statemachine.StateRecovering)
-			vc.SM.TransitionSystem(statemachine.StateAuthenticated)
-			vc.SM.TransitionToConnected()
-			vc.SM.TransitionOperator(statemachine.OpActive)
-			vc.Deadman.Start(sess.ID, sess.VehicleID)
-			svcLog.Event(logger.EventStateTransition,
-				"ACTIVE_OPERATOR reconnected — recovered from SAFE_MODE, deadman restarted",
-				"session_id", sess.ID)
-		}
+		h.recoverFromSafeMode(sess)
 	}
 
 	svcLog.Event(logger.EventWsConnected, "WebSocket connected",
@@ -141,58 +166,26 @@ func (h *WSHandler) heartbeat(conn *websocket.Conn) {
 	}
 }
 
+// wsConn bundles the per-connection state a message-loop helper needs
+// (Rule 2.3 — keeps processWSMessage/handleWSDisconnect within the 4-param limit).
+type wsConn struct {
+	conn       *websocket.Conn
+	vc         *vehiclecontext.VehicleContext
+	claims     *Claims
+	sess       session.Session
+	isObserver bool
+}
+
 func (h *WSHandler) readLoop(conn *websocket.Conn, claims *Claims, sess session.Session, isObserver bool) {
-	vc := h.vehicleContexts.Get(sess.VehicleID)
+	ws := wsConn{
+		conn:       conn,
+		vc:         h.vehicleContexts.Get(sess.VehicleID),
+		claims:     claims,
+		sess:       sess,
+		isObserver: isObserver,
+	}
 
-	defer func() {
-		// Only ACTIVE_OPERATOR disconnect triggers SAFE_MODE (ADR-025).
-		if !isObserver {
-			vc.Deadman.Stop()
-			// If the session was already released via POST /session/end, the WS close
-			// is intentional — do not trigger SAFE_MODE in that case.
-			_, sessionStillActive := h.sessionMgr.GetSession(sess.ID)
-			sysState, _, _, _ := vc.SM.Get()
-			if sessionStillActive && sysState != statemachine.StateSafeMode {
-				svcLog.Event(logger.EventWsDisconnect,
-					"ACTIVE_OPERATOR WebSocket disconnected → SAFE_MODE",
-					"subject", claims.Subject, "session_id", sess.ID)
-
-				if h.auditWriter != nil {
-					sys, ctrl, _, _ := vc.SM.Get()
-					if err := h.auditWriter.WriteSync(audit.SafetyAuditEvent{
-						EventID:     ulid.Generate(),
-						SessionID:   sess.ID,
-						VehicleID:   sess.VehicleID,
-						OperatorID:  sess.OperatorID,
-						EventType:   logger.EventWsDisconnect,
-						Reason:      "ACTIVE_OPERATOR WebSocket disconnected",
-						SystemState: string(sys),
-						CtrlState:   string(ctrl),
-						Timestamp:   time.Now(),
-					}); err != nil {
-						svcLog.Error("audit write failed — proceeding to SAFE_MODE", "error", err)
-					}
-				}
-
-				vc.SM.TransitionSystem(statemachine.StateSafeMode)
-			}
-			if sessionStillActive {
-				sys, ctrl, _, _ := vc.SM.Get()
-				h.sessionMgr.SaveCheckpoint(string(sys), string(ctrl), "WS_DISCONNECT")
-				h.sessionMgr.PushSFUEvent("SESSION_SAFE_MODE")
-				svcLog.Event(logger.EventSafeModeEntered,
-					"recovery checkpoint saved", "session_id", sess.ID)
-			} else {
-				svcLog.Event(logger.EventWsDisconnect,
-					"ACTIVE_OPERATOR WebSocket closed after session/end — no SAFE_MODE",
-					"subject", claims.Subject, "session_id", sess.ID)
-			}
-		} else {
-			svcLog.Info("OBSERVER WebSocket disconnected — no SAFE_MODE",
-				"subject", claims.Subject, "session_id", sess.ID)
-			h.sessionMgr.ReleaseSession(sess.ID)
-		}
-	}()
+	defer h.handleWSDisconnect(ws)
 
 	conn.SetPongHandler(func(_ string) error {
 		conn.SetReadDeadline(time.Now().Add(heartbeatInterval * 2))
@@ -204,46 +197,113 @@ func (h *WSHandler) readLoop(conn *websocket.Conn, claims *Claims, sess session.
 		if err != nil {
 			return
 		}
-
-		sysState, ctrlState, _, _ := vc.SM.Get()
-		if sysState == statemachine.StateSafeMode || ctrlState == statemachine.ControlBlocked {
-			// Commands dropped silently in SAFE_MODE (ADR-011)
-			continue
+		if !h.processWSMessage(ws, msg) {
+			return
 		}
+	}
+}
 
-		// Refresh session in case role changed (e.g. after handover).
-		currentSess, hasSession := h.sessionMgr.GetSession(sess.ID)
+// handleWSDisconnect runs the disconnect bookkeeping deferred by readLoop.
+// Only ACTIVE_OPERATOR disconnect triggers SAFE_MODE (ADR-025); OBSERVER
+// disconnects just release the session.
+func (h *WSHandler) handleWSDisconnect(ws wsConn) {
+	if ws.isObserver {
+		svcLog.Info("OBSERVER WebSocket disconnected — no SAFE_MODE",
+			"subject", ws.claims.Subject, "session_id", ws.sess.ID)
+		h.sessionMgr.ReleaseSession(ws.sess.ID)
+		return
+	}
 
-		// Only ACTIVE_OPERATOR commands reset the deadman / ACK watcher.
-		if hasSession && !isObserver {
-			vc.ACKTimeoutWatcher.CommandReceived(currentSess.ID, currentSess.VehicleID)
-		}
+	ws.vc.Deadman.Stop()
+	// If the session was already released via POST /session/end, the WS close
+	// is intentional — do not trigger SAFE_MODE in that case.
+	_, sessionStillActive := h.sessionMgr.GetSession(ws.sess.ID)
+	sysState, _, _, _ := ws.vc.SM.Get()
+	if sessionStillActive && sysState != statemachine.StateSafeMode {
+		svcLog.Event(logger.EventWsDisconnect,
+			"ACTIVE_OPERATOR WebSocket disconnected → SAFE_MODE",
+			"subject", ws.claims.Subject, "session_id", ws.sess.ID)
+		h.auditWSDisconnect(ws)
+		ws.vc.SM.TransitionSystem(statemachine.StateSafeMode)
+	}
+	if !sessionStillActive {
+		svcLog.Event(logger.EventWsDisconnect,
+			"ACTIVE_OPERATOR WebSocket closed after session/end — no SAFE_MODE",
+			"subject", ws.claims.Subject, "session_id", ws.sess.ID)
+		return
+	}
+	sys, ctrl, _, _ := ws.vc.SM.Get()
+	h.sessionMgr.SaveCheckpoint(string(sys), string(ctrl), "WS_DISCONNECT")
+	h.sessionMgr.PushSFUEvent("SESSION_SAFE_MODE")
+	svcLog.Event(logger.EventSafeModeEntered,
+		"recovery checkpoint saved", "session_id", ws.sess.ID)
+}
 
-		var ackBytes []byte
-		if hasSession {
-			var err error
-			ackBytes, err = h.engine.Handle(msg, currentSess)
-			if err != nil {
-				ackBytes, _ = proto.Marshal(&controlv1.ControlAck{
-					Header:   &commonv1.CorrelationHeader{Timestamp: time.Now().UnixMilli()},
-					Success:  false,
-					ErrorMsg: "command engine error",
-				})
-			}
-		} else {
+// auditWSDisconnect persists the ACTIVE_OPERATOR disconnect as a safety audit
+// event (ADR-018), if an audit writer is configured. A write failure is
+// logged but never blocks the SAFE_MODE transition.
+func (h *WSHandler) auditWSDisconnect(ws wsConn) {
+	if h.auditWriter == nil {
+		return
+	}
+	sys, ctrl, _, _ := ws.vc.SM.Get()
+	if err := h.auditWriter.WriteSync(audit.SafetyAuditEvent{
+		EventID:     ulid.Generate(),
+		SessionID:   ws.sess.ID,
+		VehicleID:   ws.sess.VehicleID,
+		OperatorID:  ws.sess.OperatorID,
+		EventType:   logger.EventWsDisconnect,
+		Reason:      "ACTIVE_OPERATOR WebSocket disconnected",
+		SystemState: string(sys),
+		CtrlState:   string(ctrl),
+		Timestamp:   time.Now(),
+	}); err != nil {
+		svcLog.Error("audit write failed — proceeding to SAFE_MODE", "error", err)
+	}
+}
+
+// processWSMessage handles one inbound WS message and writes back the ack.
+// Returns false when the connection should be closed (write failure).
+func (h *WSHandler) processWSMessage(ws wsConn, msg []byte) bool {
+	sysState, ctrlState, _, _ := ws.vc.SM.Get()
+	if sysState == statemachine.StateSafeMode || ctrlState == statemachine.ControlBlocked {
+		// Commands dropped silently in SAFE_MODE (ADR-011)
+		return true
+	}
+
+	// Refresh session in case role changed (e.g. after handover).
+	currentSess, hasSession := h.sessionMgr.GetSession(ws.sess.ID)
+
+	// Only ACTIVE_OPERATOR commands reset the deadman / ACK watcher.
+	if hasSession && !ws.isObserver {
+		ws.vc.ACKTimeoutWatcher.CommandReceived(currentSess.ID, currentSess.VehicleID)
+	}
+
+	var ackBytes []byte
+	if hasSession {
+		var err error
+		ackBytes, err = h.engine.Handle(msg, currentSess)
+		if err != nil {
 			ackBytes, _ = proto.Marshal(&controlv1.ControlAck{
 				Header:   &commonv1.CorrelationHeader{Timestamp: time.Now().UnixMilli()},
 				Success:  false,
-				ErrorMsg: "no active session",
+				ErrorMsg: "command engine error",
 			})
 		}
-
-		if err := conn.WriteMessage(websocket.BinaryMessage, ackBytes); err != nil {
-			vc.ACKTimeoutWatcher.CommandACKed()
-			return
-		}
-		vc.ACKTimeoutWatcher.CommandACKed()
+	} else {
+		ackBytes, _ = proto.Marshal(&controlv1.ControlAck{
+			Header:   &commonv1.CorrelationHeader{Timestamp: time.Now().UnixMilli()},
+			Success:  false,
+			ErrorMsg: "no active session",
+		})
 	}
+
+	if err := ws.conn.WriteMessage(websocket.BinaryMessage, ackBytes); err != nil {
+		ws.vc.ACKTimeoutWatcher.CommandACKed()
+		return false
+	}
+	ws.vc.ACKTimeoutWatcher.CommandACKed()
+	return true
 }
 
 func (h *WSHandler) validateJWT(tokenStr string) (*Claims, error) {

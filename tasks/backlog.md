@@ -402,18 +402,21 @@ Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle`.
 Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-03` bis `GOSTYLE-11`,
 Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle28`.
 
-#### Sprint 29 — `control-server` (hohes Risiko) + Abschlussverifikation (4 Tasks)
+#### Sprint 29 — `control-server` (hohes Risiko) + Abschlussverifikation — ✅ fertig
 
-Sicherheitskritischer Service, absichtlich als letzter und eigener Sprint. **GOSTYLE-12 braucht
-eine eigene Grill-Me-Session vor Start** (CLAUDE.MD Abschnitt 5, Pflicht bei Typ L) — nicht einfach
-lospatchen.
+Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-12`, `GOSTYLE-13`,
+`GOSTYLE-14`, `GOSTYLE-16`, Details/Ergebnisse dort). Branch
+`feature/fleet-service-foundation-gostyle29`. Damit ist Phase 1 des EPICs (Sprints 27/28/29)
+vollständig abgeschlossen — Phase 2 (Interface-Segregation, Rule 4.2/4.3) folgt koordiniert mit
+ADR-031/HEX-05.
 
-| ID | Task | Typ | Status | Abhängigkeiten |
-|----|------|-----|--------|-----------------|
-| GOSTYLE-12 | **`control-server`: `main()` (678 Zeilen) zerlegen** — höchstes Risiko im gesamten Scope: sicherheitskritische Bootstrap-Reihenfolge nur in Kommentaren dokumentiert (ADR-031 nennt diesen Service explizit "höchstes Risiko, geringste Testabdeckung"). Vorgehen: Extraktion entlang bestehender logischer Blöcke (State-Machine-Init, DB, Auth, Recording, SFU, WS-Routen, Server-Start), Reihenfolge 1:1 erhalten, nach jeder Extraktion vollständiger Testlauf + Diff-Review | L | 🔲 Backlog | Sprint 27, eigene Grill-Me |
-| GOSTYLE-13 | `internal/controlserver/transport/websocket.go`: `WSHandler.readLoop` (104)/`ServeWS` (61) zerlegen | M | 🔲 Backlog | GOSTYLE-12 (gleiche Datei-Familie — nach dem main.go-Umbau, um Merge-Konflikte zu vermeiden) |
-| GOSTYLE-14 | `internal/controlserver/command/engine.go`: `Engine.Handle` (82 Zeilen) zerlegen | M | 🔲 Backlog | — |
-| GOSTYLE-16 | Abschlussverifikation Phase 1 gesamt: `go build ./...`, `go vet ./...`, `gofmt -l .` (leer), vollständiger `go test ./...`-Lauf je betroffenem Service, Diff-Review aller Sprint-27/28/29-Tasks gegen "nur Struktur, kein Verhaltenswechsel" | S | 🔲 Backlog | alle vorherigen |
+**Neuer Folge-Task (aus GOSTYLE-13 gefunden, nicht Teil des Sprint-29-Scopes):** die drei
+WS-Integrationstests in `tests/integration/services_test.go`
+(`TestIntegration_SessionLifecycle_StartAndEnd`, `_MediaFailed_TriggersDegrade_NeverSafeMode`,
+`_EmergencyStop_TriggersSafeMode`) skippen im Docker-Test-Stack, weil ihre WS-Dial-URL nur
+`?token=` statt `?token=&session_id=` mitgibt — ein vorbestehender Test-Setup-Gap (nicht
+WebRTC/SFU-bedingt wie die anderen 3 bekannten Skips), der `WSHandler.readLoop` komplett ohne
+automatisierte Abdeckung lässt. Typ S, unabhängig von GOSTYLE-* erledigbar.
 
 **Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden, unabhängig einreihbar):**
 `gofmt -l` findet 13 unformatierte Dateien — trivialer `gofmt -w .`-Task (Typ S, keine
