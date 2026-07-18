@@ -23,11 +23,13 @@ type ConnectionChecker interface {
 	Connected(vehicleID string) bool
 }
 
-// VehicleStore manages the persisted fleet configuration.
+// VehicleStore manages the persisted fleet configuration. SeedDefault is deliberately not part
+// of this interface (GOSTYLE-IF-05) — it's a one-shot bootstrap step called on the concrete
+// *PostgresVehicleStore in cmd/control-server/main.go's newVehicleStore, never through this
+// interface once the store is running.
 type VehicleStore interface {
 	List() ([]Vehicle, error)
 	Add(id, displayName, description string) error
 	Delete(id string) error
 	Exists(id string) (bool, error)
-	SeedDefault() error
 }

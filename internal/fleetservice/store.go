@@ -39,6 +39,15 @@ const vehicleTypeColumn = `ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle
 // ALTER is required for the already-running dev DB where `tasks` predates ADR-030.
 const taskStatusChangedByColumn = `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS status_changed_by TEXT;`
 
+// vehicleStatusPositionXYColumns extends `vehicle_status` with the Indoor-Kartenrendering
+// coordinate pair (ADR-034) — same idempotent-ALTER pattern as vehicleTypeColumn/
+// taskStatusChangedByColumn, required for the already-running dev DB where `vehicle_status`
+// predates ADR-034. Also declared directly in `schema`'s CREATE TABLE below for fresh installs.
+const vehicleStatusPositionXYColumns = `
+ALTER TABLE vehicle_status ADD COLUMN IF NOT EXISTS position_x DOUBLE PRECISION;
+ALTER TABLE vehicle_status ADD COLUMN IF NOT EXISTS position_y DOUBLE PRECISION;
+`
+
 const schema = `
 CREATE TABLE IF NOT EXISTS zones (
     id           TEXT PRIMARY KEY,
@@ -79,6 +88,8 @@ CREATE TABLE IF NOT EXISTS vehicle_status (
     position_lat    DOUBLE PRECISION,
     position_lon    DOUBLE PRECISION,
     position_zone_id TEXT REFERENCES zones(id),
+    position_x      DOUBLE PRECISION,
+    position_y      DOUBLE PRECISION,
     autonomy_mode   TEXT NOT NULL DEFAULT 'autonomous' CHECK (autonomy_mode IN ('autonomous', 'teleoperated', 'manual')),
     current_task_id TEXT REFERENCES tasks(id),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -225,15 +236,22 @@ type TaskStatusHistoryEntry struct {
 // VehicleStatus is the live fleet telemetry for one vehicle — separate from the vehicles
 // identity table because it's updated at high frequency (ADR-029).
 type VehicleStatus struct {
-	VehicleID      string    `json:"vehicle_id"`
-	BatteryPct     *float64  `json:"battery_pct,omitempty"`
-	Speed          *float64  `json:"speed,omitempty"`
-	PositionLat    *float64  `json:"position_lat,omitempty"`
-	PositionLon    *float64  `json:"position_lon,omitempty"`
-	PositionZoneID *string   `json:"position_zone_id,omitempty"`
-	AutonomyMode   string    `json:"autonomy_mode"` // "autonomous" | "teleoperated" | "manual"
-	CurrentTaskID  *string   `json:"current_task_id,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	VehicleID      string   `json:"vehicle_id"`
+	BatteryPct     *float64 `json:"battery_pct,omitempty"`
+	Speed          *float64 `json:"speed,omitempty"`
+	PositionLat    *float64 `json:"position_lat,omitempty"`
+	PositionLon    *float64 `json:"position_lon,omitempty"`
+	PositionZoneID *string  `json:"position_zone_id,omitempty"`
+	// PositionX/Y is the Indoor-Kartenrendering point position within PositionZoneID's own
+	// coordinate system (ADR-034) — same semantics as Station.PositionX/Y, meaningless without a
+	// PositionZoneID whose Zone.Environment is "indoor". Nil unless a caller explicitly sets it —
+	// nothing currently writes these two fields (no simulator/gateway integration yet, see
+	// ADR-034's Scope section).
+	PositionX     *float64  `json:"position_x,omitempty"`
+	PositionY     *float64  `json:"position_y,omitempty"`
+	AutonomyMode  string    `json:"autonomy_mode"` // "autonomous" | "teleoperated" | "manual"
+	CurrentTaskID *string   `json:"current_task_id,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // VehiclePositionHistoryPoint is one recorded position sample for a vehicle (ADR-033), returned
@@ -259,11 +277,46 @@ type Alert struct {
 	AcknowledgedBy *string    `json:"acknowledged_by,omitempty"`
 }
 
+// FleetStore is the repository port for the Fleet domain (ADR-031, HEX-01) — covers every
+// public method of PostgresFleetStore so Handler can depend on the interface instead of the
+// concrete Postgres type. Deliberately not narrowed to Handler's actual call set in this step
+// (that's GOSTYLE-IF-* interface-segregation work, explicitly deferred past HEX-05) — HEX-01's
+// only job is making fleet-service's store swappable at all.
+type FleetStore interface {
+	EnsureVehicleExists(id string) error
+	SetVehicleType(vehicleID, vehicleType string) error
+
+	AddZone(z Zone) error
+	ListZones() ([]Zone, error)
+
+	AddStation(st Station) error
+	ListStations() ([]Station, error)
+
+	CreateTask(t Task) (Task, error)
+	ListTasks() ([]Task, error)
+	UpdateTaskStatus(id, newStatus, changedBy string) (Task, error)
+	GetTaskStatusHistory(taskID string) ([]TaskStatusHistoryEntry, error)
+
+	UpsertVehicleStatus(vs VehicleStatus) error
+	ListVehicleStatus() ([]VehicleStatus, error)
+	ListVehiclesWithStatus() ([]FleetVehicle, error)
+
+	RecordPositionHistory(vehicleID string, lat, lon *float64) error
+	GetVehiclePositionHistory(vehicleID string) ([]VehiclePositionHistoryPoint, error)
+	PruneVehiclePositionHistory() error
+
+	CreateAlert(a Alert) (Alert, error)
+	ListAlerts() ([]Alert, error)
+	AcknowledgeAlert(id, acknowledgedBy string) error
+}
+
 // PostgresFleetStore persists the Fleet domain in the shared `avoc` Postgres database
 // (ADR-023/029) — own connection pool, same DB as control-server/auth-service.
 type PostgresFleetStore struct {
 	db *sql.DB
 }
+
+var _ FleetStore = (*PostgresFleetStore)(nil)
 
 func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 	if _, err := db.Exec(vehicleBaseTable); err != nil {
@@ -283,6 +336,9 @@ func NewPostgresFleetStore(db *sql.DB) (*PostgresFleetStore, error) {
 	}
 	if _, err := db.Exec(taskuiDemoSeedCleanup); err != nil {
 		return nil, fmt.Errorf("fleetservice: clean up taskui demo seed: %w", err)
+	}
+	if _, err := db.Exec(vehicleStatusPositionXYColumns); err != nil {
+		return nil, fmt.Errorf("fleetservice: extend vehicle_status table: %w", err)
 	}
 	if _, err := db.Exec(taskStatusHistoryTable); err != nil {
 		return nil, fmt.Errorf("fleetservice: create task_status_history table: %w", err)
@@ -658,18 +714,20 @@ func (s *PostgresFleetStore) GetTaskStatusHistory(taskID string) ([]TaskStatusHi
 // see tasks/backlog.md FLEET-02).
 func (s *PostgresFleetStore) UpsertVehicleStatus(vs VehicleStatus) error {
 	_, err := s.db.Exec(
-		`INSERT INTO vehicle_status (vehicle_id, battery_pct, speed, position_lat, position_lon, position_zone_id, autonomy_mode, current_task_id, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+		`INSERT INTO vehicle_status (vehicle_id, battery_pct, speed, position_lat, position_lon, position_zone_id, position_x, position_y, autonomy_mode, current_task_id, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
 		 ON CONFLICT (vehicle_id) DO UPDATE SET
 		   battery_pct = EXCLUDED.battery_pct,
 		   speed = EXCLUDED.speed,
 		   position_lat = EXCLUDED.position_lat,
 		   position_lon = EXCLUDED.position_lon,
 		   position_zone_id = EXCLUDED.position_zone_id,
+		   position_x = EXCLUDED.position_x,
+		   position_y = EXCLUDED.position_y,
 		   autonomy_mode = EXCLUDED.autonomy_mode,
 		   current_task_id = EXCLUDED.current_task_id,
 		   updated_at = NOW()`,
-		vs.VehicleID, vs.BatteryPct, vs.Speed, vs.PositionLat, vs.PositionLon, vs.PositionZoneID, vs.AutonomyMode, vs.CurrentTaskID,
+		vs.VehicleID, vs.BatteryPct, vs.Speed, vs.PositionLat, vs.PositionLon, vs.PositionZoneID, vs.PositionX, vs.PositionY, vs.AutonomyMode, vs.CurrentTaskID,
 	)
 	if err != nil {
 		return fmt.Errorf("fleetservice: upsert vehicle status: %w", err)
@@ -756,7 +814,7 @@ func (s *PostgresFleetStore) PruneVehiclePositionHistory() error {
 }
 
 func (s *PostgresFleetStore) ListVehicleStatus() ([]VehicleStatus, error) {
-	rows, err := s.db.Query(`SELECT vehicle_id, battery_pct, speed, position_lat, position_lon, position_zone_id, autonomy_mode, current_task_id, updated_at FROM vehicle_status`)
+	rows, err := s.db.Query(`SELECT vehicle_id, battery_pct, speed, position_lat, position_lon, position_zone_id, position_x, position_y, autonomy_mode, current_task_id, updated_at FROM vehicle_status`)
 	if err != nil {
 		return nil, fmt.Errorf("fleetservice: list vehicle status: %w", err)
 	}
@@ -766,7 +824,7 @@ func (s *PostgresFleetStore) ListVehicleStatus() ([]VehicleStatus, error) {
 	statuses := []VehicleStatus{}
 	for rows.Next() {
 		var vs VehicleStatus
-		if err := rows.Scan(&vs.VehicleID, &vs.BatteryPct, &vs.Speed, &vs.PositionLat, &vs.PositionLon, &vs.PositionZoneID, &vs.AutonomyMode, &vs.CurrentTaskID, &vs.UpdatedAt); err != nil {
+		if err := rows.Scan(&vs.VehicleID, &vs.BatteryPct, &vs.Speed, &vs.PositionLat, &vs.PositionLon, &vs.PositionZoneID, &vs.PositionX, &vs.PositionY, &vs.AutonomyMode, &vs.CurrentTaskID, &vs.UpdatedAt); err != nil {
 			return nil, err
 		}
 		statuses = append(statuses, vs)
@@ -787,6 +845,8 @@ type FleetVehicle struct {
 	PositionLat     *float64   `json:"position_lat,omitempty"`
 	PositionLon     *float64   `json:"position_lon,omitempty"`
 	PositionZoneID  *string    `json:"position_zone_id,omitempty"`
+	PositionX       *float64   `json:"position_x,omitempty"` // ADR-034, see VehicleStatus.PositionX
+	PositionY       *float64   `json:"position_y,omitempty"`
 	AutonomyMode    *string    `json:"autonomy_mode,omitempty"`
 	CurrentTaskID   *string    `json:"current_task_id,omitempty"`
 	StatusUpdatedAt *time.Time `json:"status_updated_at,omitempty"`
@@ -800,7 +860,7 @@ func (s *PostgresFleetStore) ListVehiclesWithStatus() ([]FleetVehicle, error) {
 	rows, err := s.db.Query(`
 		SELECT v.id, v.display_name, v.vehicle_type,
 		       vs.battery_pct, vs.speed, vs.position_lat, vs.position_lon,
-		       vs.position_zone_id, vs.autonomy_mode, vs.current_task_id, vs.updated_at
+		       vs.position_zone_id, vs.position_x, vs.position_y, vs.autonomy_mode, vs.current_task_id, vs.updated_at
 		FROM vehicles v
 		LEFT JOIN vehicle_status vs ON vs.vehicle_id = v.id
 		ORDER BY v.created_at ASC`)
@@ -815,7 +875,7 @@ func (s *PostgresFleetStore) ListVehiclesWithStatus() ([]FleetVehicle, error) {
 		var v FleetVehicle
 		if err := rows.Scan(&v.ID, &v.DisplayName, &v.VehicleType,
 			&v.BatteryPct, &v.Speed, &v.PositionLat, &v.PositionLon,
-			&v.PositionZoneID, &v.AutonomyMode, &v.CurrentTaskID, &v.StatusUpdatedAt); err != nil {
+			&v.PositionZoneID, &v.PositionX, &v.PositionY, &v.AutonomyMode, &v.CurrentTaskID, &v.StatusUpdatedAt); err != nil {
 			return nil, err
 		}
 		vehicles = append(vehicles, v)

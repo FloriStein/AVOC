@@ -4,6 +4,7 @@
 package transport
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -306,9 +307,15 @@ func (h *WSHandler) processWSMessage(ws wsConn, msg []byte) bool {
 	return true
 }
 
+// validateJWT rejects a token whose header claims a signing method other than the HMAC family
+// (SEC-01) — see internal/authservice/handler.go's parseToken for the full rationale (JWT "alg
+// confusion" attack).
 func (h *WSHandler) validateJWT(tokenStr string) (*Claims, error) {
 	claims := &Claims{}
-	_, err := jwt.ParseWithClaims(tokenStr, claims, func(_ *jwt.Token) (any, error) {
+	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
 		return h.jwtSecret, nil
 	})
 	return claims, err

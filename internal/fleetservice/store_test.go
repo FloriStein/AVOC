@@ -93,12 +93,27 @@ func TestPostgresFleetStore_SchemaAndCRUD(t *testing.T) {
 		if err := store.UpsertVehicleStatus(VehicleStatus{VehicleID: "test-vehicle-01", BatteryPct: &battery, AutonomyMode: "autonomous"}); err != nil {
 			t.Fatalf("UpsertVehicleStatus: %v", err)
 		}
-		// Upsert again to verify ON CONFLICT path (no duplicate row).
-		battery2 := 90.0
-		if err := store.UpsertVehicleStatus(VehicleStatus{VehicleID: "test-vehicle-01", BatteryPct: &battery2, AutonomyMode: "teleoperated"}); err != nil {
+		statuses, err := store.ListVehicleStatus()
+		if err != nil {
+			t.Fatalf("ListVehicleStatus: %v", err)
+		}
+		for _, s := range statuses {
+			if s.VehicleID == "test-vehicle-01" && (s.PositionX != nil || s.PositionY != nil) {
+				t.Fatalf("expected nil position_x/y before any indoor position is set, got %+v", s)
+			}
+		}
+
+		// Upsert again to verify ON CONFLICT path (no duplicate row) — also sets position_x/y
+		// (ADR-034) for the first time, proving the new columns round-trip through the same
+		// UPSERT as the pre-existing fields.
+		battery2, x, y := 90.0, 12.5, 7.25
+		if err := store.UpsertVehicleStatus(VehicleStatus{
+			VehicleID: "test-vehicle-01", BatteryPct: &battery2, AutonomyMode: "teleoperated",
+			PositionX: &x, PositionY: &y,
+		}); err != nil {
 			t.Fatalf("UpsertVehicleStatus (update): %v", err)
 		}
-		statuses, err := store.ListVehicleStatus()
+		statuses, err = store.ListVehicleStatus()
 		if err != nil {
 			t.Fatalf("ListVehicleStatus: %v", err)
 		}
@@ -109,10 +124,30 @@ func TestPostgresFleetStore_SchemaAndCRUD(t *testing.T) {
 				if s.AutonomyMode != "teleoperated" || s.BatteryPct == nil || *s.BatteryPct != 90.0 {
 					t.Fatalf("expected updated status, got %+v", s)
 				}
+				if s.PositionX == nil || *s.PositionX != x || s.PositionY == nil || *s.PositionY != y {
+					t.Fatalf("expected position_x=%v position_y=%v, got %+v", x, y, s)
+				}
 			}
 		}
 		if !found {
 			t.Fatal("test-vehicle-01 status not found after upsert")
+		}
+
+		vehicles, err := store.ListVehiclesWithStatus()
+		if err != nil {
+			t.Fatalf("ListVehiclesWithStatus: %v", err)
+		}
+		foundJoined := false
+		for _, v := range vehicles {
+			if v.ID == "test-vehicle-01" {
+				foundJoined = true
+				if v.PositionX == nil || *v.PositionX != x || v.PositionY == nil || *v.PositionY != y {
+					t.Fatalf("expected joined position_x=%v position_y=%v, got %+v", x, y, v)
+				}
+			}
+		}
+		if !foundJoined {
+			t.Fatal("test-vehicle-01 not found in ListVehiclesWithStatus")
 		}
 	})
 

@@ -11,6 +11,7 @@ import (
 
 	"avoc/internal/authservice"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -380,6 +381,38 @@ func TestRefreshToken_InvalidToken_Returns401(t *testing.T) {
 	rr := postJSON(t, h.RefreshToken, map[string]string{"token": "garbage"})
 
 	assert.Equal(t, 401, rr.Code)
+}
+
+// forgeAlgNoneToken crafts an unsigned "alg: none" JWT carrying an admin role claim, the
+// classic JWT alg-confusion payload (SEC-01) — none of these handlers ever issue such a token
+// themselves, only jwt.ParseWithClaims's callback stands between it and being trusted.
+func forgeAlgNoneToken(t *testing.T) string {
+	t.Helper()
+	claims := jwt.MapClaims{"role": "ADMIN", "sub": "attacker"}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodNone, claims).SignedString(jwt.UnsafeAllowNoneSignatureType)
+	require.NoError(t, err)
+	return tok
+}
+
+func TestValidateToken_AlgNone_RejectedAsInvalid(t *testing.T) {
+	h := makeHandler(newStubStore())
+	rr := postJSON(t, h.ValidateToken, map[string]string{"token": forgeAlgNoneToken(t)})
+
+	assert.Equal(t, 200, rr.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, false, resp["valid"], "alg:none token must not be accepted as valid (SEC-01)")
+}
+
+func TestRequireAdmin_AlgNoneToken_Returns401(t *testing.T) {
+	h := makeHandler(newStubStore())
+	called := false
+	protected := h.RequireAdmin(func(http.ResponseWriter, *http.Request) { called = true })
+
+	rr := getWithToken(t, protected, forgeAlgNoneToken(t))
+
+	assert.Equal(t, 401, rr.Code)
+	assert.False(t, called, "handler must not be reached with an alg:none token (SEC-01)")
 }
 
 func TestVehicleRegister_AnyIDSucceeds(t *testing.T) {
