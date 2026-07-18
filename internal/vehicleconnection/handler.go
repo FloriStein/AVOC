@@ -51,19 +51,22 @@ type Handler struct {
 	vehicleAdder    VehicleAdder
 }
 
-func NewHandler(
-	jwtSecret string,
-	vehicleContexts *vehiclecontext.Registry,
-	publisher safetyPublisher,
-	registry *Registry,
-	ackStore *AckStore,
-) *Handler {
+// HandlerOptions bundles NewHandler's inputs (Rule 2.3 — more than 4 params).
+type HandlerOptions struct {
+	JWTSecret       string
+	VehicleContexts *vehiclecontext.Registry
+	Publisher       safetyPublisher
+	Registry        *Registry
+	AckStore        *AckStore
+}
+
+func NewHandler(opts HandlerOptions) *Handler {
 	return &Handler{
-		jwtSecret:       []byte(jwtSecret),
-		vehicleContexts: vehicleContexts,
-		publisher:       publisher,
-		registry:        registry,
-		ackStore:        ackStore,
+		jwtSecret:       []byte(opts.JWTSecret),
+		vehicleContexts: opts.VehicleContexts,
+		publisher:       opts.Publisher,
+		registry:        opts.Registry,
+		ackStore:        opts.AckStore,
 	}
 }
 

@@ -397,23 +397,10 @@ endet mit vollem Testlauf des betroffenen Service + Diff-Review gegen genau dies
 Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-01`, `GOSTYLE-02`, `GOSTYLE-15`,
 Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle`.
 
-#### Sprint 28 — Risikoarme Services: Rule 2.2 + 2.3 (9 Tasks)
+#### Sprint 28 — Risikoarme Services: Rule 2.2 + 2.3 (9 Tasks) — ✅ fertig
 
-Alle `main()`-Zerlegungen und Parameter-Struct-Umstellungen außerhalb von `control-server` —
-bewusst getrennt vom Sicherheitskern (siehe Sprint 29), damit dieser Sprint ohne Extra-Grill-Me
-und mit Standard-Sorgfalt durchlaufen kann.
-
-| ID | Task | Typ | Status | Abhängigkeiten |
-|----|------|-----|--------|-----------------|
-| GOSTYLE-03 | `auth-service`: `main()` (67 Zeilen) auf <50 Zeilen zerlegen | S | 🔲 Backlog | Sprint 27 |
-| GOSTYLE-04 | `safety-service`: `main()` (57 Zeilen) zerlegen | S | 🔲 Backlog | — |
-| GOSTYLE-05 | `telemetry-service`: `main()` (57 Zeilen) zerlegen | S | 🔲 Backlog | — |
-| GOSTYLE-06 | `fleet-service`: `main()` (129 Zeilen) zerlegen | M | 🔲 Backlog | Sprint 27 |
-| GOSTYLE-07 | `webrtc-sfu`: `main()` (76 Zeilen) zerlegen + `internal/webrtcsfu/sfu.go` `SFU.SubscribeOperator` (74)/`CreateVehicleOffer` (56) prüfen/zerlegen | M | 🔲 Backlog | — |
-| GOSTYLE-08 | `vehicle-mock`: `runConnection` (73 Zeilen, 5 Parameter) zerlegen + Parameter in Struct bündeln (Rule 2.2 + 2.3) | S | 🔲 Backlog | — |
-| GOSTYLE-09 | `internal/recording/memory_recorder.go`: 3 `Record*`-Methoden mit je 6 Parametern auf Parameter-Struct umstellen (Rule 2.3) | S | 🔲 Backlog | — |
-| GOSTYLE-10 | `internal/controlserver/safety/bus_watchdog.go`: `NewSafetyBusWatchdog` (6 Parameter) auf Options-Struct umstellen | S | 🔲 Backlog | — |
-| GOSTYLE-11 | `internal/vehicleconnection/handler.go`: `NewHandler` (5 Parameter) prüfen/ggf. bündeln | S | 🔲 Backlog | — |
+Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-03` bis `GOSTYLE-11`,
+Details/Ergebnisse dort). Branch `feature/fleet-service-foundation-gostyle28`.
 
 #### Sprint 29 — `control-server` (hohes Risiko) + Abschlussverifikation (4 Tasks)
 

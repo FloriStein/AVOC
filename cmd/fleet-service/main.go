@@ -52,6 +52,21 @@ func main() {
 	// detects and reports about itself (ADR-028: two sources, one `alerts` table/shape).
 	alertEngine := fleetservice.NewAlertEngine()
 
+	subscribeVehicleStatus(gw, store, hub, alertEngine)
+	subscribeVehicleAlerts(gw, store, hub)
+
+	handler := fleetservice.NewHandler(jwtSecret, store, gw, hub)
+	mux := newFleetMux(handler)
+
+	log.Info("Fleet Service starting", "port", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal("Fleet Service failed", "error", err)
+	}
+}
+
+// subscribeVehicleStatus persists vehicle-reported status (FLEET-06), broadcasts it to connected
+// Dashboard clients, and raises a threshold alert via alertEngine if warranted (FLEET-07).
+func subscribeVehicleStatus(gw *fleetgateway.MQTTGateway, store *fleetservice.PostgresFleetStore, hub *fleetservice.Hub, alertEngine *fleetservice.AlertEngine) {
 	gw.SubscribeVehicleStatus(func(e fleetgateway.VehicleStatusEvent) {
 		// Fleet vehicles never establish a WS connection to control-server, so they never hit
 		// its "Auto-Register bei erstem WS-Connect" path (ADR-029) — without this, every status
@@ -86,8 +101,13 @@ func main() {
 			hub.Broadcast("alert_created", created)
 		}
 	})
+}
+
+// subscribeVehicleAlerts persists vehicle-initiated alerts — the second alert source from
+// ADR-028, distinct from the threshold alerts subscribeVehicleStatus raises.
+func subscribeVehicleAlerts(gw *fleetgateway.MQTTGateway, store *fleetservice.PostgresFleetStore, hub *fleetservice.Hub) {
 	gw.SubscribeVehicleAlerts(func(e fleetgateway.VehicleAlertEvent) {
-		// Same FK gap as SubscribeVehicleStatus above — a vehicle-initiated alert can in
+		// Same FK gap as subscribeVehicleStatus above — a vehicle-initiated alert can in
 		// principle arrive before that vehicle's first status event.
 		if err := store.EnsureVehicleExists(e.VehicleID); err != nil {
 			log.Warn("failed to auto-register vehicle", "vehicle_id", e.VehicleID, "error", err)
@@ -104,9 +124,9 @@ func main() {
 		}
 		hub.Broadcast("alert_created", created)
 	})
+}
 
-	handler := fleetservice.NewHandler(jwtSecret, store, gw, hub)
-
+func newFleetMux(handler *fleetservice.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health)
 	mux.HandleFunc("GET /fleet/vehicles", handler.RequireAuth(handler.ListVehicles))
@@ -120,11 +140,7 @@ func main() {
 	mux.HandleFunc("GET /fleet/alerts", handler.RequireAuth(handler.ListAlerts))
 	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", handler.RequireAuth(handler.AcknowledgeAlert))
 	mux.HandleFunc("GET /fleet/ws", handler.ServeWS)
-
-	log.Info("Fleet Service starting", "port", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal("Fleet Service failed", "error", err)
-	}
+	return mux
 }
 
 // connectGatewayWithRetry mirrors pkgdb.WaitForReady's retry shape for the MQTT broker

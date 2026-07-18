@@ -18,14 +18,24 @@ func main() {
 	}
 
 	bus := safetyservice.NewBus()
+	bus.Subscribe(logSafetyEvent)
 
-	bus.Subscribe(func(event safetyservice.SafetyEvent) {
-		log.Event(string(event.Type), "safety event received",
-			"session_id", event.SessionID,
-			"vehicle_id", event.VehicleID,
-			"reason", event.Reason)
-	})
+	mux := newSafetyMux(bus)
 
+	log.Info("Safety Service starting", "port", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal("Safety Service failed", "error", err)
+	}
+}
+
+func logSafetyEvent(event safetyservice.SafetyEvent) {
+	log.Event(string(event.Type), "safety event received",
+		"session_id", event.SessionID,
+		"vehicle_id", event.VehicleID,
+		"reason", event.Reason)
+}
+
+func newSafetyMux(bus *safetyservice.Bus) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /safety/event", func(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +73,5 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "safety-service"})
 	})
 
-	log.Info("Safety Service starting", "port", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal("Safety Service failed", "error", err)
-	}
+	return mux
 }

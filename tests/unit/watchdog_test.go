@@ -262,7 +262,14 @@ func activateVehicle(t *testing.T, registry *vehiclecontext.Registry, sessionMgr
 }
 
 func newBusWatchdog(registry *vehiclecontext.Registry, sessionMgr *session.Manager, pub *mocks.MockSafetyPublisher, healthURL string) *csafety.SafetyBusWatchdog {
-	w := csafety.NewSafetyBusWatchdog(healthURL, testBusInterval, testBusThreshold, registry, sessionMgr, pub)
+	w := csafety.NewSafetyBusWatchdog(csafety.SafetyBusWatchdogOptions{
+		HealthURL: healthURL,
+		Interval:  testBusInterval,
+		Threshold: testBusThreshold,
+		Vehicles:  registry,
+		Sessions:  sessionMgr,
+		Publisher: pub,
+	})
 	w.Start()
 	return w
 }

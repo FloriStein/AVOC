@@ -28,6 +28,15 @@ func main() {
 	}
 	defer client.Disconnect()
 
+	mux := newTelemetryMux(client)
+
+	log.Info("Telemetry Service starting", "port", port, "broker", broker)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal("Telemetry Service failed", "error", err)
+	}
+}
+
+func newTelemetryMux(client *telemetryservice.Client) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /telemetry/latest/", func(w http.ResponseWriter, r *http.Request) {
@@ -64,8 +73,5 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "telemetry-service"})
 	})
 
-	log.Info("Telemetry Service starting", "port", port, "broker", broker)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal("Telemetry Service failed", "error", err)
-	}
+	return mux
 }

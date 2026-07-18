@@ -104,10 +104,14 @@ func main() {
 	// SafetyBusWatchdog stays a single process-wide instance — there is only
 	// one safety-service (ADR-002) — but fans a failure out to every active
 	// vehicle (ADR-026). Starts once for the process lifetime, not per session.
-	safetyBusWatchdog := csafety.NewSafetyBusWatchdog(
-		safetyURL+"/health", csafety.DefaultBusCheckInterval, csafety.DefaultBusFailThreshold,
-		vehicleContexts, sessionMgr, safetyPub,
-	)
+	safetyBusWatchdog := csafety.NewSafetyBusWatchdog(csafety.SafetyBusWatchdogOptions{
+		HealthURL: safetyURL + "/health",
+		Interval:  csafety.DefaultBusCheckInterval,
+		Threshold: csafety.DefaultBusFailThreshold,
+		Vehicles:  vehicleContexts,
+		Sessions:  sessionMgr,
+		Publisher: safetyPub,
+	})
 	safetyBusWatchdog.Start()
 
 	cmdEngine := command.NewEngine(vehicleContexts, safetyPub, sessionMgr).
@@ -117,8 +121,13 @@ func main() {
 	// --- Handlers ---
 	wsHandler := transport.NewWSHandler(secret, vehicleContexts, sessionMgr, cmdEngine).
 		WithAuditWriter(auditWriter)
-	vehicleHandler := vehicleconnection.NewHandler(secret, vehicleContexts, safetyPub, vehicleRegistry, vehicleAckStore).
-		WithVehicleAdder(vehicleStore)
+	vehicleHandler := vehicleconnection.NewHandler(vehicleconnection.HandlerOptions{
+		JWTSecret:       secret,
+		VehicleContexts: vehicleContexts,
+		Publisher:       safetyPub,
+		Registry:        vehicleRegistry,
+		AckStore:        vehicleAckStore,
+	}).WithVehicleAdder(vehicleStore)
 
 	// --- Routes ---
 	mux := http.NewServeMux()
@@ -177,7 +186,14 @@ func main() {
 			sessionMgr.PushSFUEvent("SESSION_CREATED")
 			recorder.StartSession(sess.ID, sess.VehicleID, sess.OperatorID)
 			sys, ctrl, _, _ := vc.SM.Get()
-			recorder.RecordStateSnapshot(sess.ID, ulid.Generate(), sess.VehicleID, sess.OperatorID, string(sys), string(ctrl))
+			recorder.RecordStateSnapshot(recording.StateSnapshotParams{
+				SessionID:   sess.ID,
+				EventID:     ulid.Generate(),
+				VehicleID:   sess.VehicleID,
+				OperatorID:  sess.OperatorID,
+				SystemState: string(sys),
+				CtrlState:   string(ctrl),
+			})
 		}
 
 		log.Event(logger.EventSessionStarted, "session started",
@@ -373,7 +389,14 @@ func main() {
 			if sess.ID != "" {
 				sessionMgr.SaveCheckpoint("SAFE_MODE", "CONTROL_BLOCKED", "EMERGENCY_STOP")
 				sessionMgr.PushSFUEvent("SESSION_SAFE_MODE")
-				recorder.RecordSafetyEvent(sess.ID, ulid.Generate(), vehicleID, sess.OperatorID, "EMERGENCY_STOP", "operator emergency stop")
+				recorder.RecordSafetyEvent(recording.SafetyEventParams{
+					SessionID:  sess.ID,
+					EventID:    ulid.Generate(),
+					VehicleID:  vehicleID,
+					OperatorID: sess.OperatorID,
+					EventType:  "EMERGENCY_STOP",
+					Reason:     "operator emergency stop",
+				})
 				// ADR-020: Control Server kicks MediaMTX subscribers directly on SAFE_MODE
 				go mtxClient.KickVehicle(vehicleID)
 			}

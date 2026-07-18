@@ -21,13 +21,43 @@ type Entry struct {
 	Reason      string
 }
 
+// ControlEventParams bundles RecordControlEvent's inputs (Rule 2.3 — more than 4 params).
+type ControlEventParams struct {
+	SessionID   string
+	EventID     string
+	VehicleID   string
+	OperatorID  string
+	CommandType string
+	Value       float32
+}
+
+// StateSnapshotParams bundles RecordStateSnapshot's inputs (Rule 2.3 — more than 4 params).
+type StateSnapshotParams struct {
+	SessionID   string
+	EventID     string
+	VehicleID   string
+	OperatorID  string
+	SystemState string
+	CtrlState   string
+}
+
+// SafetyEventParams bundles RecordSafetyEvent's inputs (Rule 2.3 — more than 4 params).
+type SafetyEventParams struct {
+	SessionID  string
+	EventID    string
+	VehicleID  string
+	OperatorID string
+	EventType  string
+	Reason     string
+}
+
 // SessionRecorder is the recording interface (ADR-005).
 // Implementations: MemoryRecorder (Sprint 4), future storage adapters.
 type SessionRecorder interface {
 	StartSession(sessionID, vehicleID, operatorID string)
 	EndSession(sessionID string)
-	RecordControlEvent(sessionID, eventID, vehicleID, operatorID, commandType string, value float32)
-	RecordStateSnapshot(sessionID, eventID, vehicleID, operatorID, systemState, ctrlState string)
-	RecordSafetyEvent(sessionID, eventID, vehicleID, operatorID, eventType, reason string)
+	RecordControlEvent(p ControlEventParams)
+	RecordStateSnapshot(p StateSnapshotParams)
+	RecordSafetyEvent(p SafetyEventParams)
 	GetEntries(sessionID string) []Entry
 }
