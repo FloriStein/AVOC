@@ -63,6 +63,15 @@ if [ ${#turn_password} -lt 16 ]; then
   echo "ERROR: TURN_PASSWORD muss mindestens 16 Zeichen lang sein." && exit 1
 fi
 
+# MQTT (Mosquitto Passwort-File, Sprint 38 MQTTAUTH-04)
+read -rp "MQTT_USERNAME [avoc]: " mqtt_username
+mqtt_username=${mqtt_username:-avoc}
+
+read -rsp "MQTT_PASSWORD (min. 16 Zeichen): " mqtt_password; echo ""
+if [ ${#mqtt_password} -lt 16 ]; then
+  echo "ERROR: MQTT_PASSWORD muss mindestens 16 Zeichen lang sein." && exit 1
+fi
+
 # Grafana
 read -rp "GRAFANA_ADMIN_USER [admin]: " grafana_user
 grafana_user=${grafana_user:-admin}
@@ -113,6 +122,8 @@ put_string  /avoc/prod/turn-external-ip        "$turn_external_ip"
 put_string  /avoc/prod/turn-realm              "$turn_realm"
 put_string  /avoc/prod/turn-user               "$turn_user"
 put_secure  /avoc/prod/turn-password           "$turn_password"
+put_string  /avoc/prod/mqtt-username           "$mqtt_username"
+put_secure  /avoc/prod/mqtt-password           "$mqtt_password"
 put_string  /avoc/prod/grafana-admin-user      "$grafana_user"
 put_secure  /avoc/prod/grafana-admin-password  "$grafana_password"
 put_string  /avoc/prod/docker-username         "$docker_username"

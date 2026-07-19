@@ -111,6 +111,8 @@ services:
     environment:
       TELEMETRY_PORT: "8083"
       MQTT_BROKER: "mosquitto:1883"
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
     depends_on:
       - mosquitto
     networks:
@@ -127,6 +129,8 @@ services:
       DATABASE_URL: "postgres://avoc:${DB_PASSWORD}@postgres:5432/avoc?sslmode=disable"
       JWT_SECRET: ${JWT_SECRET}
       MQTT_BROKER: "mosquitto:1883"
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,6 +147,7 @@ services:
       - "1883:1883"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
     networks:
       - avoc-net
     restart: unless-stopped
@@ -255,6 +260,8 @@ services:
       CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"
       JWT_SECRET: ${JWT_SECRET}
       MQTT_BROKER: "mosquitto:1883"
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
     depends_on:
       - control-server
       - mosquitto

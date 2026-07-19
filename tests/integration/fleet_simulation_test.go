@@ -14,6 +14,13 @@ import (
 
 const mqttTestBroker = "tcp://localhost:11883"
 
+// Matches the fixed test credentials in tests/docker-compose.test.yml / tests/mosquitto-passwd-test
+// (MQTTAUTH-01: the test broker rejects anonymous connections just like dev/prod).
+const (
+	mqttTestUsername = "avoc"
+	mqttTestPassword = "mqtt_test_secret"
+)
+
 // TestIntegration_FleetSimulation_PublishesRealMQTTMessages verifies FLEET-04 end-to-end across
 // the real process boundary: vehicle-mock's fleet simulation (a separate container in this test
 // stack, see docker-compose.test.yml) publishes to the real Mosquitto broker, and this test
@@ -23,6 +30,8 @@ func TestIntegration_FleetSimulation_PublishesRealMQTTMessages(t *testing.T) {
 	client := mqtt.NewClient(mqtt.NewClientOptions().
 		AddBroker(mqttTestBroker).
 		SetClientID("integration-test-fleet-sub").
+		SetUsername(mqttTestUsername).
+		SetPassword(mqttTestPassword).
 		SetConnectTimeout(5 * time.Second))
 	token := client.Connect()
 	require.True(t, token.WaitTimeout(5*time.Second), "MQTT connect timed out")

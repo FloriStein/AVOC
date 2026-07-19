@@ -8,7 +8,7 @@
 // Usage (via Docker Compose):
 //
 //	VEHICLE_ID=vehicle-001 CONTROL_SERVER_URL=ws://control-server:8080/vehicle/ws
-//	JWT_SECRET=... MQTT_BROKER=mosquitto:1883
+//	JWT_SECRET=... MQTT_BROKER=mosquitto:1883 MQTT_USERNAME=... MQTT_PASSWORD=...
 package main
 
 import (
@@ -56,12 +56,14 @@ func main() {
 	wsURL := envOr("CONTROL_SERVER_URL", "ws://control-server:8080/vehicle/ws")
 	jwtSecret := os.Getenv("JWT_SECRET")
 	mqttBroker := envOr("MQTT_BROKER", "mosquitto:1883")
+	mqttUsername := os.Getenv("MQTT_USERNAME")
+	mqttPassword := os.Getenv("MQTT_PASSWORD")
 
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET required")
 	}
 
-	mqttClient := connectMQTT(mqttBroker, vehicleID)
+	mqttClient := connectMQTT(mqttBroker, vehicleID, mqttUsername, mqttPassword)
 	defer mqttClient.Disconnect(250)
 
 	// FLEET-04: independent fleet vehicles (Lastenrad/Lastenzug, ADR-029) simulated on the same
@@ -257,10 +259,12 @@ func publishTelemetry(mqttClient mqtt.Client, vehicleID string, st *state) {
 	}
 }
 
-func connectMQTT(broker, vehicleID string) mqtt.Client {
+func connectMQTT(broker, vehicleID, username, password string) mqtt.Client {
 	opts := mqtt.NewClientOptions().
 		AddBroker("tcp://" + broker).
 		SetClientID("avoc-vehicle-mock-" + vehicleID).
+		SetUsername(username).
+		SetPassword(password).
 		SetAutoReconnect(true).
 		SetConnectRetryInterval(reconnectDelay).
 		SetOnConnectHandler(func(_ mqtt.Client) {

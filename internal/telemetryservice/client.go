@@ -23,16 +23,20 @@ const (
 
 // Client manages the MQTT connection and caches the latest TelemetryEvent per vehicle.
 type Client struct {
-	broker string
-	client mqtt.Client
-	mu     sync.RWMutex
-	latest map[string]*telemetryv1.TelemetryEvent
+	broker   string
+	username string
+	password string
+	client   mqtt.Client
+	mu       sync.RWMutex
+	latest   map[string]*telemetryv1.TelemetryEvent
 }
 
-func NewClient(broker string) *Client {
+func NewClient(broker, username, password string) *Client {
 	return &Client{
-		broker: broker,
-		latest: make(map[string]*telemetryv1.TelemetryEvent),
+		broker:   broker,
+		username: username,
+		password: password,
+		latest:   make(map[string]*telemetryv1.TelemetryEvent),
 	}
 }
 
@@ -41,6 +45,8 @@ func (c *Client) Connect() error {
 	opts := mqtt.NewClientOptions().
 		AddBroker("tcp://" + c.broker).
 		SetClientID("avoc-telemetry-service").
+		SetUsername(c.username).
+		SetPassword(c.password).
 		SetAutoReconnect(true).
 		SetConnectRetryInterval(reconnectDelay).
 		SetOnConnectHandler(func(_ mqtt.Client) {

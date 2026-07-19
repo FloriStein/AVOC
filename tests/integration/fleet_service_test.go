@@ -324,6 +324,8 @@ func TestIntegration_FleetService_WSBroadcast_DeliversAlertCreatedAndAcknowledge
 	mqttClient := mqtt.NewClient(mqtt.NewClientOptions().
 		AddBroker(mqttTestBroker).
 		SetClientID("integration-test-fleet-alert-pub").
+		SetUsername(mqttTestUsername).
+		SetPassword(mqttTestPassword).
 		SetConnectTimeout(5 * time.Second))
 	connToken := mqttClient.Connect()
 	require.True(t, connToken.WaitTimeout(5*time.Second), "MQTT connect timed out")
@@ -377,6 +379,8 @@ func TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert(t
 	mqttClient := mqtt.NewClient(mqtt.NewClientOptions().
 		AddBroker(mqttTestBroker).
 		SetClientID("integration-test-fleet-alertengine-pub").
+		SetUsername(mqttTestUsername).
+		SetPassword(mqttTestPassword).
 		SetConnectTimeout(5 * time.Second))
 	connToken := mqttClient.Connect()
 	require.True(t, connToken.WaitTimeout(5*time.Second), "MQTT connect timed out")

@@ -520,6 +520,26 @@ Referenz außerhalb der eigenen Datei, auch nicht in Tests (`handler_test.go` nu
 |----|------|-----|--------|---------|
 | SEC-01 | JWT-Alg-Confusion-Check fehlt an 3 von 5 `jwt.Parse*`-Stellen | S/M | ✅ Sprint 34 | Alle drei Stellen gefixt (`authservice.parseToken`, `transport.validateJWT`, `vehicleconnection.validateJWT`) — `t.Method.(*jwt.SigningMethodHMAC)`-Check ergänzt, analog zu den bereits korrekten Stellen. Regressionstests mit gefälschtem `alg:none`-Token an allen drei Stellen (2x gegen Flakiness geprüft, CLAUDE.MD Abschnitt 17). Details/Ergebnisse in `tasks/current-sprint.md`. |
 
+### MQTT-Authentifizierung (Mosquitto Passwort-File), ✅ Sprint 38
+
+**Freigabe (2026-07-19):** Nutzerentscheidung gegenüber der Alternative "Hexagonal-Migration
+Schritt 3 (telemetry-service)" — Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles").
+Schließt den seit Projektbeginn offenen Punkt "MQTT-Authentifizierung (Mosquitto Passwort-File)"
+unten in "Offene Entscheidungen". Kein neues ADR nötig — ADR-003 legt Mosquitto bereits fest,
+dieser Sprint aktiviert nur dessen eingebauten `password_file`-Mechanismus. TLS/MQTTS
+(Transportverschlüsselung) ist bewusst **nicht** Teil dieses Sprints. Vollständige Vorrecherche
+(Datei-/Zeilenreferenzen zu den 3 Go-MQTT-Verbindungsstellen, 3 Compose-Dateien, SSM/Deploy-
+Präzedenzfall `TURN_USER`/`TURN_PASSWORD`) in `tasks/sprints/38-mqtt-authentifizierung.md`.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| MQTTAUTH-01 | Mosquitto-Configs (Dev/Prod/Test) auf `allow_anonymous false` + `password_file` umstellen, gehashte Dev-/Test-Passwd-Dateien committen | S | ✅ Sprint 38 | — |
+| MQTTAUTH-02 | `SetUsername`/`SetPassword` an den 3 Go-MQTT-Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`) + neue `MQTT_USERNAME`/`MQTT_PASSWORD`-Env-Vars | M | ✅ Sprint 38 | MQTTAUTH-01 |
+| MQTTAUTH-03 | Neue Env-Vars an alle 4 MQTT-Consumer-Services in allen 3 Compose-Dateien durchreichen + `.env.example` | S | ✅ Sprint 38 | MQTTAUTH-02 |
+| MQTTAUTH-04 | `scripts/setup-ssm.sh`/`scripts/deploy.sh`: SSM-Parameter + Passwd-Datei-Generierung zur Deploy-Zeit, analog `TURN_USER`/`TURN_PASSWORD` | M | ✅ Sprint 38 | MQTTAUTH-01 |
+| MQTTAUTH-05 | Bestehende Unit-/Integrationstests mit direkten MQTT-Verbindungen (`fleetgateway/mqtt_test.go`, `fleet_simulation_test.go`, `fleet_service_test.go`) auf neue Credentials umstellen | S | ✅ Sprint 38 | MQTTAUTH-01..03 |
+| MQTTAUTH-06 | Verifikation (Docker-Test-Stack + Dev-Stack) + Doku-Updates (`DECISIONS.MD`, `docs/architecture.md`) | S | ✅ Sprint 38 | MQTTAUTH-02..05 |
+
 ---
 
 ## EPIC: Tech Debt
@@ -538,7 +558,7 @@ Referenz außerhalb der eigenen Datei, auch nicht in Tests (`handler_test.go` nu
 | DDS-Produktivimplementierung | Nicht in diesem Scope | ADR-002 Folge |
 | Backup-Strategie Audit Store (SQLite Volume → S3) | offen | ADR-018 Folge — S3-Bucket im CDK vorhanden |
 | Migration zu AWS ECR | offen | ADR-019 Folge — für Produktivbetrieb |
-| MQTT-Authentifizierung (Mosquitto Passwort-File) | offen | Port 1883 aktuell ohne Auth offen |
+| ~~MQTT-Authentifizierung (Mosquitto Passwort-File)~~ | ✅ Sprint 38 | Port 1883 lief seit Sprint 9 ohne Auth — siehe EPIC "Security Findings" oben (`MQTTAUTH-01..06`). TLS/MQTTS bewusst weiterhin offen (siehe dort) |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + SQLite-Registry; `~^vehicle-.*`-Regex aktiv |
 | E2E Smoke Test mit aktiver WHIP-Quelle | offen | WEBRTC-09 Rest — Browser WiFi + 5G ICE-Pair verifizieren |
 | ~~OBS-01 Vehicle Heartbeat~~ | ✅ Sprint 31 | AckBadge zeigt "Zuletzt gesehen vor Xs" aus `useTelemetry.ts`s `ageSinceUpdateMs`, unabhängig vom ACK-Kommandofluss |

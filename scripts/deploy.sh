@@ -9,6 +9,8 @@
 #   - IAM Instance Profile mit SSM-Leseberechtigung auf /avoc/*
 #   - docker-compose.prod.yml liegt in APP_DIR
 #   - mediamtx/mediamtx.yml liegt in APP_DIR (aws s3 cp ... ~/app/mediamtx/mediamtx.yml)
+#   - mosquitto/mosquitto.conf liegt in APP_DIR (mosquitto/passwd wird von diesem Skript aus
+#     dem SSM-Secret generiert, siehe MQTTAUTH-04 — nicht committen/manuell anlegen)
 #
 # Verwendung:
 #   AWS_REGION=eu-central-1 VERSION=latest bash ~/app/deploy.sh
@@ -54,7 +56,7 @@ get_secure() {
     --output text
 }
 
-echo "[1/3] Lade Secrets..."
+echo "[1/4] Lade Secrets..."
 
 # DB_PASSWORD + ADMIN_PASSWORD kommen aus $APP_DIR/.env (docker-compose liest sie automatisch).
 # Alle anderen Secrets kommen aus AWS SSM Parameter Store.
@@ -69,6 +71,8 @@ export TURN_EXTERNAL_IP=$(get           /avoc/prod/turn-external-ip)
 export TURN_REALM=$(get                 /avoc/prod/turn-realm)
 export TURN_USER=$(get                  /avoc/prod/turn-user)
 export TURN_PASSWORD=$(get_secure       /avoc/prod/turn-password)
+export MQTT_USERNAME=$(get              /avoc/prod/mqtt-username)
+export MQTT_PASSWORD=$(get_secure       /avoc/prod/mqtt-password)
 export GRAFANA_ADMIN_USER=$(get         /avoc/prod/grafana-admin-user)
 export GRAFANA_ADMIN_PASSWORD=$(get_secure /avoc/prod/grafana-admin-password)
 
@@ -88,6 +92,7 @@ echo "  WHIP_STREAM_KEY     loaded (SSM)"
 echo "  TURN_EXTERNAL_IP    ${TURN_EXTERNAL_IP}"
 echo "  TURN_PRIVATE_IP     ${TURN_PRIVATE_IP}"
 echo "  TURN_REALM          ${TURN_REALM}"
+echo "  MQTT_USERNAME       loaded (SSM)"
 echo "  VERSION             ${VERSION}  (Images bereits lokal via 'docker load' vorhanden — kein Registry-Pull)"
 
 # ─── Self-Signed SSL-Zertifikat (für getUserMedia auf HTTPS) ──────────────────
@@ -109,20 +114,32 @@ else
   echo "  SSL-Zertifikat vorhanden: $SSL_DIR/cert.pem"
 fi
 
+# ─── Mosquitto Passwort-File (MQTTAUTH-04) ────────────────────────────────────
+# Der Broker verweigert seit MQTTAUTH-01 anonyme Verbindungen (allow_anonymous false) und
+# erwartet eine gehashte Passwort-Datei unter mosquitto/passwd. Wird bei jedem Deploy neu aus dem
+# SSM-Secret generiert statt committed (anders als die Dev-/Test-Datei mit ihrem festen,
+# unkritischen changeme-Passwort) — Prod-Credential darf nicht im Repo landen.
+
+echo ""
+echo "[2/4] Generiere Mosquitto-Passwort-Datei..."
+docker run --rm -v "$APP_DIR/mosquitto:/out" --entrypoint mosquitto_passwd \
+  eclipse-mosquitto:2 -b -c /out/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD" >/dev/null
+echo "  mosquitto/passwd erzeugt für Benutzer $MQTT_USERNAME"
+
 # ─── Stack starten ────────────────────────────────────────────────────────────
 # Kein Docker-Hub-Login, kein 'docker compose pull' — Images liegen bereits lokal
 # (per 'make deploy-images' via docker save/scp/docker load übertragen).
 # Übergabe-Abweichung von ADR-019, siehe docs/deployment/UEBERGABE-ABWEICHUNGEN.md
 
 echo ""
-echo "[2/3] Prüfe Images..."
+echo "[3/4] Prüfe Images..."
 cd "$APP_DIR"
 docker compose -f docker-compose.prod.yml config --images | while read -r img; do
   docker image inspect "$img" >/dev/null 2>&1 || echo "  WARNUNG: Image fehlt lokal: $img (siehe 'make deploy-images')"
 done
 
 echo ""
-echo "[3/3] Start Stack..."
+echo "[4/4] Start Stack..."
 docker compose -f docker-compose.prod.yml up -d
 
 echo ""

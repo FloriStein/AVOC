@@ -50,7 +50,7 @@
 | Backup-Strategie Audit Store | nach Sprint 9 | ADR-018 Folge — Audit Store läuft seit ADR-023 in PostgreSQL `avoc` (nicht mehr SQLite-Volume); S3-Bucket im CDK vorhanden, Backup-Mechanismus für `avoc` insgesamt weiterhin offen |
 | Migration zu AWS ECR | nach Sprint 9 | ADR-019 Folge — für Produktivbetrieb sinnvoll (IAM statt Docker Hub Credentials) |
 | ~~HTTPS / TLS-Terminierung auf EC2~~ | ✅ Sprint 10 | ADR-019 Folge — nginx SSL + Self-Signed-Zertifikat, automatisch generiert in `scripts/deploy.sh` (`openssl req -x509`, für `getUserMedia`-Pflicht auf HTTPS) |
-| MQTT-Authentifizierung (Mosquitto Passwort-File) | nach Sprint 9 | Port 1883 aktuell ohne Auth offen — Vehicle-IP-Einschränkung in SG empfohlen |
+| MQTT-Authentifizierung (Mosquitto Passwort-File) | ✅ Sprint 38 | Port 1883 lief seit Sprint 9 mit `allow_anonymous true` — jeder Prozess im `avoc-net` konnte ohne Credentials publizieren/subscriben. Geschlossen: Mosquitto `password_file` aktiviert (Dev/Test/Prod), alle 3 Go-MQTT-Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`) setzen `MQTT_USERNAME`/`MQTT_PASSWORD`, Prod-Passwd-Datei wird zur Deploy-Zeit aus SSM generiert (nicht committed). Bewusst offen gelassen: TLS/MQTTS (Transportverschlüsselung) — Passwörter reisen weiterhin im Klartext über das interne Docker-Bridge-Netzwerk, identisches Vertrauensmodell wie `DATABASE_URL`. Details `tasks/sprints/38-mqtt-authentifizierung.md` |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + Registry; `~^vehicle-.*`-Regex aktiv |
 | WHEP Auth für mehrere Operatoren (Session-basiert) | offen | ADR-020 Folge |
 | E2E Smoke Test (Browser WiFi + 5G TURN-Relay) | offen | WEBRTC-09 Rest — WHIP-Quelle nötig |

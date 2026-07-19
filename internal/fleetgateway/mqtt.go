@@ -27,7 +27,7 @@ type MQTTGateway struct {
 // NewMQTTGateway connects to broker (e.g. "tcp://mosquitto:1883") and subscribes to the fleet
 // topic wildcards. Returns an error if the initial connection fails — callers should treat this
 // the same way pkg/db.WaitForReady is used elsewhere (retry at the call site if needed).
-func NewMQTTGateway(broker string) (*MQTTGateway, error) {
+func NewMQTTGateway(broker, username, password string) (*MQTTGateway, error) {
 	g := &MQTTGateway{}
 
 	// A fixed ClientID would collide with every other MQTTGateway instance connected to the same
@@ -39,6 +39,8 @@ func NewMQTTGateway(broker string) (*MQTTGateway, error) {
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
 		SetClientID("fleet-service-gateway-" + ulid.Generate()).
+		SetUsername(username).
+		SetPassword(password).
 		SetAutoReconnect(true).
 		SetConnectRetryInterval(5 * time.Second)
 	g.client = mqtt.NewClient(opts)

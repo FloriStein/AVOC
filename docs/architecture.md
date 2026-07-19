@@ -69,6 +69,11 @@ sich mit dem hier gewählten Design (Recherche 2026-07-10, siehe `CONTEXT.MD` Ar
 - Eclipse Mosquitto Broker (ADR-003)
 - Protobuf-Messages (ADR-008), CorrelationHeader trägt Session-ID (ADR-016)
 - Asynchron, fire-and-forget (ADR-012b)
+- Authentifiziert via Mosquitto `password_file` (Sprint 38, MQTTAUTH-01..06) — Broker verweigert
+  anonyme Verbindungen (`allow_anonymous false`), alle 3 Go-Clients (`telemetryservice`,
+  `fleetgateway`, `vehicle-mock`) setzen `MQTT_USERNAME`/`MQTT_PASSWORD`. Transportverschlüsselung
+  (TLS/MQTTS) bewusst nicht Teil dieses Sprints — Klartext-Credentials über das interne
+  `avoc-net`-Bridge-Netzwerk, analog `DATABASE_URL`.
 
 ### Safety Event Bus Layer (Safety Channel — ADR-002)
 

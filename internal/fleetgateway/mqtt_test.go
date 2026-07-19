@@ -22,10 +22,17 @@ func mqttTestBroker(t *testing.T) string {
 	return "tcp://" + broker
 }
 
+// mqttTestCredentials reads MQTT_USERNAME/MQTT_PASSWORD — set alongside MQTT_BROKER when running
+// against a real Mosquitto instance (MQTTAUTH-01: broker rejects anonymous connections).
+func mqttTestCredentials() (string, string) {
+	return os.Getenv("MQTT_USERNAME"), os.Getenv("MQTT_PASSWORD")
+}
+
 func TestMQTTGateway_ReceivesStatusPublishedByExternalClient(t *testing.T) {
 	broker := mqttTestBroker(t)
+	username, password := mqttTestCredentials()
 
-	gw, err := NewMQTTGateway(broker)
+	gw, err := NewMQTTGateway(broker, username, password)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
@@ -41,7 +48,7 @@ func TestMQTTGateway_ReceivesStatusPublishedByExternalClient(t *testing.T) {
 		close(got)
 	})
 
-	pub := connectPublisher(t, broker)
+	pub := connectPublisher(t, broker, username, password)
 	defer pub.Disconnect(250)
 
 	battery := 42.5
@@ -63,8 +70,9 @@ func TestMQTTGateway_ReceivesStatusPublishedByExternalClient(t *testing.T) {
 
 func TestMQTTGateway_ReceivesAlertPublishedByExternalClient(t *testing.T) {
 	broker := mqttTestBroker(t)
+	username, password := mqttTestCredentials()
 
-	gw, err := NewMQTTGateway(broker)
+	gw, err := NewMQTTGateway(broker, username, password)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
@@ -80,7 +88,7 @@ func TestMQTTGateway_ReceivesAlertPublishedByExternalClient(t *testing.T) {
 		close(got)
 	})
 
-	pub := connectPublisher(t, broker)
+	pub := connectPublisher(t, broker, username, password)
 	defer pub.Disconnect(250)
 
 	event := VehicleAlertEvent{VehicleID: "mqtt-test-v2", Severity: "critical", Message: "Hindernis erkannt", Timestamp: time.Now()}
@@ -101,8 +109,9 @@ func TestMQTTGateway_ReceivesAlertPublishedByExternalClient(t *testing.T) {
 
 func TestMQTTGateway_MalformedPayload_DoesNotCrashSubscriber(t *testing.T) {
 	broker := mqttTestBroker(t)
+	username, password := mqttTestCredentials()
 
-	gw, err := NewMQTTGateway(broker)
+	gw, err := NewMQTTGateway(broker, username, password)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
@@ -116,7 +125,7 @@ func TestMQTTGateway_MalformedPayload_DoesNotCrashSubscriber(t *testing.T) {
 		mu.Unlock()
 	})
 
-	pub := connectPublisher(t, broker)
+	pub := connectPublisher(t, broker, username, password)
 	defer pub.Disconnect(250)
 
 	// Malformed JSON on the status topic — must be silently dropped, not panic the process.
@@ -147,14 +156,15 @@ func TestMQTTGateway_MalformedPayload_DoesNotCrashSubscriber(t *testing.T) {
 
 func TestMQTTGateway_DispatchTask_PublishesToTaskTopic(t *testing.T) {
 	broker := mqttTestBroker(t)
+	username, password := mqttTestCredentials()
 
-	gw, err := NewMQTTGateway(broker)
+	gw, err := NewMQTTGateway(broker, username, password)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
 	t.Cleanup(gw.Close)
 
-	sub := connectPublisher(t, broker) // reused as a plain subscriber client
+	sub := connectPublisher(t, broker, username, password) // reused as a plain subscriber client
 	defer sub.Disconnect(250)
 
 	got := make(chan []byte, 1)
@@ -183,9 +193,13 @@ func TestMQTTGateway_DispatchTask_PublishesToTaskTopic(t *testing.T) {
 	}
 }
 
-func connectPublisher(t *testing.T, broker string) mqtt.Client {
+func connectPublisher(t *testing.T, broker, username, password string) mqtt.Client {
 	t.Helper()
-	client := mqtt.NewClient(mqtt.NewClientOptions().AddBroker(broker).SetClientID("fleetgateway-test-pub-" + t.Name()))
+	client := mqtt.NewClient(mqtt.NewClientOptions().
+		AddBroker(broker).
+		SetClientID("fleetgateway-test-pub-" + t.Name()).
+		SetUsername(username).
+		SetPassword(password))
 	token := client.Connect()
 	if !token.WaitTimeout(5 * time.Second) {
 		t.Fatal("publisher connect timed out")

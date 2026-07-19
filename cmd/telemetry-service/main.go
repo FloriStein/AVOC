@@ -21,8 +21,10 @@ func main() {
 	if broker == "" {
 		broker = "mosquitto:1883"
 	}
+	username := os.Getenv("MQTT_USERNAME")
+	password := os.Getenv("MQTT_PASSWORD")
 
-	client := telemetryservice.NewClient(broker)
+	client := telemetryservice.NewClient(broker, username, password)
 	if err := client.Connect(); err != nil {
 		log.Fatal("MQTT connect failed", "broker", broker, "error", err)
 	}

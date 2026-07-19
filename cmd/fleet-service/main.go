@@ -16,6 +16,8 @@ var log = logger.New("fleet-service")
 func main() {
 	port := env.OptionalOr("FLEET_PORT", "8085")
 	mqttBroker := env.OptionalOr("MQTT_BROKER", "mosquitto:1883")
+	mqttUsername := env.OptionalOr("MQTT_USERNAME", "")
+	mqttPassword := env.OptionalOr("MQTT_PASSWORD", "")
 
 	databaseURL := env.Require("DATABASE_URL", log)
 	jwtSecret := env.Require("JWT_SECRET", log)
@@ -35,7 +37,7 @@ func main() {
 	// MQTTGateway is the concrete FleetGateway realization (FLEET-04/05) — same Mosquitto broker
 	// vehicle-mock's fleet simulation publishes to. Retried like pkgdb.WaitForReady: mosquitto
 	// and fleet-service have no depends_on between them either.
-	gw, err := connectGatewayWithRetry(mqttBroker)
+	gw, err := connectGatewayWithRetry(mqttBroker, mqttUsername, mqttPassword)
 	if err != nil {
 		log.Fatal("failed to connect to MQTT broker", "broker", mqttBroker, "error", err)
 	}
@@ -178,10 +180,10 @@ func newFleetMux(handler *fleetservice.Handler) *http.ServeMux {
 
 // connectGatewayWithRetry mirrors pkgdb.WaitForReady's retry shape for the MQTT broker
 // dependency — mosquitto has no depends_on ordering guarantee relative to fleet-service either.
-func connectGatewayWithRetry(broker string) (*fleetgateway.MQTTGateway, error) {
+func connectGatewayWithRetry(broker, username, password string) (*fleetgateway.MQTTGateway, error) {
 	var lastErr error
 	for i := 0; i < pkgdb.DefaultConnectRetries; i++ {
-		gw, err := fleetgateway.NewMQTTGateway("tcp://" + broker)
+		gw, err := fleetgateway.NewMQTTGateway("tcp://"+broker, username, password)
 		if err == nil {
 			return gw, nil
 		}

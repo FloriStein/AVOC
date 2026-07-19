@@ -9,6 +9,13 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 38 — MQTT-Authentifizierung (Mosquitto Passwort-File) ✅
+2026-07-19 → [tasks/sprints/38-mqtt-authentifizierung.md](sprints/38-mqtt-authentifizierung.md)
+- Schließt seit Sprint 9 offenen Sicherheits-Gap: Mosquitto lief mit `allow_anonymous true` — jeder Prozess im `avoc-net` konnte ohne Credentials publizieren/subscriben. Nutzerentscheidung 2026-07-19, Priorität vor Hexagonal-Migration Schritt 3 (CLAUDE.MD §0 "Sicherheit schlägt alles").
+- `password_file`-Mechanismus aktiviert (Dev/Test/Prod), alle 3 Go-MQTT-Clients (`telemetryservice`, `fleetgateway`, `vehicle-mock`) setzen `MQTT_USERNAME`/`MQTT_PASSWORD`, Prod-Credential nur über SSM SecureString + deploy-zeitige Passwd-Generierung auf dem EC2-Host (nie committed).
+- Bewusst nicht Teil des Scopes: TLS/MQTTS (Transportverschlüsselung) — Klartext-Credentials über das interne Docker-Bridge-Netzwerk, analog `DATABASE_URL`.
+- Verifiziert: `go build`/`go vet` sauber, `go test ./...` ohne Regression, `make test-integration` 30/30 grün gegen den echten authentifizierten Broker, manuelle Dev-Stack-Verifikation bestätigt Roundtrip UND Ablehnung anonymer Verbindungen ("Connection Refused: not authorised").
+
 ## Sprint 37 — Hexagonale Architektur-Migration, Schritt 2: auth-service (JWT-Port) ✅
 2026-07-19 → [tasks/sprints/37-auth-service-hexagonal-jwt-port.md](sprints/37-auth-service-hexagonal-jwt-port.md)
 - ADR-031 Schritt 2: `TokenIssuer`-Port + `JWTTokenIssuer`-Adapter (`internal/authservice/tokenissuer.go`) — `Handler.secret` → `Handler.tokens TokenIssuer`, `NewHandler`-Signatur unverändert.
