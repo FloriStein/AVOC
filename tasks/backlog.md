@@ -542,6 +542,32 @@ Präzedenzfall `TURN_USER`/`TURN_PASSWORD`) in `tasks/sprints/38-mqtt-authentifi
 
 ---
 
+## EPIC: Testabdeckung sicherheitsrelevanter Services (ADR-031-Bestandsaufnahme) ✅ Sprint 39
+
+**Freigabe (2026-07-19):** Nutzerentscheidung gegenüber drei Alternativen (Hexagonal-Migration
+Schritt 3 telemetry-service, TLS/MQTTS-Härtung, Session-Recording-Storage-Entscheidung) —
+Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles") + Abschnitt 17 (Teststandard).
+Schließt den seit der ADR-031-Bestandsaufnahme (2026-07-16) offenen Punkt "Testabdeckung
+`safety-service`/`webrtc-sfu`/`internal/recording` (0 Tests)" unten in "Offene Entscheidungen".
+Reine Testabdeckung, keine Produktivcode-Verhaltensänderung, kein neues ADR nötig. Vollständige
+Vorrecherche in `tasks/current-sprint.md` (Sprint 39).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| TESTCOV-01 | `internal/recording/memory_recorder_test.go` — vollständige `MemoryRecorder`-Abdeckung (Start/EndSession, drei Record*-Methoden, `GetEntries`-Kopie-statt-Referenz, Session-Isolation) | S | ✅ Sprint 39 | — |
+| TESTCOV-02 | `internal/safetyservice/bus_test.go` — `Bus`-Abdeckung (Publish/TriggerEmergencyStop/GetSafetyState/Subscribe mit mehreren Handlern/Reset), inkl. `-race`-Nebenläufigkeitstest | M | ✅ Sprint 39 | — |
+| TESTCOV-03 | `cmd/safety-service/main_test.go` — HTTP-Handler-Tests (`newSafetyMux`, 4 Endpoints, `httptest`) | S/M | ✅ Sprint 39 | TESTCOV-02 |
+| TESTCOV-04 | `internal/webrtcsfu/sfu_test.go` — `HandleSessionEvent`-Zustandsübergänge + `registerOperatorSubscription`-Dedup-Logik + `removePeer`, via `webrtc.NewPeerConnection` ohne echte Netzwerk-Negotiation | M | ✅ Sprint 39 | — |
+| TESTCOV-05 | `cmd/webrtc-sfu/main_test.go` — HTTP-Handler-Tests (`newSFUMux`, 4 Endpoints, `httptest`; Erfolgsfall der Offer/Subscribe-Endpoints bewusst außerhalb des Scopes) | S | ✅ Sprint 39 | TESTCOV-04 |
+| TESTCOV-06 | Verifikation (`go build`/`go vet`/`go test ./...` + `-race` für `safetyservice`/`webrtcsfu`) + Doku-Updates (`DECISIONS.MD`, `tasks/backlog.md`, `CONTEXT.MD`-Aktualitätsprüfung) | S | ✅ Sprint 39 | TESTCOV-01..05 |
+
+**Nicht Teil dieses Sprints:** echte End-to-End-WebRTC-SDP-Negotiation (`CreateVehicleOffer`/
+`SubscribeOperator`/`negotiateAnswer`, ADR-006: "zu flaky in CI"), `SFU.forwardTrack`
+(RTP-Kopierschleife), Hexagonal-Migration der drei Services selbst (bleibt eigener,
+separat zu entscheidender ADR-031-Folgeschritt).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |

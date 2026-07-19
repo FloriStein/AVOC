@@ -9,6 +9,13 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 39 — Testabdeckung `safety-service`/`webrtc-sfu`/`internal/recording` ✅
+2026-07-19 → [tasks/sprints/39-testabdeckung-sicherheitsrelevanter-services.md](sprints/39-testabdeckung-sicherheitsrelevanter-services.md)
+- Schließt seit der ADR-031-Bestandsaufnahme (2026-07-16) offene Lücke: drei Services mit 0 automatisierten Tests, darunter der Safety Event Bus (`safety-service`). Nutzerentscheidung 2026-07-19 gegenüber 3 Alternativen (Hexagonal-Migration Schritt 3, TLS/MQTTS-Härtung, Session-Recording-Storage), Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles").
+- 36 neue Unit-Tests über 5 Testdateien: `internal/recording/memory_recorder_test.go`, `internal/safetyservice/bus_test.go`, `cmd/safety-service/main_test.go`, `internal/webrtcsfu/sfu_test.go`, `cmd/webrtc-sfu/main_test.go`. `-race`-sauber für `safetyservice`/`webrtcsfu`. Reine Testabdeckung, 0 Produktivcode-Änderungen.
+- Bewusst nicht Teil des Scopes: E2E-WebRTC-SDP-Negotiation (ADR-006: "zu flaky in CI"), `SFU.forwardTrack`, Hexagonal-Migration der drei Services selbst.
+- Verifiziert: `go build`/`go vet` sauber, `go test ./...` grün für alle betroffenen Pakete (vorbestehende `tests/integration/...`-Fehlschläge unverändert, da Docker-Test-Stack nicht gestartet).
+
 ## Sprint 38 — MQTT-Authentifizierung (Mosquitto Passwort-File) ✅
 2026-07-19 → [tasks/sprints/38-mqtt-authentifizierung.md](sprints/38-mqtt-authentifizierung.md)
 - Schließt seit Sprint 9 offenen Sicherheits-Gap: Mosquitto lief mit `allow_anonymous true` — jeder Prozess im `avoc-net` konnte ohne Credentials publizieren/subscriben. Nutzerentscheidung 2026-07-19, Priorität vor Hexagonal-Migration Schritt 3 (CLAUDE.MD §0 "Sicherheit schlägt alles").

@@ -6,4 +6,7 @@
 
 ---
 
-# Sprint 39 — noch nicht geplant
+# Sprint 40 — noch nicht geplant
+
+Vorgänger: Sprint 39 ✅ (Testabdeckung `safety-service`/`webrtc-sfu`/`internal/recording`, siehe
+`tasks/sprints/39-testabdeckung-sicherheitsrelevanter-services.md`)
