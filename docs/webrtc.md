@@ -245,8 +245,10 @@ MediaMTX ist der zentrale Media-Router. Er spricht nativ WHIP und WHEP und deleg
 webrtcAddress: :8889            # HTTP Signaling — WHIP/WHEP POST
 webrtcLocalUDPAddress: :8189    # ICE UDP Mux — separater Port
 webrtcIPsFromInterfaces: false  # Docker-interne IPs (172.x) unterdrücken
-webrtcAdditionalHosts:          # Einziger Host-Candidate: EC2 Elastic IP
-  - "$TURN_EXTERNAL_IP"
+webrtcAdditionalHosts: []       # Leer in der YAML — MediaMTX interpoliert kein $VAR in der
+                                 # Config-Datei; der EC2-Elastic-IP-Host-Candidate wird stattdessen
+                                 # per Env-Var im Compose-File gesetzt (siehe docker-compose.prod.yml):
+                                 #   MTX_WEBRTCADDITIONALHOSTS: ${TURN_EXTERNAL_IP}
 webrtcHandshakeTimeout: 60s     # TURN-Relay braucht mehr Zeit als direkte Verbindung
 
 authMethod: http
@@ -437,9 +439,10 @@ const connect = useCallback(async () => {
   // 4. SDP Offer erstellen
   const offer = await pc.createOffer()
 
-  // 5. Pion DTLS-Bug-Fix
-  const fixedSdp = offer.sdp!.replace(/a=setup:actpass/g, 'a=setup:active')
-  await pc.setLocalDescription({ type: 'offer', sdp: fixedSdp })
+  // 5. Standard-Offer unverändert setzen — der actpass→active-Workaround wurde in
+  //    Sprint 32 (WEBRTC-10) entfernt, da er mit aktuellem Chrome inkompatibel war;
+  //    Offer bleibt Standard-`actpass` (siehe §3/§9 oben)
+  await pc.setLocalDescription(offer)
   // → ICE Gathering startet jetzt
 
   // 6. Warten bis alle Candidates gesammelt (Vanilla ICE)
@@ -532,10 +535,10 @@ const start = useCallback(async (whipUrl: string, sourceType: SourceType, stream
   // 3. Tracks hinzufügen (senden, nicht empfangen)
   stream.getTracks().forEach(track => pc.addTrack(track, stream))
 
-  // 4. Offer + DTLS-Fix + ICE Gathering (identisch zu useWebRTC)
+  // 4. Offer (Standard-actpass, kein Workaround mehr seit Sprint 32/WEBRTC-10) + ICE Gathering
+  //    (identisch zu useWebRTC)
   const offer = await pc.createOffer()
-  const sdp = offer.sdp!.replace(/a=setup:actpass/g, 'a=setup:active')
-  await pc.setLocalDescription({ type: 'offer', sdp })
+  await pc.setLocalDescription(offer)
   // ... ICE Gathering wait ...
 
   // 5. WHIP POST

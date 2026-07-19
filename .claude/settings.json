@@ -25,5 +25,15 @@
       "Bash(head -5 package-lock.json)",
       "Bash(file control-server *)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/go-build-guard.sh" }
+        ]
+      }
+    ]
   }
 }

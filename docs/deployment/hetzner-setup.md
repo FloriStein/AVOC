@@ -84,6 +84,11 @@ In der Cloud Console: **Firewalls** → **Firewall erstellen** → Regeln:
 | 8189 | UDP | MediaMTX ICE-Mux (WebRTC Media) |
 | 49152–65535 | UDP | TURN Relay-Ports (coturn) |
 
+Kein Eintrag für Port 8085 (Fleet Service) — `fleet-service` ist zwar Teil des Dev-Stacks, aber
+(Stand jetzt) nicht in `docker-compose.prod.yml` eingetragen und läuft daher auf keinem per
+`deploy.sh`/dieser Anleitung aufgesetzten Produktiv-Server, siehe `docs/deployment/ec2-bootstrap.md`
+Abschnitt "Services & zugehöriger Quellcode".
+
 Firewall dem Server zuweisen: **Server** → `avoc-server` → **Firewalls** → Zuweisen.
 
 > **Wichtig — UDP 8189:** Dieser Port ist entscheidend für WebRTC-Mediadaten.

@@ -75,13 +75,13 @@ make build
 
 # Tests
 make test               # alle Go-Tests
-make test-safety        # Safety Test Suite (CI Safety Gate — muss 19/19 bleiben)
+make test-safety        # Safety Test Suite (CI Safety Gate — muss grün bleiben, tests/unit/safety_test.go)
 make test-integration   # Integration Tests (startet/stoppt Test-Stack automatisch)
 make test-latency       # Go Benchmark ACK-Roundtrip <100ms (ADR-010 Build-Fail)
 make test-k6            # k6 Load Test 10 VU / 30s (benötigt Docker)
 
 # Frontend Tests
-cd frontend && npm test           # Vitest Component-Tests (41 Tests)
+cd frontend && npm test           # Vitest Component-/Hook-Tests
 cd frontend && npm run test:e2e   # Playwright E2E (benötigt laufenden Stack)
 
 # Stack stoppen
@@ -180,18 +180,25 @@ docker compose -f tests/docker-compose.test.yml down
 ## Projektstruktur
 
 ```
-├── cmd/                    # Go Service Entry Points
+├── cmd/                    # Go Service Entry Points (control-server, auth-service, safety-service,
+│                           #   telemetry-service, webrtc-sfu, fleet-service, vehicle-mock)
 ├── internal/               # Go Service-interne Pakete
 │   ├── authservice/
 │   ├── controlserver/
+│   │   ├── command/        # Command Engine — Protobuf Parsing, Rate Limiting
 │   │   ├── safety/         # Safety Decision Module (DeadmanWatchdog, ACKTimeout)
 │   │   ├── session/        # Session Manager (GSA), Handover
 │   │   ├── statemachine/   # 4-Layer State Machine
-│   │   └── transport/      # WebSocket Transport Layer
+│   │   ├── transport/      # WebSocket Transport Layer
+│   │   └── vehiclecontext/ # Registry — pro Fahrzeug eigene State Machine + Watchdogs (ADR-026)
 │   ├── safetyservice/      # Safety Event Bus (In-Memory)
+│   ├── recording/          # Session Recording (MemoryRecorder, ADR-005)
 │   ├── vehicleconnection/  # Vehicle WebSocket Handler
-│   └── vehicleregistry/    # Vehicle Registry (ADR-022) — SQLiteVehicleStore, VehicleStore Interface
-├── pkg/ulid/               # ULID-Wrapper (ADR-016)
+│   ├── vehicleregistry/    # Vehicle Registry (ADR-022/023) — PostgresVehicleStore, VehicleStore Interface
+│   ├── fleetservice/       # Fleet REST-Handler, Store, Broadcast-Hub, Alert-Engine (ADR-029/031)
+│   └── fleetgateway/       # FleetGateway-Interface + Mock-/MQTT-Implementierung (ADR-027)
+├── pkg/                    # Shared Go-Pakete: ulid (ADR-016), logger (ADR-017), audit (ADR-018),
+│                           #   db, env
 ├── proto/                  # .proto Source — Single Source of Truth
 ├── gen/                    # Generated Code — gitignored
 ├── frontend/               # React 18 + TypeScript + Vite + Tailwind
@@ -201,8 +208,9 @@ docker compose -f tests/docker-compose.test.yml down
 │   ├── coturn/             # STUN/TURN Konfiguration
 │   ├── mediamtx/           # MediaMTX WHIP/WHEP Config (ADR-020)
 │   ├── mosquitto/          # MQTT Broker Konfiguration
+│   ├── grafana/ loki/ promtail/  # Log-Aggregation & -Visualisierung (ADR-017)
 │   └── AWS/                # CDK Stack (EC2, Security Groups)
-└── tests/unit/             # Safety Test Suite (19 Szenarien, Sprint 2)
+└── tests/unit/             # Safety Test Suite (siehe tests/unit/safety_test.go)
 ```
 
 ---

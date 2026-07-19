@@ -86,7 +86,10 @@ src/
 │   ├── UserManagementPanel.tsx     # Admin-UI für Nutzerverwaltung (Sprint 15)
 │   ├── FleetOverview.tsx           # Fleet-Dashboard-Landingpage (Sprint 22) — bündelt die
 │   │                                # Fleet-Panels unten
-│   ├── FleetMap.tsx                # Outdoor-/Indoor-Kartenansicht mit Zonen/Stationen (Sprint 23)
+│   ├── FleetMap.tsx                # Outdoor-Kartenansicht mit Zonen/Stationen + gefahrener Route
+│   │                                # (Sprint 23/32)
+│   ├── FleetIndoorMap.tsx          # Indoor-Kartenansicht — reines SVG-Koordinatensystem,
+│   │                                # position_x/y (Sprint 33, ADR-034)
 │   ├── FleetVehicleList.tsx        # Fahrzeugliste mit Live-Status (Sprint 22)
 │   ├── FleetVehicleDetail.tsx      # Detailansicht einzelnes Fahrzeug (Sprint 22)
 │   ├── FleetTaskPanel.tsx          # Task-Erstellung/-Zuweisung/-Statuswechsel (Sprint 24)
@@ -115,6 +118,7 @@ src/
 │   ├── useMediaRecorder.ts         # Lokale Aufzeichnung des Videostreams (Diagnose/Demo)
 │   ├── useFleetOverview.ts         # Polling Fleet-Vehicles/-Alerts/-Tasks für FleetOverview
 │   ├── useFleetZones.ts            # GET /fleet/zones + /fleet/stations für FleetMap
+│   ├── useVehiclePositionHistory.ts # GET /fleet/vehicles/{id}/history — gefahrene Route (Sprint 32, ADR-033)
 │   └── useFleetAlertSound.ts       # Audio-Benachrichtigung bei neuen Alerts (Sprint 25), Mute-Toggle
 ├── lib/
 │   ├── api-client.ts               # HTTP-Client (Control-/Auth-/Fleet-Service-Endpunkte)
@@ -122,7 +126,8 @@ src/
 │   ├── fleet-ws-client.ts          # WebSocket-Client für Fleet-Service Live-Updates
 │   ├── fleet-ws-events.ts          # Event-Typen/-Parsing für den Fleet-WS-Kanal
 │   ├── fleet-merge.ts              # Merge-Logik: WS-Deltas in den Fleet-Overview-State einspielen
-│   ├── fleet-map.ts                # Koordinaten-/Geometrie-Hilfsfunktionen für FleetMap
+│   ├── fleet-map.ts                # Koordinaten-/Geometrie-Hilfsfunktionen für FleetMap (Outdoor)
+│   ├── fleet-indoor-map.ts         # Koordinaten-Hilfsfunktionen für FleetIndoorMap (Sprint 33)
 │   ├── fleet-alert-sound.ts        # Ton-Generierung/-Throttling für useFleetAlertSound
 │   └── logger.ts                   # Strukturiertes Client-Logging
 └── gen/                            # Protobuf-generiert — gitignored
@@ -156,10 +161,12 @@ src/
 ### Fleet Dashboard (Sprint 22–25, `ADR-027/028/029/030`)
 - **Landing-View nach Login:** `FleetOverview` zeigt alle Fahrzeuge mit Live-Status
   (Batterie, Modus, aktueller Task), statt direkt in eine Einzelfahrzeug-Teleop-Ansicht zu springen
-- **Kartenansicht:** `FleetMap` — Outdoor (geo-referenziert) und Indoor (SVG) Zonen/Stationen,
-  Live-Fahrzeugpositionen
-- **Task Management:** `FleetTaskPanel` — Erstellen, Zuweisen, Statuswechsel (Zustandsmaschine
-  serverseitig autoritativ, siehe `internal/fleetservice/store.go`)
+- **Kartenansicht:** `FleetMap` — Outdoor (geo-referenziert, Leaflet-Overlay) inkl. gefahrener
+  Route (`useVehiclePositionHistory`, Sprint 32, ADR-033); `FleetIndoorMap` — Indoor (reines
+  SVG-Koordinatensystem, `position_x/y`, Sprint 33, ADR-034; Befüllung durch den Simulator noch
+  offen, siehe `DECISIONS.MD`)
+- **Task Management:** `FleetTaskPanel` — Erstellen, Zuweisen, Statuswechsel inkl. Status-Historie
+  (Zustandsmaschine serverseitig autoritativ, `internal/fleetservice/store.go`, ADR-030/032)
 - **Alert System:** `FleetAlertsPanel` — Echtzeit-Alerts mit Priorität, Acknowledge, optionaler
   Audio-Benachrichtigung (`useFleetAlertSound`, Sprint 25) mit Mute-Toggle
 - **Multi-Vehicle State Isolation (`ADR-026`):** jedes Fahrzeug hat eigenen SYSTEM/CONTROL/MEDIA/

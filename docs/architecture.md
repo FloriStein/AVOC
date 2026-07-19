@@ -2,7 +2,10 @@
 
 Stand: 2026-06-16 (aktualisiert nach ADR-001 bis ADR-026, Sprint 17 deployed); Fleet-System-Abschnitt
 nachgezogen 2026-07-16 (Sprint 21–23, ADR-027/028/029) — bis dahin unbeschrieben, obwohl seit
-Sprint 21 im Betrieb.
+Sprint 21 im Betrieb. Fleet-System-Abschnitt erneut nachgezogen 2026-07-19 (Sprint 30–35): Task-
+Status-Lifecycle + -Historie (ADR-030/032), Vehicle-Position-Historie (ADR-033), Indoor-
+Fahrzeugposition (ADR-034), Hexagonal-Pilot `fleet-service` (ADR-031, siehe "FleetGateway-
+Abstraktion" unten).
 
 ---
 
@@ -196,7 +199,7 @@ INVARIANT 3: Control Hub is Single Source of Truth for Session State.
 
 Alle schreibenden REST-Endpoints sind durch `requireJWT`-Middleware geschützt (Bearer-Token-Prüfung via `github.com/golang-jwt/jwt/v5`):
 
-**Geschützt (11 Endpoints):** `POST /session/start`, `POST /session/end`, `POST /handover/request`, `POST /handover/confirm`, `POST /handover/cancel`, `POST /media/event`, `POST /emergency-stop`, `GET /audit/events`, `GET /recording/`, `POST /vehicles`, `DELETE /vehicles/{id}`
+**Geschützt (13 Endpoints):** `POST /session/start`, `POST /session/end`, `POST /logout`, `POST /handover/request`, `POST /handover/confirm`, `POST /handover/cancel`, `POST /media/event`, `POST /emergency-stop`, `GET /audit/events`, `GET /recording/`, `POST /vehicles`, `DELETE /vehicles/{id}`, `GET /sessions`
 
 **Bewusst offen:** `GET /vehicles/{id}/state`, `GET /health`, `GET /vehicles`, `GET /ice-config`, `GET /vehicle/ack/latest/{id}`, `POST /log` — Polling ohne Session-Kontext, nicht-sensitive Lesezugriffe, oder Fire-and-forget Logger (muss vor Login feuern können).
 
@@ -220,9 +223,12 @@ Neue, per Fremdschlüssel an `vehicles.id` gehängte Tabellen: `vehicle_status`,
 `stations`, `tasks`, `alerts`. Zonen/Stationen tragen `svg_geometry` (rohes SVG-Markup) und bei
 Outdoor-Zonen zusätzlich `geo_bounds` (JSON-String mit `sw`/`ne`-Ecken, geo-referenziert für
 Leaflet `svgOverlay`/Marker-Bounds) — Format in ADR-029 verbindlich definiert (Sprint 23, MAP-02).
-Fahrzeuge haben für Outdoor `position_lat/lon`, für Indoor nur `position_zone_id`, **kein**
-`position_x/y` — echte, dokumentierte Datenmodell-Lücke (`DECISIONS.MD`), Indoor-Kartenrendering
-blockiert bis zu einer Folge-Migration.
+Fahrzeuge haben für Outdoor `position_lat/lon`, für Indoor `position_zone_id` **und** `position_x/y`
+(`vehicle_status.position_x/y`, ergänzt in ADR-034/Sprint 33, analog zu `stations.position_x/y`).
+**Befüllung bleibt offen:** kein Schreiber setzt aktuell `position_zone_id`/`position_x/y` — der
+Simulator (`fleet_simulator.go`) liefert bisher nur Outdoor-GPS; Backend/API/Frontend-Rendering
+(`FleetIndoorMap.tsx`) sind bereits fertig und unabhängig davon verifiziert (manuell gesetzte
+Testdaten), siehe `DECISIONS.MD`.
 
 ### FleetGateway-Abstraktion (ADR-027)
 
@@ -243,6 +249,12 @@ sich das DB-Schema ändert. Zwei Implementierungen:
 MQTT-Topics — Bewegung zwischen Demo-Stationen, Batterie sinkt/lädt, seltene fahrzeug-initiierte
 Alerts, zwei Fahrzeugtypen (`lastenzug`/`lastenrad`) mit unterschiedlichem Verbrauchsprofil.
 
+**Hexagonaler Pilot (ADR-031, abgeschlossen Sprint 33):** `fleet-service`s Persistenzzugriff läuft
+zusätzlich über einen `FleetStore`-Repository-Port (19 Methoden, `internal/fleetservice/store.go`)
+mit `FakeFleetStore` für Tests — Strangler-Fig-Migration, bewusst nur dieser eine Service als Pilot
+(`control-server` explizit ausgeklammert, höchstes Risiko/geringste Testabdeckung). Fortsetzung auf
+weitere Services ist ein expliziter Entscheidungspunkt, kein Automatismus (siehe `DECISIONS.MD`).
+
 ### fleet-service REST-API + WS-Broadcast
 
 `cmd/fleet-service/main.go`, Handler in `internal/fleetservice/handler.go`. `RequireAuth` prüft
@@ -256,6 +268,9 @@ rollenspezifisch wie Admin-Aktionen).
 | GET/POST | `/fleet/zones` | Zonen-CRUD (Read/Create) |
 | GET/POST | `/fleet/stations` | Stations-CRUD (Read/Create) |
 | GET/POST | `/fleet/tasks` | Task-CRUD; `CreateTask` dispatcht fire-and-forget an die Gateway (Ack-Semantik der echten Fahrzeug-Anbindung noch offen, ADR-027) |
+| PATCH | `/fleet/tasks/{id}/status` | Manueller Status-Übergang (`pending→in_progress→completed`/`cancelled`), race-safe atomares UPDATE (ADR-030, Sprint 30) |
+| GET | `/fleet/tasks/{id}/history` | Vollständige Task-Status-Historie, chronologisch aufsteigend (ADR-032, Sprint 31) |
+| GET | `/fleet/vehicles/{id}/history` | Gefahrene Route der letzten 30 Tage (`vehicle_position_history`, ADR-033, Sprint 32) |
 | GET | `/fleet/alerts` | Alert-Liste |
 | POST | `/fleet/alerts/{id}/acknowledge` | Alert bestätigen |
 | GET | `/fleet/ws` | WS-Upgrade — Live-Broadcast (siehe unten) |
@@ -282,13 +297,21 @@ aber keine `sessionId` gesetzt ist (kein Router nötig für zwei Post-Login-View
 | `FleetOverview.tsx` | Container — führt `fleet-service`-Daten mit `control-server`s `activeSessions` clientseitig zusammen (ADR-029: "Frontend führt Services clientseitig zusammen") | 22 |
 | `FleetVehicleList.tsx` / `FleetVehicleDetail.tsx` | Fahrzeugliste + Detail-Panel; ADR-028-Gating (Teleoperate-Button nur ohne aktiven Operator) | 22 |
 | `FleetAlertsPanel.tsx` | Alert-Liste, Severity-farbig, Acknowledge pro Zeile | 22 |
-| `FleetMap.tsx` | Outdoor-Zonen-Karte — `L.svgOverlay` (Zonen-`svg_geometry`, imperativ via `useMap()`, kein react-leaflet-`<SVGOverlay>` da rohes Markup statt JSX), `L.divIcon`-Marker für Stationen (Quadrate) und Fahrzeuge (Kreise, Klick synct mit Detail-Panel). Kein `<TileLayer>` — ADR-029 schließt externe Kartenkacheln/SaaS aus | 23 |
+| `FleetMap.tsx` | Outdoor-Zonen-Karte — `L.svgOverlay` (Zonen-`svg_geometry`, imperativ via `useMap()`, kein react-leaflet-`<SVGOverlay>` da rohes Markup statt JSX), `L.divIcon`-Marker für Stationen (Quadrate) und Fahrzeuge (Kreise, Klick synct mit Detail-Panel). Kein `<TileLayer>` — ADR-029 schließt externe Kartenkacheln/SaaS aus; zeigt zusätzlich gefahrene Route (`useVehiclePositionHistory.ts`) | 23/32 |
+| `FleetIndoorMap.tsx` | Indoor-Karte — reines SVG-Koordinatensystem (`position_x/y`, kein Leaflet/`geo_bounds`), Werkshallen-SVG als Rendering-Grundlage | 33 |
+| `FleetTaskPanel.tsx` | Task-Liste inkl. manuellem Status-Übergang und Historie-Anzeige (ADR-030/032) | 30/31 |
 | `useFleetOverview.ts` | REST-Snapshot + WS-Deltas (`fleet-ws-client.ts`), Resync bei jedem Reconnect nach dem ersten | 22 |
 | `useFleetZones.ts` | Einmaliger REST-Fetch für Zonen/Stationen — bewusst kein WS (Broadcast-Hub kennt keine Zonen-/Stations-Events) | 23 |
+| `useVehiclePositionHistory.ts` | REST-Fetch für gefahrene Route (`GET /fleet/vehicles/{id}/history`, ADR-033) | 32 |
 | `useActiveSessions.ts` | Extrahiert aus `App.tsx`, pollt `GET /api/sessions` | 22 |
 
-**Scope-Grenze (Grill-Me 2026-07-16):** Sprint 23 beschränkt sich auf Outdoor-Zonen — Indoor
-scheitert an der oben genannten `position_x/y`-Lücke, verschoben auf einen Folge-Sprint.
+**Scope-Grenze Sprint 23 (Grill-Me 2026-07-16):** ursprünglich auf Outdoor-Zonen beschränkt, da
+`position_x/y` fehlte. Indoor-Rendering seither nachgeliefert (Sprint 33, ADR-034):
+`FleetIndoorMap.tsx` rendert die Werkshallen-SVG mit Fahrzeugen/Stationen als reines
+SVG-Koordinatensystem (kein Leaflet/`geo_bounds`, anders als die Outdoor-`FleetMap.tsx`) —
+Befüllung von `position_zone_id`/`position_x/y` durch den Simulator bleibt Folge-Task (siehe oben).
+Zusätzlich seit Sprint 31–32: `FleetTaskPanel.tsx` (Task-Status-Übergänge inkl. Historie,
+ADR-030/032) und `useVehiclePositionHistory.ts` (gefahrene Route, ADR-033) auf `FleetMap.tsx`.
 
 ---
 
@@ -342,6 +365,8 @@ Ein Service, 5 logische Module:
 | **Vehicle Selector** | `VehicleSelector.tsx` + `useVehicles.ts` — Dropdown mit Online-Indikator, Session-Start-Button | Sprint 12 ✅ |
 | **Input Indicator Panel** | `InputIndicatorPanel.tsx` + `useVehicleAck.ts` — Lenkrad-SVG, ActuationBars, AckBadge | Sprint 11 ✅ |
 | **Operator Panel** | Handover-Anfrage, Observer-Liste | nicht implementiert (kein eigener Sprint geplant) |
+| **Login Panel** | `LoginPanel.tsx` — Operator-Login gegen `auth-service` | ADR-004/024 ✅ |
+| **User Management Panel** | `UserManagementPanel.tsx` — Nutzerverwaltung hinter `RequireAdmin`, `activeOperatorIds[]`-Anzeige | ADR-024 ✅ |
 
 ---
 
@@ -384,11 +409,13 @@ AutonomousVehicleOperationalControlCenter/
 ├── pkg/                          # Shared Go-Pakete
 │   ├── ulid/                     # ULID-Wrapper (ADR-016)
 │   ├── logger/                   # Strukturierter slog-Wrapper — JSON, Event-Type-Katalog (ADR-017)
-│   └── audit/                    # AuditWriter Interface + SQLiteAuditWriter (ADR-018)
+│   ├── audit/                    # SafetyAuditWriter/AuditWriter Interfaces + PostgresAuditWriter (ADR-018/023)
+│   ├── db/                       # DB-Open+WaitForReady-Helper, gebündelt aus 3 main.go-Duplikaten (Sprint 27)
+│   └── env/                      # env.Require/OptionalOr-Helper, analog (Sprint 27)
 ├── frontend/                     # React App (ADR-013)
 │   └── src/
-│       ├── components/           # VideoPanel, ControlPanel, SafetyPanel, ConnectionPanel, SafeModeOverlay, FleetOverview/FleetMap/FleetVehicleList/FleetVehicleDetail/FleetAlertsPanel (Sprint 22–23)
-│       ├── hooks/                # useControls, useWebRTC, useTelemetry, useSession, useSystemState, useDeadmanSwitch, useFleetOverview, useFleetZones, useActiveSessions
+│       ├── components/           # VideoPanel, ControlPanel, SafetyPanel, ConnectionPanel, SafeModeOverlay, LoginPanel, UserManagementPanel, FleetOverview/FleetMap/FleetIndoorMap/FleetVehicleList/FleetVehicleDetail/FleetAlertsPanel/FleetTaskPanel
+│       ├── hooks/                # useControls, useWebRTC, useTelemetry, useSession, useSystemState, useDeadmanSwitch, useFleetOverview, useFleetZones, useActiveSessions, useVehiclePositionHistory
 │       └── lib/                  # ws-client (Protobuf ACK), api-client, fleet-ws-client, fleet-map
 ├── infrastructure/               # Docker & Compose
 │   ├── docker/                   # Dockerfiles je Service, nginx.conf
@@ -396,8 +423,10 @@ AutonomousVehicleOperationalControlCenter/
 │   ├── mediamtx/                 # mediamtx.yml — WHIP/WHEP Router Config (ADR-020)
 │   ├── coturn/                   # STUN/TURN Config
 │   ├── mosquitto/                # MQTT Broker Config
+│   ├── grafana/ loki/ promtail/  # Log-Aggregation & -Visualisierung (ADR-017)
 │   └── AWS/                      # CDK Stack (EC2, Security Groups, ADR-019)
 ├── tests/                        # Test-Suites
+│   ├── performance/              # k6 Load Test + latency.js (ADR-006)
 │   ├── unit/
 │   ├── integration/
 │   └── e2e/
@@ -434,6 +463,7 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
 | Service | Technologie | Zweck |
 |---------|-------------|-------|
 | `frontend` | React/Vite, nginx | SPA serving; nginx routet `/whep/` → MediaMTX |
+| `postgres` | PostgreSQL | Gemeinsame DB `avoc`; separate Connection-Pools pro Service (ADR-023) |
 | `control-server` | Go | WebSocket, State Machine, GSA, MediaMTX Auth-Hook + SAFE_MODE-Kick |
 | `auth-service` | Go | JWT Ausstellung, Operator-Rollen, Handover-Token |
 | `safety-service` | Go | Safety Event Bus (In-Memory, DDS-ready) |
@@ -466,7 +496,7 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
 |--------|---------|------|
 | Technical Log | Erlaubt | async → slog → stdout → Docker → Loki |
 | Audit Log | Nicht erlaubt | async → slog → stdout → Docker → Loki |
-| **Safety Event** | **Niemals** | sync → `AuditWriter.WriteSync()` → SQLite (WAL) + async → Loki |
+| **Safety Event** | **Niemals** | sync → `AuditWriter.WriteSync()` → PostgreSQL (ADR-023) + async → Loki |
 
 ### Hybrid Sync/Async-Pipeline
 
@@ -485,7 +515,7 @@ Alle Komponenten laufen containerisiert. Keine Kubernetes-Abhängigkeit.
               │                               │
               ▼                               ▼
 
-      Docker → Promtail          SQLite WAL (pkg/audit)
+      Docker → Promtail          PostgreSQL (pkg/audit)
               │                               │
               ▼                               ▼
            Loki                         Audit Store

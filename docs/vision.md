@@ -101,7 +101,7 @@ Dieses System ist NICHT:
 - ein Consumer-Entertainment-Produkt
 - ein Offline-Steuerungssystem ohne Netzwerkabhängigkeit
 - ein rein lokales Embedded-Control-System ohne Cloud/Netzwerk
-- (offen, zu klären) möglicherweise nicht primär ein Direct-Teleop-System — abhängig vom Ergebnis der Klärung in Abschnitt 11
+- kein primäres Direct-Teleop-System mehr — geklärt (Abschnitt 11): Direct-Teleop bleibt als manueller Eingriffsmodus bestehen, ist aber nicht mehr der Kern der Systemvision
 
 ---
 
@@ -162,14 +162,19 @@ Das Projekt gilt als erfolgreich, wenn:
 Diese Fragen sind Grill-Me-Stoff für kommende Sessions, nicht in diesem Dokument beantwortet —
 sie werden hier bewusst offen gehalten statt stillschweigend entschieden:
 
-- **Verhältnis Direct-Teleop-System zu Fleet-Leitstelle:** Wird das bestehende
-  Control-Server/Safety-Bus/Deadman-System (a) als manueller Eingriffsmodus in die Leitstelle
-  integriert, (b) bleibt es ein paralleles Subsystem, oder (c) läuft es aus, weil Routenzüge
-  überwiegend routengeführt/autonom fahren?
-- **Sicherheitskonzept für das Betriebsgelände:** Welches Regelwerk gilt (vermutlich
-  Maschinensicherheit/DIN EN ISO 3691-4 für fahrerlose Flurförderzeuge, nicht
-  Straßenverkehrsrecht) — und was bedeutet das konkret für Verhalten bei Video-/Verbindungsverlust?
-- **Konkrete ROS2/DDS-Schnittstelle:** Ausstehend, Teil des AP1-Workshops mit der Professur Logistik (`ADR-027`)
-- **Projektstatus:** Ist die Ausschreibung bereits beauftragt oder wird sie noch als Angebot vorbereitet?
+- ~~**Verhältnis Direct-Teleop-System zu Fleet-Leitstelle**~~ — geklärt (Grill-Me 2026-07-13,
+  siehe `docs/requirements.md` "Verhältnis zum bestehenden Direct-Teleop-System"): Option (a) —
+  das bestehende System bleibt unverändert bestehen und wird als manueller Eingriffsmodus
+  integriert (Teleoperate-Button navigiert zur vollständigen bestehenden Teleop-Oberfläche)
+- **Sicherheitskonzept für das Betriebsgelände:** auf konzeptioneller Ebene geklärt (Grill-Me,
+  siehe `docs/requirements.md` "Sicherheitskonzept fürs Betriebsgelände") — die Leitstelle ist
+  Monitoring-/Dispatch-Ebene, nicht Safety-Enforcement-Instanz für autonome Fahrzeuge, die
+  bestehende Deadman-/SAFE_MODE-Architektur gilt nur für aktive Teleop-Sessions. Die konkrete
+  **regulatorische** Frage (vermutlich Maschinensicherheit/DIN EN ISO 3691-4 für fahrerlose
+  Flurförderzeuge statt Straßenverkehrsrecht) bleibt offen
+- **Konkrete ROS2/DDS-Schnittstelle:** weiterhin ausstehend, Teil des AP1-Workshops mit der
+  Professur Logistik (`ADR-027`)
+- ~~**Projektstatus**~~ — geklärt: Ausschreibung ist beauftragt, nicht mehr Angebotsstadium
+  (Stand 2026-07-13, siehe `docs/requirements.md` "Projektstatus")
 
 Siehe auch `CONTEXT.MD` „Offene Fragen" für die technische Fortführung dieser Punkte.

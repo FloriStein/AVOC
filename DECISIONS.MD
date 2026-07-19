@@ -22,11 +22,11 @@
 | [ADR-015](docs/adr/015-session-coordinator.md) | Session Coordinator | Accepted | Control Session als primäre Einheit; GSA = Control Server; Ephemeral + Checkpoint; SFU Event-Push |
 | [ADR-016](docs/adr/016-session-correlation-id.md) | Session Correlation ID | Accepted | ULID; Control Server generiert bei CONNECTING→CONNECTED; Vehicle-ID→Session-ID→Event-ID; JWT = Identity only |
 | [ADR-017](docs/adr/017-logging-strategy.md) | Logging Strategy | Accepted | Hybrid: Technical Logs async (slog → Loki); Safety Events sync (AuditWriter.WriteSync); 3 Log-Klassen; Frontend via POST /log; Interface-first (ADR-018) |
-| [ADR-018](docs/adr/018-audit-trail-strategy.md) | Audit Trail Strategy | Accepted | SQLite WAL (embedded, kein extra Service) als AuditWriter-Implementierung; garantierte Persistenz Safety Events; fsync vor SAFE_MODE |
+| [ADR-018](docs/adr/018-audit-trail-strategy.md) | Audit Trail Strategy | Accepted | SQLite WAL (embedded, kein extra Service) als AuditWriter-Implementierung; garantierte Persistenz Safety Events; fsync vor SAFE_MODE. Update: seit ADR-023 läuft `PostgresAuditWriter` gegen die gemeinsame PostgreSQL-DB `avoc` statt SQLite — Grundprinzip (synchrones `WriteSync` vor SAFE_MODE) unverändert, nur der Storage-Backend getauscht |
 | [ADR-019](docs/adr/019-deployment-strategy.md) | Deployment-Strategie | Accepted | Docker Hub private Repos + EC2 Elastic IP + AWS SSM Parameter Store; linux/amd64; kein Quellcode auf EC2; deploy.sh als Deployment-Mechanismus |
 | [ADR-020](docs/adr/020-mediamtx-whip-whep.md) | Video Ingestion & Distribution | Accepted | MediaMTX als WHIP/WHEP Router; Fahrzeug → WHIP; Browser → WHEP; Control Server = einzige Auth-Instanz; Control Server kickt MediaMTX bei SAFE_MODE. Sprint 10 Nachtrag: `webrtcICEServers2` entfernt — Browser übernimmt ICE-Gathering via `/api/ice-config`. Update 2026-07-10: Larix Broadcaster nicht mehr Referenz-Client, siehe ADR-020 |
 | [ADR-021](docs/adr/021-vehicle-connectivity-feedback.md) | Vehicle Connectivity & Feedback | Accepted | JWT `sub=vehicleID` (Auth Service); Protobuf end-to-end; VehicleForwarder-Interface; Zwei-Stufen-Feedback: WS ACK (Transport) + MQTT Telemetrie (Aktuator-Ist-Werte); vehicle-mock Docker-Service |
-| [ADR-022](docs/adr/022-vehicle-registry.md) | Vehicle Registry | Accepted | SQLite/Postgres `vehicles`-Tabelle; VehicleSelector UI; SeedDefault vehicle-001 |
+| [ADR-022](docs/adr/022-vehicle-registry.md) | Vehicle Registry | Accepted | SQLite/Postgres `vehicles`-Tabelle; VehicleSelector UI; SeedDefault vehicle-001. Update: seit ADR-023 `PostgresVehicleStore`, kein SQLite mehr |
 | [ADR-023](docs/adr/023-postgresql-migration.md) | PostgreSQL-Migration | Accepted | PostgreSQL ersetzt SQLite vollständig; gemeinsame DB `avoc`; separate Connection-Pools |
 | [ADR-024](docs/adr/024-user-management.md) | User Management | Accepted | bcrypt-Passwörter; ADMIN-Rolle; Auto-Seed Admin; `/auth/users` CRUD hinter RequireAdmin |
 | [ADR-025](docs/adr/025-multi-operator.md) | Multi-Operator | Accepted | ACTIVE_OPERATOR/OBSERVER pro Vehicle; `vehicleController`-Map; WS connect nach `session/start` |
@@ -47,22 +47,22 @@
 | Prioritätsmodell technisch (getrennte Channels vs. Header-Flag) | offen | ADR-008 Folge — BE-04 nutzt Publisher-Pattern; explizite Channel-Trennung noch offen |
 | Session Recording Storage (DB/Files/Object Storage) | offen | ADR-005 Folge — MemoryRecorder seit Sprint 4 als Platzhalter aktiv; Storage-ADR ausstehend |
 | DDS-Produktivimplementierung | Nicht in diesem Scope | ADR-002 Folge — Safety Event Bus als DDS-Drop-in implementiert |
-| Backup-Strategie Audit Store (SQLite Volume → S3) | nach Sprint 9 | ADR-018 Folge — S3-Bucket im CDK vorhanden |
+| Backup-Strategie Audit Store | nach Sprint 9 | ADR-018 Folge — Audit Store läuft seit ADR-023 in PostgreSQL `avoc` (nicht mehr SQLite-Volume); S3-Bucket im CDK vorhanden, Backup-Mechanismus für `avoc` insgesamt weiterhin offen |
 | Migration zu AWS ECR | nach Sprint 9 | ADR-019 Folge — für Produktivbetrieb sinnvoll (IAM statt Docker Hub Credentials) |
-| HTTPS / TLS-Terminierung auf EC2 | nach Sprint 9 | ADR-019 Folge — für Testphase HTTP akzeptabel |
+| ~~HTTPS / TLS-Terminierung auf EC2~~ | ✅ Sprint 10 | ADR-019 Folge — nginx SSL + Self-Signed-Zertifikat, automatisch generiert in `scripts/deploy.sh` (`openssl req -x509`, für `getUserMedia`-Pflicht auf HTTPS) |
 | MQTT-Authentifizierung (Mosquitto Passwort-File) | nach Sprint 9 | Port 1883 aktuell ohne Auth offen — Vehicle-IP-Einschränkung in SG empfohlen |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + Registry; `~^vehicle-.*`-Regex aktiv |
 | WHEP Auth für mehrere Operatoren (Session-basiert) | offen | ADR-020 Folge |
 | E2E Smoke Test (Browser WiFi + 5G TURN-Relay) | offen | WEBRTC-09 Rest — WHIP-Quelle nötig |
 | ~~WebRTC SDP `a=setup:active`-Workaround inkompatibel mit aktuellem Chrome~~ | ✅ Sprint 32 | WEBRTC-10 — Workaround entfernt, Offer bleibt Standard-`actpass`; lokal gegen `mediamtx:latest` (Pion v4.2.12) verifiziert, DTLS/ICE-Handshake erreicht zuverlässig `Connected`. Produktiv-Verifikation mit echtem Chromium auf AWS bleibt offen (neue Zeile oben in `CONTEXT.MD`) |
-| vehicle-mock in Makefile GO_SERVICES | offen | ADR-021 Folge — `make build-prod` / `make push` bauen vehicle-mock nicht |
+| ~~vehicle-mock in Makefile GO_SERVICES~~ | gelöst | `make build-prod`/`push` bauen/pushen `vehicle-mock` inzwischen explizit als eigenes Image (separat von `GO_SERVICES`, siehe `Makefile`) |
 | session_id in MQTT-TelemetryEvent | offen | ADR-021 Folge — vehicle-mock setzt kein session_id; Log-Korrelations-Gap |
 | Dev-Stack SSL-Fix | offen | Sprint-10-Regression — nginx.conf erwartet SSL-Cert; `make up` startet Frontend nicht |
 | Multi-Vehicle Safety-Isolation (globale `sm`/Watchdog-Singletons) | ✅ ADR-026 | `vehiclecontext.Registry` pro Fahrzeug — implementiert + deployed Sprint 17 (2026-06-16) |
 | E-Stop ohne vehicle_id (fleet-weiter Notaus) | ✅ ADR-026 | Implementiert: ohne `vehicle_id` → alle `ActiveVehicleIDs()`; mit `vehicle_id` → gezielt. Getestet (Integration + Unit) |
 | Vehicle-Dropdown Live-State-Badge pro Fahrzeug | offen | ADR-026 Folge (MV-09) — bewusst ausgeklammert (Grill-Me 2026-06-14) |
 | GC für `VehicleContext`-Instanzen bei großer Flotte | offen | ADR-026 Folge (MV-10) — aktuell dauerhaft behalten (kleine Flotte) |
-| Multi-Vehicle Handover | offen | ADR-026 Folge (MV-11) — `HandoverManager` nutzt noch eine einzelne globale State Machine für die OPERATOR-Schicht |
+| ~~Multi-Vehicle Handover~~ | ✅ bereits erledigt | ADR-026 Folge (MV-11) — bei Sprint-30-Bearbeitung als bereits behoben vorgefunden (Commit `f68346a`, 2026-07-15): `HandoverManager` löst pro Fahrzeug über `vehiclecontext.Registry` auf, Regressionstest `TestSafety_Handover_TwoVehicles_IndependentHandovers` |
 | `GET /state` final entfernen | offen | ADR-026 Folge (MV-12) — Frontend migriert seit MV-07, nur noch `latency.js`/`services_test.go` hängen daran |
 | `internal/authservice/handler_test.go` veraltet | offen | AUTH-TEST-01 — unabhängig von ADR-026, kompiliert nicht (`go vet`), entdeckt während Sprint-17-Verifikation |
 | Konkrete ROS2/DDS-Schnittstelle zum externen Fahrzeug-Backend | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1, IBATOUR) noch ausstehend; `FleetGateway` läuft bis dahin gegen Mock |

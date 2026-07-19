@@ -62,11 +62,14 @@ der Zerlegung 1:1 erhalten bleiben. Extrahierte Helper dürfen die Aufrufreihenf
 verändern. Siehe `docs/adr/031-hexagonal-architecture-migration.md` für die Risikoeinschätzung
 dieses Service.
 
-**Rule 4.2/4.3 und ADR-031:** Interface-Segregation auf bestehenden Produktions-Interfaces
+**Rule 4.2/4.3 und ADR-031:** Interface-Segregation auf den bestehenden Produktions-Interfaces
 (`UserStore`, `VehicleStore`, `AuditWriter`, `SessionRecorder`, `FleetGateway`, `safety.Publisher`)
-überschneidet sich mit der in ADR-031 beschlossenen Hexagonal-Migration. Diese Regeln werden dort
-koordiniert umgesetzt (`tasks/backlog.md`, EPIC "Interface-Segregation"), nicht unabhängig davon.
-Für **neuen** Code gelten Rule 4.2/4.3 ab sofort ohne Einschränkung.
+ist abgeschlossen (GOSTYLE-IF-01..06, Sprint 34/35, `tasks/backlog.md` EPIC "Go Coding Style Guide
+Rollout" Phase 2) — koordiniert mit der in ADR-031 beschlossenen Hexagonal-Migration, nicht
+unabhängig davon umgesetzt. `SessionRecorder` wurde als tote Abstraktion entfernt; die übrigen
+fünf Interfaces sind jetzt konsumentenseitig schlank geschnitten (Bootstrap-/Lifecycle-Methoden wie
+`SeedAdmin`/`SeedDefault`/`Close` liegen am konkreten Typ). Für **neuen** Code gelten Rule 4.2/4.3
+ohnehin uneingeschränkt.
 
 **Bootstrap-/Lifecycle-Methoden:** Methoden, die nur einmalig beim Start (`SeedAdmin`,
 `SeedDefault`) oder beim Shutdown (`Close`) aufgerufen werden, gehören nicht in ein Interface, das

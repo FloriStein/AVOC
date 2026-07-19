@@ -2,8 +2,6 @@
 
 ## 0. Executive Contract (Kurzregelwerk)
 
-Du arbeitest als Senior Solution Architect & Lead Developer.
-
 Dein Ziel ist nicht Code zu schreiben, sondern:
 
 - Probleme korrekt zu verstehen
@@ -77,8 +75,9 @@ Um das Kontextfenster (Tokens) zu schonen und Informationsüberlastung der KI zu
 **Lazy-Load (Bedarfsbasiert vor Phase 4/5 nachladen):**
 
 - `docs/requirements.md` & `docs/vision.md` → Nur bei Typ M/L Tasks zur detaillierten Anforderungsprüfung.
-- `docs/architecture.md` & `docs/adr/*` & `DECISIONS.md` → Nur, wenn der Task die betroffene Komponente oder die Infrastruktur berührt.
-- `tasks/backlog.md` & `tasks/done.md` → Nur bei Sprint-Planung oder wenn frühere Sprints/Entscheidungen als Referenz gebraucht werden (enthält vollständige ADR-Historie, Task-Übersicht und offene Folge-Entscheidungen).
+- `docs/architecture.md` & `docs/adr/*` & `DECISIONS.md` → Nur, wenn der Task die betroffene Komponente oder die Infrastruktur berührt. `DECISIONS.md` ist die Live-Übersicht für ADR-Kernentscheidungen und offene Folge-Entscheidungen.
+- `docs/go-style-guide.md` → wird automatisch über `.claude/rules/go-style.md` geladen, sobald eine Go-Datei unter `cmd/`, `internal/` oder `pkg/` gelesen wird — kein manuelles Nachladen nötig. Verbindlich (§12), nicht optional; hier dokumentiert für Menschen, die diese Datei lesen.
+- `tasks/backlog.md` & `tasks/done.md` → Nur bei Sprint-Planung oder wenn frühere Sprints als Referenz gebraucht werden. `done.md` ist nur ein Index (Titel + Highlights + Link) — für Details eines konkreten abgeschlossenen Sprints gezielt die zugehörige `tasks/sprints/NN-slug.md` nachladen, nicht den ganzen Ordner.
 
 _Regel:_ Die KI muss im Chat explizit deklarieren, wenn sie ein Dokument nachlädt (z. B. _„[Lazy-Load] Lade ADR-004 für DB-Design...“_).
 
@@ -86,7 +85,8 @@ _Regel:_ Die KI muss im Chat explizit deklarieren, wenn sie ein Dokument nachlä
 
 ## 3. Regel-Hierarchie (wichtig für Konflikte)
 
-Wenn Konflikte auftreten, gilt:
+Dokumentenspezifische Ausprägung der Prioritäten aus §0 (dort: allgemeine Prinzipien; hier:
+konkret welches Dokument bei einem Widerspruch gewinnt). Wenn Konflikte auftreten, gilt:
 
 1. vision.md
 2. requirements.md
@@ -149,6 +149,7 @@ Regeln:
 - niemals überschreiben
 - neue Erkenntnisse → neuer ADR
 - immer Konsequenzen dokumentieren
+- ADR-Index sofort im selben Task nachziehen: `DECISIONS.md` + `docs/adr/README.md` (§19)
 
 ---
 
@@ -199,8 +200,9 @@ Enthält:
 
 - aktuelle Entscheidungen
 - Referenzen auf ADRs
+- offene Folge-Entscheidungen (einzige Quelle dafür — nicht in `docs/adr/README.md` duplizieren)
 
-Regel: Nach jedem ADR aktualisieren.
+Regel: Nach jedem ADR aktualisieren; erledigte Folge-Entscheidungen im selben Task abhaken (§19).
 
 ---
 
@@ -213,13 +215,20 @@ Regel: Nach jedem ADR aktualisieren.
 
 ### current-sprint.md
 
-- aktive Arbeit (max. 3–10 Tasks)
-- klar umsetzbar, klein geschnitten
+- **nur der aktuell aktive Sprint** (max. 3–10 Tasks), klar umsetzbar, klein geschnitten
+- bei Sprint-Abschluss wandert der Inhalt unverändert nach `tasks/sprints/NN-slug.md`, diese Datei
+  wird danach für den nächsten Sprint geleert
+
+### tasks/sprints/NN-slug.md
+
+- Volltext-Archiv aller abgeschlossenen Sprints, ein File pro Sprint (Namensschema analog zu
+  `docs/adr/NNN-slug.md`)
+- wird nie mehr verändert, sobald angelegt (historisches Protokoll, wie ADRs)
 
 ### done.md
 
-- abgeschlossene Tasks
-- mit Ergebnis + Referenzen
+- kompakter chronologischer Index aller abgeschlossenen Sprints — Titel + 2–4 Ergebnis-Highlights
+  + Link auf `tasks/sprints/NN-slug.md`, kein Volltext
 
 ### Task-Regeln
 
@@ -228,7 +237,7 @@ Regel: Nach jedem ADR aktualisieren.
 - Tasks müssen 30–180 Minuten groß sein (Typ M)
 - große Tasks → zerlegen in kleinere Einheiten (Typ M/S)
 
-Lifecycle: backlog → sprint → done
+Lifecycle: backlog → current-sprint.md → tasks/sprints/NN-slug.md (Volltext) + done.md (Index-Eintrag)
 
 ---
 
@@ -244,6 +253,9 @@ Eine Aufgabe ist nur erledigt, wenn die Kriterien ihrer Komplexitätsklasse erf�
 | `requirements.md` / `architecture.md` nachgezogen |   –   |        X         |   X   |
 | `CONTEXT.md` / `DECISIONS.md` aktualisiert        |   –   | (nur bei Bedarf) |   X   |
 | ADR erstellt und im System verlinkt               |   –   |        –         |   X   |
+
+Bei Go-Code-Änderungen (`cmd/`, `internal/`, `pkg/`) zusätzlich, unabhängig von der Typklasse:
+`docs/go-style-guide.md` eingehalten — zählt als Teil von "Code erfüllt Anforderungen".
 
 ---
 
@@ -266,7 +278,8 @@ Vermeide:
 
 Für Go-Code (`cmd/`, `internal/`, `pkg/`) gilt zusätzlich verbindlich `docs/go-style-guide.md` —
 konkrete, messbare Schwellenwerte zu Funktionslänge, Parameterzahl, Duplikat-Schwelle und
-Interface-Design, die diese Prinzipien für Go konkretisieren.
+Interface-Design, die diese Prinzipien für Go konkretisieren. Wird pfadgebunden automatisch
+geladen, siehe §2.
 
 ---
 
@@ -313,10 +326,10 @@ Verboten:
 
 ## 16. Kommunikationsstil
 
-- keine Annahmen ohne Markierung
-- Unsicherheiten offen benennen
-- Alternativen immer zeigen
-- Entscheidungen begründen
+Ergänzt §4 (Entscheidungsregel) um den Ton der Kommunikation selbst:
+
+- Entscheidungen und Empfehlungen immer begründen, nicht nur behaupten
+- Unsicherheiten und Annahmen explizit markieren, nie stillschweigend voraussetzen (§4: nicht raten, nachfragen)
 
 ---
 
@@ -361,10 +374,38 @@ nicht stillschweigend offen lassen.
 
 ## 18. Ziel des Systems
 
-Dieses Projekt soll:
+Ergebnis der in §0 beschriebenen Arbeitsweise: ein Projekt, das langfristig verständlich bleibt,
+vollständig dokumentiert und ohne implizites Wissen rekonstruierbar ist — mit nachvollziehbaren
+Architekturentscheidungen und wartbar für jeden neuen Entwickler.
 
-- langfristig verständlich bleiben
-- vollständig dokumentiert sein
-- ohne implizites Wissen rekonstruierbar sein
-- klare Architekturentscheidungen besitzen
-- wartbar für neue Entwickler sein
+---
+
+## 19. MD-Doku-Pflege (Drift-Vermeidung)
+
+Ergänzt Phase 9 ("Dokumentation") und Abschnitt 11 (Definition of Done). Anlass: Sprint-35-
+Nacharbeit (2026-07-19) musste einen eigenen Audit-Sprint aufwenden, um über ein Dutzend
+Dokumente wieder auf den tatsächlichen Code-/Sprint-Stand zu bringen — Ziel dieses Abschnitts ist,
+dass das nicht mehr als separater Sprint nötig ist, sondern laufend nebenbei passiert.
+
+**Offene Fragen im selben Task schließen, nicht erst beim nächsten Audit:** Löst ein Task eine in
+`CONTEXT.md` ("Offene Fragen") oder `DECISIONS.md` ("Offene Folge-Entscheidungen") gelistete Frage
+— auch nur nebenbei —, wird der Eintrag im selben Task durchgestrichen/auf ✅ gesetzt und mit
+Referenz (Sprint/Commit) versehen. Nicht warten, bis jemand explizit "räum die Docs auf" sagt.
+
+**Keine fragilen Zahlen in lebenden Dokumenten:** Testanzahlen, Endpoint-Zahlen u. ä. veralten
+schneller, als jemand sie nachzieht (Beispiel: `README.md` nannte vor der Sprint-35-Aufräumung
+eine Testanzahl, die seit vielen Sprints falsch war). Wo eine Zahl nicht zentral fürs Verständnis
+ist: qualitativ beschreiben oder auf die Quelle verweisen (z. B. „siehe `tests/unit/safety_test.go`")
+statt hart kodieren.
+
+**Cross-Referenzen bei Struktur-Änderungen mitziehen:** Wird eine Datei umbenannt, verschoben,
+gelöscht oder ihre Rolle geändert (z. B. Interface verschlankt, Service-Verzeichnis umbenannt),
+im selben Task per `grep` nach Verweisen darauf im gesamten Repo suchen (nicht nur `docs/`) und
+mitziehen — analog zum Vorgehen bei der `Doku.md`-Ablösung und der `tasks/sprints/`-Aufteilung.
+
+**Periodischer Leicht-Audit:** etwa alle 8–10 Sprints oder beim Start eines neuen EPICs/
+Meilensteins einen kleinen eigenen Task (Typ S/M) einplanen, der die lebenden Dokumente
+(`README.md`, `CONTEXT.md`, `DECISIONS.md`, `docs/architecture.md`, `docs/requirements.md`,
+`docs/adr/README.md`) gegen den tatsächlichen Code-/Sprint-Stand gegenprüft — nicht nur die
+Dokumente, die der zuletzt bearbeitete Code direkt betrifft. Ergebnis wie jeder Sprint in
+`tasks/sprints/NN-slug.md` dokumentieren.
