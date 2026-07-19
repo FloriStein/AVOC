@@ -672,6 +672,62 @@ Test Suite inhaltlich auf den echten `safetyservice.Bus` ausrichten (separater F
 
 ---
 
+## EPIC: Testing-Debt aus ADR-006-Bestandsaufnahme schließen 🔲 Sprint 42 vorgemerkt
+
+**Freigabe (2026-07-19):** Nutzer priorisiert bei der Testing-Strategie-Bestandsaufnahme
+(siehe EPIC "CI-Gates einführen") CI-Gates zuerst (Sprint 41), lässt aber zwei kleinere Funde als
+offene Folgepunkte in `DECISIONS.MD` stehen (Zeilen 82/83). Sprint 42 schließt genau diese zwei
+Funde. **Eingereiht nach Sprint 41 (CI-Gates)** — wird erst zu Sprint 42, sobald Sprint 41
+abgeschlossen ist, `tasks/current-sprint.md` bleibt bis dahin unverändert Sprint 40 bzw. danach
+Sprint 41.
+
+**Vorrecherche (2026-07-19):**
+- **Fund 1 — Concurrency-Test-Lücke `internal/webrtcsfu/sfu_test.go`:** `SFU` (`internal/webrtcsfu/
+  sfu.go:44-50`) hat ein `sync.RWMutex` (`s.mu`), das `peers`/`routing`/`state`-Maps schützt —
+  echter geteilter Zustand, alle Zugriffe laufen bereits korrekt durch `s.mu.Lock()`/`RLock()`.
+  `sfu_test.go` (Sprint 39, 10 Tests) prüft aber nur sequenzielles Verhalten, kein Test ruft
+  `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer` aus mehreren Goroutinen
+  gleichzeitig auf — anders als `internal/safetyservice/bus_test.go` (selber Sprint 39), das mit
+  `TestBus_ConcurrentPublishAndRead` genau so einen Test hat (WaitGroup + Timeout-Channel-Helfer
+  `waitOrTimeout`). Fix: identisches Testmuster in `sfu_test.go` nachbauen (Helfer lokal dupliziert,
+  analog zum akzeptierten Duplikat-Präzedenzfall aus Sprint 38 `MQTTAUTH-05`, drei identische
+  MQTT-Test-Helfer in separaten Testdateien).
+- **Fund 2 — `tests/unit/safety_test.go` testet nicht den echten `safetyservice.Bus`:** Die 20
+  Tests der "Safety Test Suite" (Datei-Header nennt sie explizit "the safety gate in CI") bauen
+  `statemachine.Machine` + `mocks.MockSafetyPublisher` zusammen (`newTestSetup`, Zeile 21-33) und
+  prüfen nur, dass `Publisher.PublishEvent(...)` mit dem richtigen `SafetyEventType` aufgerufen
+  wird (z.B. Zeile 89 `assert.Equal(t, safetyservice.EventDeadmanTimeout, pub.LastEventType())`).
+  Der eigentliche Bus (`internal/safetyservice.Bus`, Produktivcode in `cmd/safety-service/main.go`)
+  wird dabei nie erreicht — `internal/controlserver/safety.HTTPPublisher` (Produktiv-Implementierung
+  von `Publisher`, `internal/controlserver/safety/http_publisher.go`) schickt Events per HTTP-POST
+  an `/safety/event`, das erst serverseitig `bus.PublishSafetyEvent(event)` aufruft
+  (`cmd/safety-service/main.go:38-48`, `newSafetyMux`). `newSafetyMux` liegt in `package main` und
+  ist daher aus `tests/unit` (package `unit_test`) nicht importierbar — Fix baut keinen
+  Produktivcode um, sondern verdrahtet in einer neuen Testdatei einen minimalen lokalen
+  `httptest.Server`-Handler für `POST /safety/event` (identische zwei Zeilen wie in `newSafetyMux`,
+  bewusst dupliziert statt Produktivcode zu exportieren — kein Scope für einen Hexagonal-Schritt
+  hier) und lässt `HTTPPublisher` (mit `baseURL` = Test-Server-URL) echte Events an einen echten
+  `safetyservice.NewBus()` schicken, verifiziert über `bus.GetSafetyState()`.
+- **CLAUDE.MD-Leitplanken**: Abschnitt 17 (Teststandard) fordert für Typ M/L explizit
+  "Nebenläufigkeit" als Fallgruppe (Fund 1) sowie Integrationstests gegen reale Abhängigkeiten statt
+  In-Memory-Mocks wo sinnvoll (Fund 2 — `HTTPPublisher` gegen echten `Bus` statt nur gegen
+  `MockSafetyPublisher`).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| SFUCONC-01 | `internal/webrtcsfu/sfu_test.go`: neuer Concurrency-Test (mehrere Goroutinen rufen `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer` gleichzeitig auf), lokaler `waitOrTimeout`-Helfer analog `bus_test.go`, `go test -race` grün. | S | 🔲 Sprint 42 | — |
+| SAFETYBUS-01 | Neue Testdatei `tests/unit/safety_bus_integration_test.go`: minimaler lokaler `httptest.Server`-Handler für `POST /safety/event` (dupliziert `newSafetyMux`s zwei Zeilen, kein Produktivcode-Umbau), `HTTPPublisher` gegen echten `safetyservice.NewBus()` verdrahtet, mind. 2 ADR-006-CRITICAL-Szenarien (Dead-man-Timeout, ACK-Timeout) verifiziert über `bus.GetSafetyState()`. | S/M | 🔲 Sprint 42 | — |
+| SAFETYBUS-02 | Datei-Header-Kommentar in `tests/unit/safety_test.go` präzisieren: bestehende 20 Tests decken Trigger-Logik (State-Machine → `Publisher`) ab, nicht den Bus selbst; Verweis auf die neuen Bus-Integrationstests aus `SAFETYBUS-01`. `docs/adr/006-testing-strategy.md` falls dort die Suite beschrieben wird, ebenfalls präzisieren. | S | 🔲 Sprint 42 | SAFETYBUS-01 |
+| TESTDEBT-VERIFY-01 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./... -race` (mind. 2x gegen Flakiness, CLAUDE.MD §17), `DECISIONS.MD`-Zeilen 82/83 auf ✅, `tasks/backlog.md`-Status-Update. | S | 🔲 Sprint 42 | SFUCONC-01, SAFETYBUS-01, SAFETYBUS-02 |
+
+**Nicht Teil dieses Sprints:** Umbau von `cmd/safety-service/main.go`s `newSafetyMux` in ein
+exportiertes/testbares Konstrukt (Hexagonal-artiger Schritt, eigener Entscheidungspunkt falls
+später gewünscht), Abdeckung aller 5 ADR-006-CRITICAL-Szenarien gegen den echten Bus (nur die 2
+wichtigsten Dead-man/ACK-Timeout, Rest bleibt Mock-basiert), Concurrency-Tests für weitere Packages
+über `webrtcsfu` hinaus.
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
