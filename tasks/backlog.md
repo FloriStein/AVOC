@@ -568,6 +568,35 @@ separat zu entscheidender ADR-031-Folgeschritt).
 
 ---
 
+## EPIC: TLS/MQTTS-Härtung für Mosquitto 🔄 Sprint 40
+
+**Freigabe (2026-07-19):** Nutzerentscheidung gegenüber zwei Alternativen (Hexagonal-Migration
+Schritt 3 telemetry-service, Session-Recording-Storage-Entscheidung) — Begründung CLAUDE.MD §0
+Priorität 1 ("Sicherheit schlägt alles"). Sprint-38-Nachfolge: Mosquitto-Authentifizierung war
+bereits geschlossen, Transportverschlüsselung bewusst ausgeklammert (`DECISIONS.MD` Zeile
+"TLS/MQTTS-Härtung für Mosquitto"). Kein neues ADR nötig — ADR-003 legt Mosquitto bereits fest,
+dieser Sprint aktiviert nur dessen eingebauten TLS-Listener-Mechanismus. Trust-Modell bei der
+Planung entschieden: echte CA-Zertifikatsprüfung (keine `InsecureSkipVerify`), kein mTLS (würde
+Sprint 38s Username/Passwort-Auth duplizieren), harter Cutover auf Port 8883 ohne
+Parallelbetrieb mit 1883. Vollständige Vorrecherche (Datei-/Zeilenreferenzen zu den 3
+Go-MQTT-Verbindungsstellen, 3 Compose-Dateien, nginx-Zertifikats-Präzedenzfall in
+`scripts/deploy.sh`) in `tasks/current-sprint.md` (Sprint 40).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| MQTTS-01 | Zertifikatserzeugung: selbstsignierte CA + Mosquitto-Server-Zertifikat (Dev/Test committed, Prod via `scripts/deploy.sh` analog SSL-/Passwd-Muster) | S/M | 🔄 Sprint 40 | — |
+| MQTTS-02 | `mosquitto.conf`/`mosquitto-test.conf`/Prod-Konfiguration: `listener 1883` → `listener 8883` + `cafile`/`certfile`/`keyfile` | S | 🔄 Sprint 40 | MQTTS-01 |
+| MQTTS-03 | Go-Client-TLS an den 3 Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`): `tcp://`→`tls://`, `SetTLSConfig` mit `RootCAs`, neue `MQTT_CA_CERT`-Env-Var | M | 🔄 Sprint 40 | MQTTS-01 |
+| MQTTS-04 | Drei Compose-Dateien: Port 8883, CA/Cert/Key-Volume-Mounts, `MQTT_CA_CERT`-Env-Var an den 4 Consumer-Services | S/M | 🔄 Sprint 40 | MQTTS-01..03 |
+| MQTTS-05 | Testinfrastruktur: committetes Test-CA/Zertifikat-Paar, `mqtt_test.go`-Helper + 3 abhängige Testdateien auf TLS umstellen, Gegenprobe-Test „Verbindung ohne gültige CA abgelehnt" | S/M | 🔄 Sprint 40 | MQTTS-01..04 |
+| MQTTS-06 | Verifikation (`go build`/`go vet`/`go test ./...` + `make test-integration` gegen echten TLS-Broker) + Doku-Updates (`DECISIONS.MD`, `docs/architecture.md`, `tasks/backlog.md`) | S | 🔄 Sprint 40 | MQTTS-01..05 |
+
+**Nicht Teil dieses Sprints:** mTLS/Client-Zertifikate (siehe Trust-Modell-Begründung oben),
+CA-Rotationsstrategie für Produktivbetrieb, SSM-Verteilung der CA (öffentliches Zertifikat, lokal
+auf dem EC2-Host generiert, kein Cross-Host-Bedarf).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
