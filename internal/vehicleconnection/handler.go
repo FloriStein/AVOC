@@ -162,8 +162,8 @@ func (h *Handler) readLoop(conn *websocket.Conn, claims *vehicleClaims) {
 }
 
 // validateJWT rejects a token whose header claims a signing method other than the HMAC family
-// (SEC-01) — see internal/authservice/handler.go's parseToken for the full rationale (JWT "alg
-// confusion" attack).
+// (SEC-01) — see internal/authservice/tokenissuer.go's JWTTokenIssuer.ParseToken for the full
+// rationale (JWT "alg confusion" attack).
 func (h *Handler) validateJWT(tokenStr string) (*vehicleClaims, error) {
 	claims := &vehicleClaims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {

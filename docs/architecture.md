@@ -5,7 +5,8 @@ nachgezogen 2026-07-16 (Sprint 21–23, ADR-027/028/029) — bis dahin unbeschri
 Sprint 21 im Betrieb. Fleet-System-Abschnitt erneut nachgezogen 2026-07-19 (Sprint 30–35): Task-
 Status-Lifecycle + -Historie (ADR-030/032), Vehicle-Position-Historie (ADR-033), Indoor-
 Fahrzeugposition (ADR-034), Hexagonal-Pilot `fleet-service` (ADR-031, siehe "FleetGateway-
-Abstraktion" unten).
+Abstraktion" unten). REST API — Authentifizierung-Abschnitt nachgezogen 2026-07-19 (Sprint 37):
+Hexagonal-Migration Schritt 2, `auth-service`s `TokenIssuer`-Port (ADR-031).
 
 ---
 
@@ -198,6 +199,14 @@ INVARIANT 3: Control Hub is Single Source of Truth for Session State.
 ## REST API — Authentifizierung (Sprint 14)
 
 Alle schreibenden REST-Endpoints sind durch `requireJWT`-Middleware geschützt (Bearer-Token-Prüfung via `github.com/golang-jwt/jwt/v5`):
+
+**Hexagonaler Schritt 2 (ADR-031, abgeschlossen Sprint 37):** `auth-service`s JWT-Ausstellung/
+-Validierung läuft über einen `TokenIssuer`-Port (`internal/authservice/tokenissuer.go`,
+`IssueToken`/`ParseToken`) mit `JWTTokenIssuer` als Produktiv-Adapter — `Handler` importiert
+`github.com/golang-jwt/jwt/v5` danach nicht mehr direkt. Anders als beim `fleet-service`-Piloten
+bringt dieser Port keine neue DB-Unabhängigkeit (JWT-Signierung war schon zuvor ohne Postgres
+testbar), reine Dependency Inversion. `telemetry-service` (Schritt 3) bleibt offener
+Entscheidungspunkt (siehe `DECISIONS.MD`).
 
 **Geschützt (13 Endpoints):** `POST /session/start`, `POST /session/end`, `POST /logout`, `POST /handover/request`, `POST /handover/confirm`, `POST /handover/cancel`, `POST /media/event`, `POST /emergency-stop`, `GET /audit/events`, `GET /recording/`, `POST /vehicles`, `DELETE /vehicles/{id}`, `GET /sessions`
 

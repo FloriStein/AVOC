@@ -9,6 +9,12 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 37 — Hexagonale Architektur-Migration, Schritt 2: auth-service (JWT-Port) ✅
+2026-07-19 → [tasks/sprints/37-auth-service-hexagonal-jwt-port.md](sprints/37-auth-service-hexagonal-jwt-port.md)
+- ADR-031 Schritt 2: `TokenIssuer`-Port + `JWTTokenIssuer`-Adapter (`internal/authservice/tokenissuer.go`) — `Handler.secret` → `Handler.tokens TokenIssuer`, `NewHandler`-Signatur unverändert.
+- `handler.go` importiert `golang-jwt/jwt/v5` danach nicht mehr direkt (`Claims`-Typ mit nach `tokenissuer.go` verschoben) — reine Dependency Inversion, keine neue DB-Unabhängigkeit (anders als beim `fleet-service`-Piloten).
+- Verifiziert: `go build`/`go vet` sauber, `go test ./internal/authservice/...` 22/22 grün, kein Docker-Stack nötig. HEXAUTH-04 (Use-Case-Extraktion) und `telemetry-service` (Schritt 3) bleiben eigene Folgeschritte.
+
 ## Sprint 36 — Restposten-Bereinigung III (Tech Debt, Formatierung, Prod-Lücke, Test-Gap) ✅
 2026-07-19 → [tasks/sprints/36-restposten-bereinigung-iii.md](sprints/36-restposten-bereinigung-iii.md)
 - TECHDEBT-01: `internal/authservice/noop_userstore.go` (komplett unreferenziert) gelöscht.

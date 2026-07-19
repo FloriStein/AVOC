@@ -1,6 +1,6 @@
 # ADR-031: Migration zu hexagonaler Architektur (Ports & Adapters) — Strangler-Fig, Pilot fleet-service
 
-Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)** — Fortsetzung auf weitere Services ist ein bewusster Entscheidungspunkt nach Pilot-Abschluss, kein Automatismus (siehe "Offene Punkte"). **Schritt 2 (auth-service) vom Nutzer freigegeben (2026-07-19), geplant als Sprint 37** — siehe Update unten und `tasks/current-sprint.md`.
+Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)**, **Schritt 2 (auth-service) abgeschlossen (Sprint 37, 2026-07-19)** — Fortsetzung auf `telemetry-service` (Schritt 3) ist ein bewusster Entscheidungspunkt, kein Automatismus (siehe "Offene Punkte").
 
 ## Kontext
 
@@ -240,6 +240,20 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 > paketübergreifende Extraktion ist nicht Teil des in diesem ADR beauftragten Scopes (nur
 > `auth-service`s eigener Handler/JWT-Code). Dokumentiert als möglicher späterer Folge-Task, nicht
 > mit diesem Schritt vermischt.
+>
+> **Update (2026-07-19, Sprint 37 abgeschlossen):** Schritt 2 (auth-service) fertig. Neuer Port
+> `TokenIssuer` (`internal/authservice/tokenissuer.go`: `IssueToken`/`ParseToken`) mit Adapter
+> `JWTTokenIssuer` — übernimmt `issueToken`/`parseToken` sowie den SEC-01-Alg-Confusion-Guard
+> unverändert. `Handler.secret []byte` → `Handler.tokens TokenIssuer`; `NewHandler(secret string,
+> userStore UserStore)` konstruiert den `JWTTokenIssuer` intern, externe Signatur unverändert
+> (`cmd/auth-service/main.go` unangetastet, wie erwartet). `handler.go` importiert
+> `github.com/golang-jwt/jwt/v5` danach nicht mehr — der `Claims`-Typ (embeddet
+> `jwt.RegisteredClaims`) wanderte nach `tokenissuer.go`, da er sonst weiterhin einen direkten
+> JWT-Import in `handler.go` erzwungen hätte. Verifikation: `go build ./...`, `go vet ./...`, `go
+> test ./internal/authservice/...` — alle 22 bestehenden Tests grün, keine Regression, kein neuer
+> Fake nötig (JWT-Signierung bleibt reine Berechnung). HEXAUTH-04 (optionale Use-Case-Extraktion)
+> und `telemetry-service` (Schritt 3) bleiben wie geplant eigene, separat zu entscheidende
+> Folgeschritte. Nebenbefund (`pkg/authtoken`-Duplikat) weiterhin unangetastet.
 
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe
