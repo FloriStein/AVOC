@@ -597,6 +597,81 @@ auf dem EC2-Host generiert, kein Cross-Host-Bedarf).
 
 ---
 
+## EPIC: CI-Gates einführen (ADR-006-Bestandsaufnahme) 🔲 Sprint 41 vorgemerkt
+
+**Freigabe (2026-07-19):** Nutzer hat am 2026-07-19 eine Testing-Strategie-Bestandsaufnahme gegen
+ADR-006 (Testing Strategy) + CLAUDE.MD Abschnitt 17 angefordert. Größter gefundener Bruch
+zwischen Dokumentation und Realität: `.github/workflows/` enthält ausschließlich `lint.yml`
+(non-blocking, `continue-on-error: true`) — die von ADR-006 beschriebene Pipeline mit 4
+blockierenden Gates (Unit Go+Frontend, Safety Test Suite, Integration, Latency) + 1 non-blocking
+WebRTC-E2E-Job existiert nicht. Alle Prüfungen laufen ausschließlich manuell über bestehende
+`Makefile`-Targets (`test`/`test-safety`/`test-integration`/`test-latency`/`test-k6`) — der
+Kommentar in `test-safety` ("CI safety gate — must stay 19/19 green") ist irreführend, es gibt
+kein CI dafür. Nutzerentscheidung: dieser Befund wird priorisiert vor zwei kleineren Audit-Funden
+(Concurrency-Test-Lücke in `internal/webrtcsfu/sfu_test.go`, Safety-Test-Suite testet aktuell den
+falschen Typ — bleiben offene Folgepunkte unten). **Eingereiht nach Sprint 40 (TLS/MQTTS-Härtung)
+— wird erst zu Sprint 41, sobald Sprint 40 abgeschlossen ist**, `tasks/current-sprint.md` bleibt
+bis dahin unverändert Sprint 40.
+
+**Architektur-Entscheidung (bei der Planung getroffen):**
+- **Latenz-Gate (`test-latency`/`test-k6`) bewusst non-blocking**, obwohl ADR-006 es als
+  "BLOCKING" dokumentiert: GitHub-gehostete Runner haben stark schwankende CPU-Zuteilung
+  (Shared-Tenancy) — eine harte `<100ms`-Assertion würde auf einem verrauschten Runner Merges
+  blockieren, ohne dass sich der Code geändert hat (False Positives). Gleiches Muster wie ADR-006s
+  eigene Begründung für die WebRTC-Non-Determinism-Policy (non-blocking + sichtbar statt hartes
+  Gate). Ergebnis bleibt sichtbar (Benchmark-Output als Job-Log/Artifact), blockiert aber keinen
+  Merge. Verschärfung auf "blocking" ist ein möglicher Folge-Task, sobald genug CI-Läufe
+  Rausch-Baseline zeigen.
+- **Bestehender Playwright-Spec (`frontend/tests/e2e/dashboard.spec.ts`) wird als non-blocking
+  Informational-Job eingebunden**, aber nicht inhaltlich vertieft (bleibt oberflächlich, siehe
+  Audit-Punkt D) — Ausbau der E2E-Tiefe ist ein eigener, größerer Folge-Task.
+- **Branch-Protection-Aktivierung (Required Status Checks) nur vorbereitet, nicht scharf
+  geschaltet** — das ist eine Repo-Einstellung, die alle zukünftigen PRs/Merges betrifft
+  (geteiltes System), daher explizite Nutzerbestätigung vor Aktivierung nötig (siehe MB-Regeln zu
+  risikoreichen/schwer umkehrbaren Aktionen).
+
+**Vorrecherche (2026-07-19):**
+- `Makefile:69-116`: `test` (`go test ./...` — läuft `tests/integration/...` **mit**, schlägt ohne
+  laufenden Docker-Stack fehl, siehe Sprint-39-Verifikation), `test-safety` (`go test
+  ./tests/unit/... -run Safety`, kein Docker nötig), `test-integration` (bringt
+  `tests/docker-compose.test.yml`-Stack hoch, `go test ./tests/integration/...`, fährt Stack
+  wieder runter), `test-latency` (Docker-Stack + `BenchmarkControlACKRoundtrip`,
+  `b.Fatalf` bei p99>100ms), `test-k6` (Docker-Stack + k6 gegen `tests/performance/latency.js`,
+  `thresholds: p(99)<100`).
+- **`test` läuft für eine saubere CI-Unit-Gate nicht direkt verwendbar**, da es
+  `tests/integration/...` ungefiltert mitnimmt — braucht einen neuen, zusätzlichen
+  `test-unit`-Target (paketgefiltert, `go list ./... | grep -v /tests/integration`), ohne das
+  bestehende `test`-Target zu ändern (Devs mit lokal laufendem Stack nutzen `test` weiterhin wie
+  bisher).
+- `.github/workflows/lint.yml` ist die einzige bestehende CI-Datei — dient als Stil-Vorlage
+  (Trigger `on: push: branches: [main] / pull_request`, `actions/setup-go@v5`, Go 1.23).
+- `tests/docker-compose.test.yml:1-4`: Kommentar bestätigt bewusst "Kein WebRTC/coturn — zu
+  flaky in CI" — GitHub-Actions-Runner (`ubuntu-latest`) haben Docker Engine + `docker compose`
+  v2 vorinstalliert, kein zusätzliches Setup nötig; Images werden aus Source gebaut
+  (`build: context: ..`), erster CI-Lauf zeigt reale Build-Zeit (ggf. `timeout-minutes` setzen).
+- `frontend/package.json`: `"test": "vitest run"` (Vitest, nicht Jest wie in ADR-006 benannt —
+  funktional gleichwertig, keine Änderung nötig), `"test:e2e": "playwright test"`.
+- **ADR-006-Update nötig**: Abschnitt "Update (2026-07-15)" wird um einen zweiten Update-Absatz
+  ergänzt (CI-Automatisierung Sprint 41, Latenz-Gate-Abweichung non-blocking begründet).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| CIGATE-01 | `Makefile`: neuer `test-unit`-Target (paketgefiltert ohne `tests/integration`), bestehende Targets unverändert | S | 🔲 Sprint 41 | — |
+| CIGATE-02 | `.github/workflows/test-go.yml`: 3 blockierende Jobs — `unit` (`make test-unit`), `safety` (`make test-safety`), `integration` (`make test-integration`, Docker-Stack) | M | 🔲 Sprint 41 | CIGATE-01 |
+| CIGATE-03 | `.github/workflows/test-frontend.yml`: Vitest-Unit-Tests blockierend (`npm ci && npm run test`) | S | 🔲 Sprint 41 | — |
+| CIGATE-04 | `.github/workflows/test-latency.yml`: Go-Benchmark + k6, bewusst non-blocking (`continue-on-error: true`, begründeter Kommentar analog `lint.yml`) | S/M | 🔲 Sprint 41 | CIGATE-01 |
+| CIGATE-05 | Bestehenden Playwright-Spec als non-blocking Informational-Job einbinden (kein Ausbau der Testtiefe) | S | 🔲 Sprint 41 | — |
+| CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | 🔲 Sprint 41 | CIGATE-02, CIGATE-03 |
+| CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | 🔲 Sprint 41 | CIGATE-01..06 |
+
+**Nicht Teil dieses Sprints:** Latenz-Gate als hartes Blocking-Gate (siehe Architektur-
+Entscheidung oben), Vertiefung der Playwright-E2E-Tests bzw. echte WebRTC-SDP/ICE-E2E-Automatisierung
+(Audit-Punkt F — WebRTC bleibt bewusster Nicht-Scope, analog `WEBRTC-10`), Concurrency-Test-Lücke
+in `internal/webrtcsfu/sfu_test.go` und weiteren Packages (eigener, kleinerer Folge-Task), Safety
+Test Suite inhaltlich auf den echten `safetyservice.Bus` ausrichten (separater Folge-Task).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
