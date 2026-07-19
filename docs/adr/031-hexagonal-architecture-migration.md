@@ -1,6 +1,6 @@
 # ADR-031: Migration zu hexagonaler Architektur (Ports & Adapters) — Strangler-Fig, Pilot fleet-service
 
-Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)**, **Schritt 2 (auth-service) abgeschlossen (Sprint 37, 2026-07-19)** — Fortsetzung auf `telemetry-service` (Schritt 3) ist ein bewusster Entscheidungspunkt, kein Automatismus (siehe "Offene Punkte").
+Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)**, **Schritt 2 (auth-service) abgeschlossen (Sprint 37, 2026-07-19)**, **Schritt 3 (telemetry-service) freigegeben, Sprint 43 vorgemerkt (2026-07-19)** — siehe "Offene Punkte".
 
 ## Kontext
 
@@ -254,6 +254,25 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 > Fake nötig (JWT-Signierung bleibt reine Berechnung). HEXAUTH-04 (optionale Use-Case-Extraktion)
 > und `telemetry-service` (Schritt 3) bleiben wie geplant eigene, separat zu entscheidende
 > Folgeschritte. Nebenbefund (`pkg/authtoken`-Duplikat) weiterhin unangetastet.
+
+> **Update (2026-07-19, Sprint-43-Kickoff):** Nutzer gibt Fortsetzung mit Schritt 3
+> (telemetry-service) frei. Scope folgt der Priorisierung oben — kleinster Service (~114 Zeilen
+> `internal/telemetryservice/client.go`), "keine Interfaces, keine Tests, aber triviales reines
+> Passthrough". Anders als beim Piloten (`FleetStore`) und Schritt 2 (`TokenIssuer`) liegt der Gap
+> hier nicht in einer fehlenden Abstraktion über einer Postgres-/JWT-Abhängigkeit, sondern darin,
+> dass `Client.client` direkt gegen `paho.mqtt.golang`s breites `mqtt.Client`-Interface (14
+> Methoden, u.a. `Publish`/`AddRoute`, die telemetryservice nie braucht) programmiert statt gegen
+> einen schmalen, projekteigenen Port (GOSTYLE Rule 2.2 Interface-Segregation, analog
+> `fleetgateway.FleetGateway`). Ein neuer `MQTTConnection`-Port kapselt zusätzlich `mqtt.Token`/
+> `mqtt.Message` (Domain-Seite sieht nur `error`/`[]byte`) und macht `Connect()`/`subscribe()`
+> erstmals ohne echten Broker testbar — `internal/telemetryservice` und `cmd/telemetry-service`
+> haben aktuell 0 Tests (derselbe Bestandsaufnahme-Befund wie bei `safety-service`/`webrtc-sfu`/
+> `recording` vor Sprint 39), Testaufbau ist daher direkter Bestandteil dieses Schritts, kein
+> separater Folge-Task. Use-Case-Extraktion ist hier kein Thema — `handleMessage`/`GetLatest` sind
+> laut Bestandsaufnahme oben bereits "triviales reines Passthrough", keine vermischte
+> Business-Logik wie bei `HEX-06`/`HEXAUTH-04`. Task-Plan: `tasks/backlog.md` EPIC-Abschnitt
+> (`HEXTELE-01..04`), Details/Vorrecherche in Sprint 43, sobald `tasks/current-sprint.md` frei ist
+> (eingereiht nach Sprint 40/41/42).
 
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe

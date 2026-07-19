@@ -728,6 +728,56 @@ wichtigsten Dead-man/ACK-Timeout, Rest bleibt Mock-basiert), Concurrency-Tests f
 
 ---
 
+## EPIC: Hexagonale Architektur-Migration — Schritt 3, telemetry-service (ADR-031) 🔲 Sprint 43 vorgemerkt
+
+Strategie/Priorisierung: [ADR-031](../docs/adr/031-hexagonal-architecture-migration.md), Update
+"Sprint-43-Kickoff". Fortsetzung nach Pilot (fleet-service, ✅ Sprint 33) und Schritt 2
+(auth-service, ✅ Sprint 37) — Nutzer gibt Fortsetzung mit `telemetry-service` (Schritt 3 der
+ADR-031-Priorisierung) am 2026-07-19 frei, nachdem dieser Entscheidungspunkt zuvor mehrfach
+zurückgestellt wurde. **Eingereiht nach Sprint 42** — wird erst zu Sprint 43, sobald Sprint 42
+abgeschlossen ist, `tasks/current-sprint.md` bleibt bis dahin unverändert.
+
+**Vorrecherche (2026-07-19):**
+- `internal/telemetryservice/client.go` (114 Zeilen, gesamter Service): `Client.client` (Zeile 29)
+  ist vom Typ `mqtt.Client` — das ist bereits ein Interface, aber eines aus der Drittanbieter-
+  Bibliothek `paho.mqtt.golang` (14 Methoden, u.a. `Publish`/`AddRoute`/`OptionsReader`, die
+  telemetryservice nie nutzt). Kein projekteigener, schmaler Port — Verstoß gegen GOSTYLE Rule 2.2
+  (Interface-Segregation) und ADR-031-Regel 3 (Driven Ports vom Consumer definiert, nicht vom
+  Adapter/Anbieter). `Connect()` (Zeile 44-64) baut `mqtt.NewClientOptions()...` und ruft
+  `c.client.Connect()`/`token.Wait()`/`token.Error()` direkt auf; `subscribe()` (Zeile 66-74)
+  ebenso mit `mqtt.Token`.
+- **`internal/telemetryservice` und `cmd/telemetry-service` haben aktuell 0 Tests** (`find
+  internal/telemetryservice cmd/telemetry-service -name "*_test.go"` liefert nichts) — derselbe
+  Bestandsaufnahme-Befund wie bei `safety-service`/`webrtc-sfu`/`internal/recording` vor Sprint 39.
+  Grund: `Connect()`/`subscribe()` sind ohne echten MQTT-Broker nicht sinnvoll testbar, solange sie
+  direkt gegen `mqtt.Client` programmieren. Ein projekteigener `MQTTConnection`-Port löst dieses
+  Problem als direkten Nebeneffekt der Migration (kein separater Testabdeckungs-Sprint nötig).
+- `handleMessage`/`GetLatest` (Zeile 76-107) sind bereits reine Domain-Logik (Proto-Parse,
+  Map-Zugriff hinter `sync.RWMutex`) ohne I/O — laut ADR-031-Bestandsaufnahme "triviales reines
+  Passthrough". Keine Use-Case-Extraktion nötig (anders als `HEX-06`/`HEXAUTH-04`, die für
+  fleet-/auth-service optional zur Debatte stehen).
+- `cmd/telemetry-service/main.go:29` (`telemetryservice.NewClient(broker, username, password)`) —
+  externe Konstruktorsignatur bleibt unverändert, analog zum Präzedenzfall `HEX-02`/`HEXAUTH-02`
+  (`*PostgresFleetStore` bzw. `JWTTokenIssuer` wurden beide intern konstruiert, ohne den Aufrufer
+  anzupassen).
+- `cmd/telemetry-service/main.go:38-79` (`newTelemetryMux`) — analoges Muster zu den in Sprint 39
+  getesteten `newSafetyMux`/`newSFUMux`, aber bisher ungetestet.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| HEXTELE-01 | `MQTTConnection`-Port definieren (neue Datei `internal/telemetryservice/mqttconnection.go`): schmales Interface (`Connect() error`, `Subscribe(topic string, qos byte, handler func(topic string, payload []byte)) error`, `Disconnect(quiesceMs uint)`, `IsConnected() bool`) statt direkter Kopplung an `paho.mqtt.golang`s `mqtt.Client`. `PahoConnection`-Adapter kapselt `mqtt.Token`/`mqtt.Message`-Handling intern. Compile-Time-Check `var _ MQTTConnection = (*PahoConnection)(nil)`. | S | 🔲 Sprint 43 | — |
+| HEXTELE-02 | `Client.client` (`internal/telemetryservice/client.go:29`) von `mqtt.Client` auf `MQTTConnection`-Port umgestellt. `Connect()`/`subscribe()`/`Disconnect()` rufen den Port statt paho direkt auf. `NewClient`-Signatur unverändert, Adapter wird intern konstruiert (`cmd/telemetry-service/main.go:29` unangetastet, analog `HEX-02`/`HEXAUTH-02`). | S | 🔲 Sprint 43 | HEXTELE-01 |
+| HEXTELE-03 | Erste Testabdeckung `internal/telemetryservice` + `cmd/telemetry-service` (aktuell 0 Tests): `FakeMQTTConnection`-Testdoppel; Tests für `handleMessage` (Proto-Parse, fehlender/leerer `vehicle_id`, Malformed Payload), `GetLatest`, `Connect`/`subscribe`-Wiring über den Fake (kein echter Broker nötig); `main_test.go` für `newTelemetryMux` via `httptest` (analog Sprint-39-Muster `main_test.go` für `safety-service`/`webrtc-sfu`). | M | 🔲 Sprint 43 | HEXTELE-02 |
+| HEXTELE-04 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./internal/telemetryservice/... ./cmd/telemetry-service/... -race` (mind. 2x gegen Flakiness, CLAUDE.MD §17). ADR-031-Status-Update (Schritt 3 abgeschlossen, analog Sprint-37/HEXAUTH-03-Eintrag), `DECISIONS.MD`, `tasks/backlog.md`-Status-Update. | S | 🔲 Sprint 43 | HEXTELE-03 |
+
+**Nicht Teil dieses Sprints:** Use-Case-Extraktion (kein Bedarf, siehe Vorrecherche —
+`handleMessage`/`GetLatest` sind bereits reine Funktionen), `control-server` (Schritt 4/5 der
+ADR-031-Priorisierung, ausdrücklich zuletzt/eigenes ADR nötig), `safety-service`/`webrtc-sfu`/
+`recording` (Hexagonal-Migration dort, unabhängig von der bereits vorhandenen Sprint-39-
+Testabdeckung, ein separater Entscheidungspunkt).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
