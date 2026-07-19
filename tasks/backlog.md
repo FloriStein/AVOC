@@ -778,6 +778,80 @@ Testabdeckung, ein separater Entscheidungspunkt).
 
 ---
 
+## EPIC: Backup-Strategie Audit Store (ADR-018/023 Folge) 🔲 Sprint 44 vorgemerkt
+
+**Freigabe (2026-07-19):** Nutzer wählt dieses Thema für Sprint 44 gegenüber zwei Alternativen
+(Migration zu AWS ECR, Session-Recording-Storage-Entscheidung). Schließt den seit ADR-019
+offenen Punkt "Audit Store Backup-Strategie". **Eingereiht nach Sprint 43** — wird erst zu
+Sprint 44, sobald Sprint 43 abgeschlossen ist, `tasks/current-sprint.md` bleibt bis dahin
+unverändert.
+
+**Wichtiger Vorrecherche-Befund — Backlog-Text war veraltet:** `tasks/backlog.md` und
+`docs/adr/019-deployment-strategy.md` beschrieben den offenen Punkt bisher als "SQLite Volume auf
+S3" (Stand ADR-018, Sprint 7). Tatsächlich hat ADR-023 (PostgreSQL-Migration) SQLite bereits
+vollständig ersetzt: `audit_events` liegt seither in PostgreSQL (`postgres-data`-Docker-Volume,
+`infrastructure/compose/docker-compose.prod.yml:31-46`), das `audit-data`-Volume aus ADR-018
+existiert im Compose-Setup nicht mehr. `cmd/control-server/main.go:81-89` (`newAuditWriter`) nutzt
+`audit.NewPostgresAuditWriter(db)`, kein SQLite-Pfad mehr im Code. ADR-023 selbst nennt
+"Standardisierte Backup-Workflows (`pg_dump`)" bereits als erwarteten Vorteil der Migration — der
+Backup-Task war seither nur nie eingeplant. Beide Doku-Stellen oben in diesem Sprint bereits auf
+"Postgres-Volume" korrigiert.
+
+**Architektur-Entscheidung (bei der Planung getroffen):**
+- **`pg_dump` gegen den laufenden `postgres`-Container statt Datei-Kopie des Docker-Volumes** —
+  ein Volume-Snapshot während laufendem Betrieb kann inkonsistent sein (kein atomarer Zustand),
+  `pg_dump` liefert einen konsistenten logischen Dump zur Laufzeit, ohne den Service zu stoppen.
+  Kein `pg_basebackup`/WAL-Archivierung (Point-in-Time-Recovery) — für dieses Betriebsmodell
+  (Single-Instance-Testbetrieb, kein HA-Anspruch) ist ein tägliches logisches Backup ausreichend,
+  analog zur bereits akzeptierten "kein Cross-Host-Bedarf"-Argumentation aus Sprint 40.
+- **S3-Bucket-Name per SSM statt hartkodiert** — der bestehende `AppBucket` (CDK,
+  `infrastructure/AWS/cdk_server-stack.ts:75-79`, bereits `grantReadWrite` für die Instance-Role,
+  siehe Kommentar Zeile 138 "für zukünftige Audit-Log-Backups, ADR-018") bekommt einen neuen
+  `ssm.StringParameter` unter `/avoc/prod/backup-bucket-name` direkt im selben CDK-Stack (kein
+  manueller Zusatzschritt nach `cdk deploy` nötig) — konsistent mit dem bestehenden
+  SSM-getriebenen Secret-Verteilungsmuster in `scripts/deploy.sh`.
+- **S3-Lifecycle-Regel statt manueller Löschung** — Backups unter Prefix `backups/postgres/`
+  verfallen nach 30 Tagen automatisch (`lifecycleRules` im CDK-Stack), damit der ohnehin schon
+  `versioned: true`/`autoDeleteObjects: true` konfigurierte Bucket nicht unbegrenzt wächst.
+- **Tägliches Cron-Backup auf dem EC2-Host statt Container-internem Scheduler** — einfachste
+  Lösung ohne neuen Docker-Compose-Service, analog zur bestehenden "generiere/registriere einmalig
+  bei Deploy"-Philosophie in `scripts/deploy.sh` (SSL-Zertifikat, Mosquitto-Passwd).
+
+**Vorrecherche (2026-07-19):**
+- `infrastructure/compose/docker-compose.prod.yml:31-46`: `postgres`-Service, `POSTGRES_USER=avoc`,
+  `POSTGRES_DB=avoc`, `POSTGRES_PASSWORD=${DB_PASSWORD}` (aus `$APP_DIR/.env`, nicht SSM — siehe
+  `scripts/deploy.sh` Kommentar Zeile 61-62), Healthcheck `pg_isready -U avoc -d avoc`.
+- `infrastructure/AWS/cdk_server-stack.ts:75-79`: `AppBucket` (`s3.Bucket`, `versioned: true`,
+  `removalPolicy: DESTROY`, `autoDeleteObjects: true`), Zeile 139 `bucket.grantReadWrite(instance.role)`
+  bereits vorhanden. Zeile 203-205: `CfnOutput BucketName` existiert bereits, aber landet aktuell
+  nur in der CDK-Konsolenausgabe, nicht in SSM — Backup-Skript bräuchte sonst den Bucket-Namen
+  hartkodiert oder manuell in `.env` gepflegt.
+- `scripts/deploy.sh:38-51` (`get`/`get_secure`-Helfer für SSM-Parameter) — Muster für den neuen
+  `/avoc/prod/backup-bucket-name`-Parameter wiederverwendbar.
+- `scripts/deploy.sh:94-115` (SSL-Zertifikat-Generierung, "einmalig generieren, wiederverwenden")
+  als Strukturvorbild für ein neues Skript `scripts/backup-audit-store.sh` (hier aber täglich
+  ausgeführt statt einmalig).
+- CDK verwendet `aws-cdk-lib/aws-s3` bereits (Zeile 5); `aws-cdk-lib/aws-ssm` (für
+  `ssm.StringParameter`) ist als Teil von `aws-cdk-lib` bereits verfügbar, kein neues
+  `package.json`-Dependency nötig.
+- `docs/adr/023-postgresql-migration.md:71` nennt "Standardisierte Backup-Workflows (`pg_dump`)"
+  bereits explizit als erwarteten Vorteil — dieser Sprint löst genau dieses Versprechen ein.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| AUDITBACKUP-01 | CDK-Stack (`infrastructure/AWS/cdk_server-stack.ts`): neuer `ssm.StringParameter` (`/avoc/prod/backup-bucket-name` = `bucket.bucketName`) + S3-Lifecycle-Regel (Prefix `backups/postgres/`, Expiration 30 Tage) auf `AppBucket`. | S | 🔲 Sprint 44 | — |
+| AUDITBACKUP-02 | Neues Skript `scripts/backup-audit-store.sh`: liest Bucket-Namen aus SSM (`get`-Helfer analog `deploy.sh`), `docker compose exec postgres pg_dump -U avoc avoc \| gzip`, Upload via `aws s3 cp` nach `s3://$BUCKET/backups/postgres/$(date +%F)-avoc.sql.gz`. | S | 🔲 Sprint 44 | AUDITBACKUP-01 |
+| AUDITBACKUP-03 | Cron-Registrierung: `scripts/deploy.sh` ergänzt einen idempotenten Crontab-Eintrag (täglich, z.B. 03:00 UTC) für `backup-audit-store.sh` unter `ec2-admin` — Prüfung auf Doppel-Registrierung analog zum "generiere einmalig"-Muster (`crontab -l \| grep -q ... \|\| ...`). | S | 🔲 Sprint 44 | AUDITBACKUP-02 |
+| AUDITBACKUP-04 | Verifikation: lokaler Trockenlauf von `backup-audit-store.sh` gegen den Dev-`postgres`-Container (Dump + lokale Datei, kein echter S3-Upload nötig für den Test). Doku: `docs/adr/019-deployment-strategy.md` Zeile "Audit Store Backup-Strategie" auf ✅, `DECISIONS.MD`, `tasks/backlog.md`-Status-Update. | S | 🔲 Sprint 44 | AUDITBACKUP-01..03 |
+
+**Nicht Teil dieses Sprints:** Point-in-Time-Recovery (`pg_basebackup`/WAL-Archivierung — kein
+HA-Anspruch für Single-Instance-Testbetrieb), automatisierter Restore-Test/-Runbook (eigener
+Folge-Task, sobald ein erstes echtes Backup vorliegt), Verschlüsselung des Dumps vor Upload
+(Bucket-seitige S3-Default-Encryption gilt bereits, kein zusätzlicher Client-seitiger Schritt in
+diesem Scope).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
@@ -792,7 +866,7 @@ Testabdeckung, ein separater Entscheidungspunkt).
 |---|---|---|
 | Session Recording Storage (DB / Files / Object Storage) | offen | ADR-005 Folge — MemoryRecorder als Platzhalter |
 | DDS-Produktivimplementierung | Nicht in diesem Scope | ADR-002 Folge |
-| Backup-Strategie Audit Store (SQLite Volume → S3) | offen | ADR-018 Folge — S3-Bucket im CDK vorhanden |
+| Backup-Strategie Audit Store (Postgres `postgres-data`-Volume → S3) | 🔲 Sprint 44 vorgemerkt | ADR-018/023 Folge — S3-Bucket im CDK vorhanden. Wortlaut korrigiert (war "SQLite Volume", Audit Store läuft seit ADR-023 auf Postgres, `audit-data`-Volume existiert nicht mehr) |
 | Migration zu AWS ECR | offen | ADR-019 Folge — für Produktivbetrieb |
 | ~~MQTT-Authentifizierung (Mosquitto Passwort-File)~~ | ✅ Sprint 38 | Port 1883 lief seit Sprint 9 ohne Auth — siehe EPIC "Security Findings" oben (`MQTTAUTH-01..06`). TLS/MQTTS bewusst weiterhin offen (siehe dort) |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + SQLite-Registry; `~^vehicle-.*`-Regex aktiv |
