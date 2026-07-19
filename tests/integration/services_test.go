@@ -191,55 +191,48 @@ func TestIntegration_SessionLifecycle_StartAndEnd(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&loginBody))
 	token := loginBody["token"].(string)
 
-	// 2. WebSocket connect (upgrade) — skip full WS in integration test;
-	//    instead call session/start directly to verify HTTP API path.
-	//    State machine starts at IDLE — we need AUTHENTICATED first.
-	// Authenticate by connecting WebSocket (transition IDLE → AUTHENTICATED)
-	wsURL := fmt.Sprintf("ws://localhost:18080/ws?token=%s", token)
-	conn, err := dialWS(t, wsURL)
-	if err != nil {
-		t.Skipf("WebSocket dial failed (expected in minimal test stack): %v", err)
-	}
-	defer conn.Close()
-	time.Sleep(200 * time.Millisecond)
+	// 2. The vehicle side must be connected (ADR-021) before /session/start accepts it —
+	// connectVehicle dials /vehicle/ws, independent of the operator WS dialed below.
+	vehConn := connectVehicle(t, "vehicle-int-1")
+	defer vehConn.Close()
 
-	// State should now be AUTHENTICATED or CONNECTED. No vehicle_id yet at this point (session
-	// hasn't started) — GET /sessions as a reachability probe won't carry per-vehicle state, so
-	// this uses the same vehicle_id the session/start call below is about to use (MV-12: the
-	// vehicle context for an id is created lazily and is stable across the whole test).
-	state := getJSON(t, controlURL+"/vehicles/vehicle-int-1/state")
-	sys, _ := state["system"].(string)
-	assert.Contains(t, []string{"AUTHENTICATED", "CONNECTED", "CONNECTING"}, sys)
-
-	// 3. Start session
+	// 3. Start session — handleSessionStart alone drives the full state-machine
+	// transition (IDLE → CONNECTING → AUTHENTICATED → CONNECTED); no prior operator
+	// WS connection is required or possible (the WS requires session_id, see below).
 	resp2 := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
 		"vehicle_id":    "vehicle-int-1",
 		"operator_id":   "admin",
 		"operator_role": "ACTIVE_OPERATOR",
 	})
 	defer resp2.Body.Close()
+	require.Equal(t, 200, resp2.StatusCode)
 
-	if resp2.StatusCode == 200 {
-		var sessBody map[string]any
-		require.NoError(t, json.NewDecoder(resp2.Body).Decode(&sessBody))
-		sessionID, _ := sessBody["session_id"].(string)
-		assert.Greater(t, len(sessionID), 10, "session_id must be ULID")
+	var sessBody map[string]any
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&sessBody))
+	sessionID, _ := sessBody["session_id"].(string)
+	assert.Greater(t, len(sessionID), 10, "session_id must be ULID")
 
-		// 4. SYSTEM STATE should be CONNECTED
-		state2 := getJSON(t, controlURL+"/vehicles/vehicle-int-1/state")
-		assert.Equal(t, "CONNECTED", state2["system"])
+	// 4. SYSTEM STATE should be CONNECTED
+	state2 := getJSON(t, controlURL+"/vehicles/vehicle-int-1/state")
+	assert.Equal(t, "CONNECTED", state2["system"])
 
-		// 5. End session
-		resp3 := postJSONAuth(t, controlURL+"/session/end", token, nil)
-		resp3.Body.Close()
-		assert.Equal(t, 204, resp3.StatusCode)
-	}
+	// 5. Operator WebSocket connect — requires session_id (ADR-025), only known now.
+	wsURL := fmt.Sprintf("ws://localhost:18080/ws?token=%s&session_id=%s", token, sessionID)
+	conn, err := dialWS(t, wsURL)
+	require.NoError(t, err, "operator WS dial must succeed once session_id is known")
+	defer conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	// 6. End session
+	resp3 := postJSONAuth(t, controlURL+"/session/end", token, nil)
+	resp3.Body.Close()
+	assert.Equal(t, 204, resp3.StatusCode)
 }
 
 // --- MEDIA STATE: Invariante 1 ---
 
 func TestIntegration_MediaFailed_TriggersDegrade_NeverSafeMode(t *testing.T) {
-	// Login + WS connect + session start (seeded admin account)
+	// Login + vehicle connect + session start (seeded admin account)
 	resp := postJSON(t, authURL+"/auth/operator/login",
 		map[string]string{"username": "admin", "password": "admin_test_secret"})
 	defer resp.Body.Close()
@@ -248,16 +241,23 @@ func TestIntegration_MediaFailed_TriggersDegrade_NeverSafeMode(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	token := body["token"].(string)
 
-	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
-	if err != nil {
-		t.Skipf("WebSocket not available: %v", err)
-	}
+	vehConn := connectVehicle(t, "vehicle-media")
+	defer vehConn.Close()
+
+	resp1 := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": "vehicle-media", "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
+	})
+	require.Equal(t, 200, resp1.StatusCode)
+	var sessBody map[string]any
+	require.NoError(t, json.NewDecoder(resp1.Body).Decode(&sessBody))
+	resp1.Body.Close()
+	sessionID := sessBody["session_id"].(string)
+
+	// Operator WebSocket connect — requires session_id (ADR-025), only known now.
+	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s&session_id=%s", token, sessionID))
+	require.NoError(t, err, "operator WS dial must succeed once session_id is known")
 	defer conn.Close()
 	time.Sleep(300 * time.Millisecond)
-
-	postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
-		"vehicle_id": "vehicle-media", "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
-	}).Body.Close()
 
 	// MEDIA_FAILED event
 	resp2 := postJSONAuth(t, controlURL+"/media/event", token, map[string]string{"state": "MEDIA_FAILED", "vehicle_id": "vehicle-media"})
@@ -282,16 +282,23 @@ func TestIntegration_EmergencyStop_TriggersSafeMode(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	token := body["token"].(string)
 
-	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s", token))
-	if err != nil {
-		t.Skipf("WebSocket not available: %v", err)
-	}
+	vehConn := connectVehicle(t, "vehicle-estop")
+	defer vehConn.Close()
+
+	resp1 := postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
+		"vehicle_id": "vehicle-estop", "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
+	})
+	require.Equal(t, 200, resp1.StatusCode)
+	var sessBody map[string]any
+	require.NoError(t, json.NewDecoder(resp1.Body).Decode(&sessBody))
+	resp1.Body.Close()
+	sessionID := sessBody["session_id"].(string)
+
+	// Operator WebSocket connect — requires session_id (ADR-025), only known now.
+	conn, err := dialWS(t, fmt.Sprintf("ws://localhost:18080/ws?token=%s&session_id=%s", token, sessionID))
+	require.NoError(t, err, "operator WS dial must succeed once session_id is known")
 	defer conn.Close()
 	time.Sleep(300 * time.Millisecond)
-
-	postJSONAuth(t, controlURL+"/session/start", token, map[string]string{
-		"vehicle_id": "vehicle-estop", "operator_id": "admin", "operator_role": "ACTIVE_OPERATOR",
-	}).Body.Close()
 
 	resp2 := postJSONAuth(t, controlURL+"/emergency-stop", token, map[string]string{})
 	resp2.Body.Close()

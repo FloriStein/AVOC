@@ -9,6 +9,13 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 36 — Restposten-Bereinigung III (Tech Debt, Formatierung, Prod-Lücke, Test-Gap) ✅
+2026-07-19 → [tasks/sprints/36-restposten-bereinigung-iii.md](sprints/36-restposten-bereinigung-iii.md)
+- TECHDEBT-01: `internal/authservice/noop_userstore.go` (komplett unreferenziert) gelöscht.
+- GOSTYLE-FMT-01: `gofmt -w .` für die 9 verbleibenden unformatierten Dateien, reine Whitespace-Änderung.
+- DEPLOY-08: `fleet-service` in `infrastructure/compose/docker-compose.prod.yml` ergänzt (Port 8085, Postgres+Mosquitto-Dependencies, Env analog `auth-service`/`telemetry-service`).
+- TESTGAP-01: 3 skippende WS-Integrationstests gefixt — zusätzlich zur geplanten Reihenfolge-Umkehr musste die Test-Vehicle-Registrierung über `/vehicle/ws` ergänzt werden (`vehicleRegistry.Connected`-Check in `handleSessionStart`, bisher nicht dokumentiert). Gegen echten Docker-Test-Stack verifiziert: 27/27 grün, 0 Skips.
+
 ## Sprint 35 — GOSTYLE-IF-03/04 (Phase-2-Abschluss Interface-Segregation) ✅
 2026-07-18 → [tasks/sprints/35-gostyle-if-phase2-abschluss.md](sprints/35-gostyle-if-phase2-abschluss.md)
 - `pkg/audit.AuditWriter` in schlankes `SafetyAuditWriter` (`WriteSync`-only) für die 5 Safety-/Command-Consumer aufgespalten, `Close` aus beiden Interfaces entfernt (`NoopWriter.Close` dadurch tot geworden und mit gelöscht).

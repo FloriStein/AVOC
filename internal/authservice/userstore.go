@@ -25,11 +25,11 @@ CREATE TABLE IF NOT EXISTS users (
 
 // User represents a system operator account.
 type User struct {
-	ID       int
-	Username string
-	Role     OperatorRole
-	IsActive bool
-	CreatedAt time.Time
+	ID         int
+	Username   string
+	Role       OperatorRole
+	IsActive   bool
+	CreatedAt  time.Time
 	LastAuthAt *time.Time
 }
 

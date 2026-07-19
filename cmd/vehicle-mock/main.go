@@ -26,8 +26,8 @@ import (
 	"avoc/pkg/logger"
 	"avoc/pkg/ulid"
 
-	"github.com/golang-jwt/jwt/v5"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 )
@@ -35,9 +35,9 @@ import (
 var log = logger.New("vehicle-mock")
 
 const (
-	reconnectDelay  = 5 * time.Second
-	telemetryHz     = 2 * time.Second // publish telemetry every 2s
-	actuatorLag     = 0.15            // simulated lag: actual trails commanded by 15%
+	reconnectDelay = 5 * time.Second
+	telemetryHz    = 2 * time.Second // publish telemetry every 2s
+	actuatorLag    = 0.15            // simulated lag: actual trails commanded by 15%
 )
 
 type state struct {

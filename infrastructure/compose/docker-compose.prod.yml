@@ -117,6 +117,25 @@ services:
       - avoc-net
     restart: unless-stopped
 
+  # ─── Fleet Service (Fleet-Domäne — Zonen/Stationen/Tasks/Alerts, ADR-027/028/029) ─────────
+  fleet-service:
+    image: avoc-fleet-service:${VERSION}
+    ports:
+      - "8085:8085"
+    environment:
+      FLEET_PORT: "8085"
+      DATABASE_URL: "postgres://avoc:${DB_PASSWORD}@postgres:5432/avoc?sslmode=disable"
+      JWT_SECRET: ${JWT_SECRET}
+      MQTT_BROKER: "mosquitto:1883"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks:
+      - avoc-net
+    restart: unless-stopped
+
   # ─── MQTT Broker ───────────────────────────────────────────────────────────
   mosquitto:
     image: eclipse-mosquitto:2

@@ -13,14 +13,14 @@ import (
 type SafetyEventType string
 
 const (
-	EventEmergencyStop    SafetyEventType = "EMERGENCY_STOP"
-	EventDeadmanTimeout  SafetyEventType = "DEADMAN_TIMEOUT"
-	EventACKTimeout      SafetyEventType = "ACK_TIMEOUT"
+	EventEmergencyStop     SafetyEventType = "EMERGENCY_STOP"
+	EventDeadmanTimeout    SafetyEventType = "DEADMAN_TIMEOUT"
+	EventACKTimeout        SafetyEventType = "ACK_TIMEOUT"
 	EventVehicleACKTimeout SafetyEventType = "VEHICLE_ACK_TIMEOUT"
-	EventWSDisconnect    SafetyEventType = "WS_DISCONNECT"
-	EventNoOperator      SafetyEventType = "NO_OPERATOR"
-	EventAuthInvalid     SafetyEventType = "AUTH_INVALID"
-	EventSafetyBusDown   SafetyEventType = "SAFETY_BUS_DOWN"
+	EventWSDisconnect      SafetyEventType = "WS_DISCONNECT"
+	EventNoOperator        SafetyEventType = "NO_OPERATOR"
+	EventAuthInvalid       SafetyEventType = "AUTH_INVALID"
+	EventSafetyBusDown     SafetyEventType = "SAFETY_BUS_DOWN"
 )
 
 type SafetyEvent struct {
@@ -43,9 +43,9 @@ type SafetyEventHandler func(event SafetyEvent)
 // Bus is the in-memory Safety Event Bus.
 // Interface contract is DDS-compatible for future replacement.
 type Bus struct {
-	mu        sync.RWMutex
-	state     SafetyState
-	handlers  []SafetyEventHandler
+	mu       sync.RWMutex
+	state    SafetyState
+	handlers []SafetyEventHandler
 }
 
 func NewBus() *Bus {

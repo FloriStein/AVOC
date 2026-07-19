@@ -12,7 +12,7 @@ import (
 
 // Session represents an active Control Session (ADR-015).
 type Session struct {
-	ID           string    // ULID — root anchor, survives SAFE_MODE (ADR-016)
+	ID           string // ULID — root anchor, survives SAFE_MODE (ADR-016)
 	VehicleID    string
 	OperatorID   string
 	OperatorRole string // "ACTIVE_OPERATOR" or "OBSERVER"
