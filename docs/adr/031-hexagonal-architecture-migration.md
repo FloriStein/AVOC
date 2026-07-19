@@ -1,6 +1,6 @@
 # ADR-031: Migration zu hexagonaler Architektur (Ports & Adapters) — Strangler-Fig, Pilot fleet-service
 
-Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)** — Fortsetzung auf weitere Services ist ein bewusster Entscheidungspunkt nach Pilot-Abschluss, kein Automatismus (siehe "Offene Punkte")
+Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)** — Fortsetzung auf weitere Services ist ein bewusster Entscheidungspunkt nach Pilot-Abschluss, kein Automatismus (siehe "Offene Punkte"). **Schritt 2 (auth-service) vom Nutzer freigegeben (2026-07-19), geplant als Sprint 37** — siehe Update unten und `tasks/current-sprint.md`.
 
 ## Kontext
 
@@ -216,6 +216,30 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 - Startzeitpunkt hängt vom AP2/AP3-Fortschritt ab, ist also nicht fest planbar
 
 ## Offene Punkte / Nächste Schritte
+
+> **Update (2026-07-19, Sprint-37-Kickoff):** Entscheidungspunkt getroffen — Nutzer gibt
+> Fortsetzung mit Schritt 2 (auth-service) frei, nachdem Sprint-33- und Sprint-34-Kickoff diesen
+> Punkt noch mangels neuen Anlasses zurückgestellt hatten. Scope unverändert zur Priorisierung
+> oben: nur der JWT-Port (`internal/authservice/handler.go:305-332`, `issueToken`/`parseToken`
+> direkt gegen `golang-jwt/jwt/v5`) — die Use-Case-Extraktion (Login-/Handover-Policy als reine
+> Funktionen getrennt von HTTP) bleibt, analog zu `HEX-06` beim Piloten, ein separater
+> Entscheidungspunkt **nach** Abschluss des Ports, kein automatischer Bestandteil dieses Schritts.
+> Anders als beim `fleet-service`-Piloten ist der Testgewinn hier **nicht** DB-Unabhängigkeit
+> (`handler_test.go` läuft bereits ohne externe Ressource — JWT-Signierung ist reine Berechnung,
+> keine I/O) — der Nutzen ist Dependency Inversion: `Handler` importiert danach `golang-jwt/jwt/v5`
+> nicht mehr direkt, sondern nur noch über den `TokenIssuer`-Port. `telemetry-service` (Schritt 3
+> der Priorisierung) bleibt bewusst außerhalb dieses Sprints — eigener, separat zu entscheidender
+> Folgeschritt, um Sprints klein zu halten (ein Service pro Sprint, wie beim Piloten). Task-Plan:
+> `tasks/backlog.md` (EPIC-Abschnitt), Details/Vorrecherche in `tasks/current-sprint.md` (Sprint 37).
+>
+> **Nebenbefund, bewusst außerhalb dieses Schritts:** `golang-jwt/jwt/v5` wird direkt (mit
+> identischem Alg-Confusion-Guard, SEC-01) in 6 Paketen importiert (`cmd/control-server/main.go`,
+> `cmd/vehicle-mock/main.go`, `internal/authservice/handler.go`, `internal/fleetservice/handler.go`,
+> `internal/vehicleconnection/handler.go`, `internal/controlserver/transport/websocket.go`) — ein
+> potenzielles Rule-3.1-Duplikat (gemeinsames `pkg/authtoken`), aber eine
+> paketübergreifende Extraktion ist nicht Teil des in diesem ADR beauftragten Scopes (nur
+> `auth-service`s eigener Handler/JWT-Code). Dokumentiert als möglicher späterer Folge-Task, nicht
+> mit diesem Schritt vermischt.
 
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe

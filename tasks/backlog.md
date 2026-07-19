@@ -370,6 +370,48 @@ zurückstellen (kein neuer Anlass, passt zum Ziel kleinerer, token-budgetierter 
 inhaltlich relevant: `auth-service` ist ohnehin Ziel von `SEC-01` (JWT-Sicherheitslücke) in Sprint
 34 — eine Hexagonal-Migration desselben Codes im selben Sprint hätte unnötig Overhead erzeugt.
 
+### Fortsetzung, Schritt 2 — auth-service (JWT-Port), freigegeben Sprint-37-Kickoff
+
+**Freigabe (2026-07-19):** Nutzer entscheidet sich explizit für Fortsetzung der
+Hexagonal-Migration, damit ist der seit Sprint 34 zurückgestellte Entscheidungspunkt aufgelöst.
+Scope folgt der Priorisierung in ADR-031 Schritt 2 (`auth-service`, Storage-Seite bereits über
+`UserStore` gelöst — nur JWT-Port fehlt). `telemetry-service` (Schritt 3) bleibt bewusst ein
+eigener, separat zu entscheidender Folgeschritt (ein Service pro Sprint, wie beim Piloten).
+Use-Case-Extraktion (Login-/Handover-Policy als reine Funktionen) ist, analog zu `HEX-06` beim
+Piloten, ein eigener Entscheidungspunkt **nach** Abschluss des Ports — nicht automatisch Teil
+dieses Schritts.
+
+Vorrecherche (2026-07-19, vor Sprint-Start durchgeführt): `internal/authservice/handler.go:305-332`
+— `issueToken`/`parseToken` sind private `Handler`-Methoden, die direkt gegen
+`golang-jwt/jwt/v5` arbeiten (`jwt.NewWithClaims`/`jwt.ParseWithClaims`), `Handler.secret []byte`
+als Feld (Zeile 33). Anders als beim `FleetStore`-Piloten bringt der Port hier **keine
+DB-Unabhängigkeit** — `handler_test.go` läuft bereits ohne externe Ressource, da JWT-Signierung
+reine Berechnung ist (`UserStore` ist über `stubUserStore` bereits vollständig entkoppelt). Der
+Nutzen ist Dependency Inversion: `Handler` importiert `golang-jwt/jwt/v5` danach nicht mehr direkt.
+`cmd/auth-service/main.go:35` ruft `authservice.NewHandler(secret, userStore)` auf (`secret` als
+`string`) — Konstruktorsignatur bleibt unverändert, wenn `NewHandler` intern einen
+`JWTTokenIssuer` aus dem `secret`-String baut (identisches Muster zu HEX-02: `cmd/fleet-service/
+main.go:59` musste bei der `FleetStore`-Umstellung ebenfalls nicht angepasst werden, da
+`*PostgresFleetStore` das neue Interface strukturell bereits erfüllte).
+
+**Nebenbefund, bewusst außerhalb dieses Schritts:** `golang-jwt/jwt/v5` mit identischem
+Alg-Confusion-Guard (SEC-01) direkt in 6 Paketen importiert (`cmd/control-server/main.go`,
+`cmd/vehicle-mock/main.go`, `internal/authservice/handler.go`, `internal/fleetservice/handler.go`,
+`internal/vehicleconnection/handler.go`, `internal/controlserver/transport/websocket.go`) —
+potenzielles Rule-3.1-Duplikat (gemeinsames `pkg/authtoken` denkbar), aber paketübergreifende
+Extraktion ist nicht Teil des ADR-031-Scopes für diesen Schritt (nur `auth-service`s eigener
+Handler-Code). Dokumentiert als möglicher späterer Folge-Task, nicht mit diesem Schritt vermischt.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| HEXAUTH-01 | `TokenIssuer`-Port definieren (`IssueToken(subject string, role OperatorRole, ttl time.Duration) (string, error)`, `ParseToken(tokenStr string) (*Claims, error)`) in neuer Datei `internal/authservice/tokenissuer.go`; `JWTTokenIssuer`-Struct (wraps `golang-jwt/jwt/v5`, übernimmt `issueToken`/`parseToken`-Logik unverändert von `Handler`) + `NewJWTTokenIssuer(secret string)`. Compile-Time-Check `var _ TokenIssuer = (*JWTTokenIssuer)(nil)`. Kein `Handler`-Wechsel in diesem Schritt (mirrors HEX-01). | S | 🔄 Sprint 37 | — |
+| HEXAUTH-02 | `Handler.secret []byte` → `Handler.tokens TokenIssuer` (`internal/authservice/handler.go:33`). `NewHandler(secret string, userStore UserStore)` konstruiert `JWTTokenIssuer` intern — externe Signatur unverändert, `cmd/auth-service/main.go:35` braucht keine Anpassung (mirrors HEX-02/Fleet-Precedent). Alle Aufrufer von `h.issueToken`/`h.parseToken` auf `h.tokens.IssueToken`/`h.tokens.ParseToken` umgestellt, die beiden alten privaten Methoden entfernt. HTTP-Verhalten unverändert. | S | 🔄 Sprint 37 | HEXAUTH-01 |
+| HEXAUTH-03 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./internal/authservice/...` grün (weiterhin ohne `DATABASE_URL`, wie zuvor — kein neuer Testgewinn hier, nur Architektur-Sauberkeit). ADR-031-Status-Update (Schritt 2 abgeschlossen) + `DECISIONS.MD` + dieser Backlog-Eintrag. | S | 🔄 Sprint 37 | HEXAUTH-02 |
+| HEXAUTH-04 | *(Optional, eigener Entscheid nach HEXAUTH-03)* Use-Case-Schicht aus `Handler` extrahieren (Login-/Handover-/Registrierungs-Policy als reine Funktionen zwischen HTTP-Layer und `TokenIssuer`/`UserStore`) — nur falls nach HEXAUTH-01..03 als lohnend bewertet, kein Bestandteil dieses Schritts selbst, analog `HEX-06`. | M | 🔲 Backlog (optional) | HEXAUTH-03 |
+
+**Nach HEXAUTH-03:** nächster Entscheidungspunkt, ob `telemetry-service` (ADR-031 Schritt 3)
+folgt — kein Automatismus, analog zum Entscheidungspunkt nach dem Piloten.
+
 ---
 
 ## EPIC: Go Coding Style Guide Rollout
