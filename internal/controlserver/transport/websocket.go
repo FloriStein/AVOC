@@ -44,7 +44,7 @@ type WSHandler struct {
 	vehicleContexts *vehiclecontext.Registry
 	sessionMgr      *session.Manager
 	engine          *command.Engine
-	auditWriter     audit.AuditWriter
+	auditWriter     audit.SafetyAuditWriter
 }
 
 func NewWSHandler(
@@ -62,7 +62,7 @@ func NewWSHandler(
 }
 
 // WithAuditWriter sets the audit writer for WS_DISCONNECT persistence (ADR-018).
-func (h *WSHandler) WithAuditWriter(aw audit.AuditWriter) *WSHandler {
+func (h *WSHandler) WithAuditWriter(aw audit.SafetyAuditWriter) *WSHandler {
 	h.auditWriter = aw
 	return h
 }

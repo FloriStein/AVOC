@@ -33,7 +33,7 @@ type DeadmanWatchdog struct {
 	timeout     time.Duration
 	sm          *statemachine.Machine
 	publisher   Publisher
-	auditWriter audit.AuditWriter
+	auditWriter audit.SafetyAuditWriter
 	sessionID   string
 	vehicleID   string
 	stopped     bool
@@ -50,7 +50,7 @@ func NewDeadmanWatchdog(timeout time.Duration, sm *statemachine.Machine, publish
 
 // WithAuditWriter sets the audit writer for guaranteed safety-event persistence (ADR-018).
 // Call before Start(). Safe to omit in tests (nil = no-op).
-func (w *DeadmanWatchdog) WithAuditWriter(aw audit.AuditWriter) *DeadmanWatchdog {
+func (w *DeadmanWatchdog) WithAuditWriter(aw audit.SafetyAuditWriter) *DeadmanWatchdog {
 	w.auditWriter = aw
 	return w
 }
@@ -154,7 +154,7 @@ type ACKTimeoutWatcher struct {
 	timeout      time.Duration
 	sm           *statemachine.Machine
 	publisher    Publisher
-	auditWriter  audit.AuditWriter
+	auditWriter  audit.SafetyAuditWriter
 	sessionID    string
 	vehicleID    string
 }
@@ -168,7 +168,7 @@ func NewACKTimeoutWatcher(timeout time.Duration, sm *statemachine.Machine, publi
 }
 
 // WithAuditWriter sets the audit writer for guaranteed safety-event persistence (ADR-018).
-func (w *ACKTimeoutWatcher) WithAuditWriter(aw audit.AuditWriter) *ACKTimeoutWatcher {
+func (w *ACKTimeoutWatcher) WithAuditWriter(aw audit.SafetyAuditWriter) *ACKTimeoutWatcher {
 	w.auditWriter = aw
 	return w
 }
@@ -244,7 +244,7 @@ type VehicleACKWatchdog struct {
 	timeout      time.Duration
 	sm           *statemachine.Machine
 	publisher    Publisher
-	auditWriter  audit.AuditWriter
+	auditWriter  audit.SafetyAuditWriter
 	sessionID    string
 	vehicleID    string
 	stopped      bool
@@ -259,7 +259,7 @@ func NewVehicleACKWatchdog(timeout time.Duration, sm *statemachine.Machine, publ
 	}
 }
 
-func (w *VehicleACKWatchdog) WithAuditWriter(aw audit.AuditWriter) *VehicleACKWatchdog {
+func (w *VehicleACKWatchdog) WithAuditWriter(aw audit.SafetyAuditWriter) *VehicleACKWatchdog {
 	w.auditWriter = aw
 	return w
 }

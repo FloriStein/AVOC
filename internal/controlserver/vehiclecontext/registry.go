@@ -32,7 +32,7 @@ type Registry struct {
 	ackTimeout        time.Duration
 	vehicleACKTimeout time.Duration
 	publisher         csafety.Publisher
-	auditWriter       audit.AuditWriter
+	auditWriter       audit.SafetyAuditWriter
 }
 
 func NewRegistry(deadmanTimeout, ackTimeout, vehicleACKTimeout time.Duration, publisher csafety.Publisher) *Registry {
@@ -47,7 +47,7 @@ func NewRegistry(deadmanTimeout, ackTimeout, vehicleACKTimeout time.Duration, pu
 
 // WithAuditWriter sets the audit writer applied to every VehicleContext's
 // watchdogs (ADR-018). Call before the first Get().
-func (r *Registry) WithAuditWriter(aw audit.AuditWriter) *Registry {
+func (r *Registry) WithAuditWriter(aw audit.SafetyAuditWriter) *Registry {
 	r.auditWriter = aw
 	return r
 }

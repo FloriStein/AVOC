@@ -34,6 +34,10 @@ type User struct {
 }
 
 // UserStore defines persistence operations for operator accounts (ADR-024).
+// SeedAdmin is deliberately not part of this interface (GOSTYLE-IF-04) — it is
+// called exactly once, on the concrete *PostgresUserStore, during bootstrap in
+// cmd/auth-service/main.go before the store is handed to NewHandler as a
+// UserStore, never through an interface value.
 type UserStore interface {
 	Create(ctx context.Context, username, password string, role OperatorRole) error
 	Authenticate(ctx context.Context, username, password string) (*User, error)
@@ -41,7 +45,6 @@ type UserStore interface {
 	List(ctx context.Context) ([]User, error)
 	Delete(ctx context.Context, id int) error
 	UpdateRole(ctx context.Context, id int, role OperatorRole) error
-	SeedAdmin(ctx context.Context, username, password string) error
 }
 
 // PostgresUserStore implements UserStore against PostgreSQL (ADR-023/024).

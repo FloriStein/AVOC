@@ -439,25 +439,33 @@ automatisierte Abdeckung lässt. Typ S, unabhängig von GOSTYLE-* erledigbar.
 `gofmt -l` findet 13 unformatierte Dateien — trivialer `gofmt -w .`-Task (Typ S, keine
 Logikänderung), unabhängig von GOSTYLE-* erledigbar.
 
-### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031
+### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031 — ✅ abgeschlossen (Sprint 35)
 
 **Start erst nach `HEX-05`** (Hexagonal-Pilot fleet-service abgeschlossen) **und** nach
 AP2/AP3-Meilensteinen, analog zum ADR-031-Timing. Koordiniert mit dem Hexagonal-Epic oben —
 dieselben Interfaces, unterschiedlicher Fokus (dort: Repository-Port für `fleet-service`; hier:
-Methodenzahl/Konsumenten-Zuschnitt projektweit).
+Methodenzahl/Konsumenten-Zuschnitt projektweit). Alle 6 Tasks (GOSTYLE-IF-01..06) abgeschlossen,
+keine weiteren Interface-Segregation-Folgetasks offen.
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
 | GOSTYLE-IF-01 | `recording.SessionRecorder` (6 Methoden, aktuell nirgends als Interface-Typ konsumiert): klären, ob Interface tatsächlich verwendet werden soll (`*MemoryRecorder` → `SessionRecorder` in `cmd/control-server/main.go:102`) oder aufgelöst wird, solange nur eine Implementierung existiert (Rule 1.2 — Abstraktion ohne Konsument ist unbegründet) | S | ✅ Sprint 34 | Interface komplett entfernt (`internal/recording/recorder.go`) — Details/Ergebnisse in `tasks/current-sprint.md` |
 | GOSTYLE-IF-02 | `fleetgateway.FleetGateway` (3 Methoden, ungenutzt als Typ): gleiche Frage wie IF-01. `fleetservice.Dispatcher` (1 Methode) ist bereits der korrekte konsumentenseitige Schnitt und bleibt unverändert | S | ✅ Sprint 34 | **Nicht** wie IF-01 gelöscht (aktives ADR-027 schreibt die Abstraktion bewusst vor) — stattdessen tatsächlich nutzbar gemacht: `subscribeVehicleStatus`/`subscribeVehicleAlerts` in `cmd/fleet-service/main.go` nehmen jetzt `fleetgateway.FleetGateway` statt `*MQTTGateway` entgegen. Details in `tasks/current-sprint.md` |
-| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | 🔄 Sprint 35 | HEX-05 |
-| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | 🔄 Sprint 35 | HEX-05 |
+| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | ✅ Sprint 35 | Neues `SafetyAuditWriter`-Interface (`WriteSync`-only) eingeführt, in allen 5 Consumern eingesetzt. `Close` aus `AuditWriter`/`SafetyAuditWriter` entfernt, dadurch `NoopWriter.Close` tot geworden und mit gelöscht. Details in `tasks/current-sprint.md` |
+| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | ✅ Sprint 35 | `SeedAdmin` aus `UserStore` entfernt, verbleibende 6 Methoden bestätigt in Gebrauch. Nebenbefund: `NoopUserStore` komplett ungenutzt (unabhängig von diesem Task, siehe neuer Eintrag unten). Details in `tasks/current-sprint.md` |
 | GOSTYLE-IF-05 | `vehicleregistry.VehicleStore` (5 Methoden): `SeedDefault` (Bootstrap) aus Interface lösen, analog IF-04 | S | ✅ Sprint 34 | `SeedDefault` aus `VehicleStore` entfernt, dadurch `NoopVehicleStore.SeedDefault` tot geworden und mit gelöscht. Details in `tasks/current-sprint.md` |
 | GOSTYLE-IF-06 | `controlserver/safety.Publisher` (2 Methoden) in `PublishEvent`-only Interface für `Engine`/Watchdogs aufteilen; `TriggerEmergencyStop` bleibt eigener Zugriffspfad, analog zum bereits vorbildlichen `vehicleconnection.safetyPublisher`-Muster | S | ✅ Sprint 34 | `TriggerEmergencyStop` aus `Publisher` entfernt (nur je über den konkreten `*HTTPPublisher` aufgerufen, nie interface-typisiert). Details in `tasks/current-sprint.md` |
 
 **Nebenbefund, nicht Teil dieses Style-Guide-Scopes (Sicherheitsauffälligkeit):** beim
 Duplikat-Scan (Rule 3.1) fiel auf, dass der JWT-Alg-Confusion-Check in mehreren JWT-Parse-Stellen
 fehlt. Kein Style-Guide-Thema — als `SEC-01` aufgenommen, siehe EPIC "Security Findings" unten.
+
+**Nebenbefund aus GOSTYLE-IF-04 (Sprint 35, kein Interface-Segregation-Thema):**
+`internal/authservice/noop_userstore.go`s `NoopUserStore` ist komplett ungenutzt — keine
+Referenz außerhalb der eigenen Datei, auch nicht in Tests (`handler_test.go` nutzt einen eigenen
+`stubUserStore`). War bereits vor GOSTYLE-IF-04 tot (nicht erst durch das Entfernen von
+`SeedAdmin` verursacht, anders als der `NoopVehicleStore.SeedDefault`-Fall in Sprint 34). Als
+`TECHDEBT-01` aufgenommen, siehe EPIC "Tech Debt" unten.
 
 ---
 
@@ -466,6 +474,14 @@ fehlt. Kein Style-Guide-Thema — als `SEC-01` aufgenommen, siehe EPIC "Security
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
 | SEC-01 | JWT-Alg-Confusion-Check fehlt an 3 von 5 `jwt.Parse*`-Stellen | S/M | ✅ Sprint 34 | Alle drei Stellen gefixt (`authservice.parseToken`, `transport.validateJWT`, `vehicleconnection.validateJWT`) — `t.Method.(*jwt.SigningMethodHMAC)`-Check ergänzt, analog zu den bereits korrekten Stellen. Regressionstests mit gefälschtem `alg:none`-Token an allen drei Stellen (2x gegen Flakiness geprüft, CLAUDE.MD Abschnitt 17). Details/Ergebnisse in `tasks/current-sprint.md`. |
+
+---
+
+## EPIC: Tech Debt
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| TECHDEBT-01 | `internal/authservice/noop_userstore.go`s `NoopUserStore` löschen — komplett ungenutzt (kein Aufrufer außerhalb der eigenen Datei, auch nicht in Tests) | S | 🆕 offen | Nebenbefund aus GOSTYLE-IF-04 (Sprint 35). War bereits vor diesem Sprint tot, nicht durch die Interface-Verschlankung verursacht — daher nicht im Rahmen von GOSTYLE-IF-04 mit-entfernt (Scope-Grenze), eigener kleiner Folge-Task. |
 
 ---
 
