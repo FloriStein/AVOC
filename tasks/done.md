@@ -9,6 +9,12 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 35 — GOSTYLE-IF-03/04 (Phase-2-Abschluss Interface-Segregation) ✅
+2026-07-18 → [tasks/sprints/35-gostyle-if-phase2-abschluss.md](sprints/35-gostyle-if-phase2-abschluss.md)
+- `pkg/audit.AuditWriter` in schlankes `SafetyAuditWriter` (`WriteSync`-only) für die 5 Safety-/Command-Consumer aufgespalten, `Close` aus beiden Interfaces entfernt (`NoopWriter.Close` dadurch tot geworden und mit gelöscht).
+- `SeedAdmin` aus `authservice.UserStore` entfernt; Nebenbefund `NoopUserStore` komplett ungenutzt bestätigt und als `TECHDEBT-01` im Backlog erfasst.
+- Damit ist Phase 2 (Interface-Segregation, Rule 4.2/4.3) des Go-Coding-Style-Guide-EPICs vollständig abgeschlossen.
+
 ## Sprint 34 — JWT-Alg-Confusion-Fix (SEC-01) + GOSTYLE-IF-01/02/05/06 ✅
 2026-07-18 → [tasks/sprints/34-jwt-fix-gostyle-if.md](sprints/34-jwt-fix-gostyle-if.md)
 - SEC-01: fehlender Signaturmethoden-Check an 3 von 5 `jwt.Parse*`-Stellen behoben (Alg-Confusion), Regressionstests mit gefälschtem `alg:none`-Token.

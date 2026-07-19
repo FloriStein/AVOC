@@ -6,108 +6,66 @@
 
 ---
 
-# Sprint 35 — GOSTYLE-IF-03/04 (Phase-2-Abschluss Interface-Segregation)
+# Sprint 36 — Restposten-Bereinigung III (Tech Debt, Formatierung, Prod-Lücke, Test-Gap)
 
-Ziel: Sprint 34 hat 4 der 6 GOSTYLE-IF-Tasks abgeschlossen (IF-01/02/05/06) und bewusst die beiden
-größeren M-Tasks auf diesen Sprint verschoben (Token-Budget-Grill-Me 2026-07-18). Mit IF-03/04
-ist Phase 2 (Interface-Segregation, Rule 4.2/4.3) des Go-Coding-Style-Guide-EPICs vollständig
-abgeschlossen — keine weiteren Interface-Segregation-Folgetasks im Backlog offen.
+Ziel: vier unabhängige, seit mehreren Sprints bekannte, aber nie aufgegriffene Restposten
+schließen. Kein EPIC-Fortschritt, reine Aufräumarbeit — bewusst klein gehalten (4× Typ S/M) statt
+neue Architektur-Stränge zu öffnen. `HEX-06`, `FLEET-01`, `MV-10` bleiben wie in den
+Sprint-32/33/34-Kickoffs entschieden zurückgestellt (kein neuer Anlass).
 
-**Explizites Nutzer-Budget:** wie Sprint 34 ca. 200.000 Token — bei nur 2 Tasks unkritisch, aber
-beide sind Typ M (mehr Konsumenten, volle Teststandard-Pflicht nach CLAUDE.MD Abschnitt 17), daher
-kein dritter Task ergänzt.
+**Nutzer-Budget:** ca. 200.000 Token (Standardvorgabe). Zwei Tasks (DEPLOY-08, TESTGAP-01)
+brauchen echte Verifikation gegen den Docker-Stack — bei der Umsetzung im Auge behalten, ob das
+Budget dadurch überschritten wird; wenn ja, TESTGAP-01 mit dokumentiertem Teilergebnis abschließen
+statt unbegrenzt nachzuinvestieren (analog WEBRTC-10-Präzedenzfall).
 
-Vorrecherche (2026-07-18, vor Sprint-Start durchgeführt, damit die Tasks ohne erneute
-Grill-Me-Session direkt umsetzbar sind):
+Vorrecherche (2026-07-19, vor Sprint-Start durchgeführt):
 
-- **GOSTYLE-IF-03** (`pkg/audit.AuditWriter`, 3 Methoden): `WriteSync` wird ausschließlich von 5
-  Safety-/Command-Consumern gebraucht (`command.Engine`, `transport.WSHandler`,
-  `vehiclecontext.Registry`, `safety.DeadmanWatchdog`, `safety.ACKTimeoutWatcher`,
-  `safety.VehicleACKWatchdog` — alle über `WithAuditWriter(aw audit.AuditWriter)`). `QueryBySession`
-  wird tatsächlich interface-typisiert gebraucht, aber von einem anderen Konsumenten:
-  `controlServer.auditWriter` (`cmd/control-server/main.go:615`, `GET /audit/events`-Handler) —
-  kein toter Methodenrest wie bei IF-01/02. `Close()` dagegen wird nur einmalig auf dem konkreten
-  `*PostgresAuditWriter` in `newAuditWriter`s Closure aufgerufen (`cmd/control-server/main.go:88`),
-  nie über das Interface — exakt das Bootstrap-Muster aus IF-05. Erwarteter Zuschnitt: schlankes
-  `WriteSync`-only Interface für die 5 Consumer, `AuditWriter` (breiter, `WriteSync`+`QueryBySession`)
-  bleibt für `newAuditWriter`s Rückgabetyp/`controlServer.auditWriter`, `Close` raus aus jedem
-  Interface (bleibt konkrete Methode auf `PostgresAuditWriter`).
-- **GOSTYLE-IF-04** (`authservice.UserStore`, 7 Methoden): `SeedAdmin` wird nur einmalig auf dem
-  konkreten `*PostgresUserStore` in `cmd/auth-service/main.go:30` aufgerufen, bevor der Store als
-  `UserStore`-Interface an `NewHandler` übergeben wird — nie über das Interface. Die verbleibenden 6
-  Methoden (`Create`, `Authenticate`, `FindByID`, `List`, `Delete`, `UpdateRole`) sind alle über
-  `h.userStore` (Interface-Feld in `authservice.Handler`) tatsächlich in Gebrauch — kein weiterer
-  Schnitt nötig, nur `SeedAdmin` raus, analog IF-05.
-  **Nebenbefund für die Umsetzung:** `internal/authservice/noop_userstore.go`s `NoopUserStore`
-  scheint komplett ungenutzt (keine Referenz außerhalb der eigenen Datei gefunden) — beim
-  Bearbeiten von IF-04 gegenprüfen, ob das stimmt; falls ja, als eigenen kleinen Fund im
-  Sprint-Ergebnis vermerken (nicht unaufgefordert zusätzlich aufräumen, nur dokumentieren/im
-  Anschluss dem Nutzer vorlegen — passt zum Sprint-34-Präzedenzfall `NoopVehicleStore.SeedDefault`).
+- **TECHDEBT-01** (`internal/authservice/noop_userstore.go`): `grep -rn NoopUserStore --include=*.go`
+  bestätigt — außer der eigenen Definitionsdatei keine Referenz, auch nicht in Tests
+  (`handler_test.go` nutzt `stubUserStore`). Ganze Datei kann gelöscht werden, keine
+  Interface-Anpassung nötig (war nie im `UserStore`-Interface referenziert, nur eine unabhängige
+  Implementierung davon).
+- **GOSTYLE-FMT-01** (neu, Bonus-Folge-Task aus Sprint 28/29, nie aufgegriffen): `gofmt -l .`
+  listet aktuell 10 Dateien: `cmd/auth-service/main.go`, `cmd/vehicle-mock/main.go`,
+  `internal/authservice/noop_userstore.go` (entfällt durch TECHDEBT-01 — Reihenfolge beachten:
+  erst TECHDEBT-01, dann `gofmt -l` erneut prüfen), `internal/authservice/userstore.go`,
+  `internal/controlserver/session/manager.go`, `internal/safetyservice/bus.go`,
+  `internal/webrtcsfu/sfu.go`, `pkg/db/postgres.go`, `pkg/logger/event_types.go`,
+  `tests/unit/multioperator_test.go`. Reines `gofmt -w .`, keine Logikänderung (CLAUDE.MD
+  Abschnitt 15 — Verhalten bleibt unverändert, nur Formatierung).
+- **DEPLOY-08** (neu, bekannte Produktionslücke, bisher nicht als Task erfasst): `fleet-service`
+  ist in `Makefile`s `GO_SERVICES`-Liste (Zeile 21) und wird gebaut, fehlt aber in
+  `infrastructure/compose/docker-compose.prod.yml` (17 Services dort, `fleet-service` nicht
+  darunter). Bestehendes Muster für DB-/MQTT-gebundene Services (z. B. `auth-service`,
+  Zeile 79–93; `telemetry-service`, Zeile 106–118): `image: avoc-<service>:${VERSION}`, Port,
+  `environment:`-Block, `depends_on:` mit `condition: service_healthy` für Postgres, `networks:
+  - avoc-net`, `restart: unless-stopped`. Env-Variablen-Namen aus der Dev-Compose
+  (`infrastructure/compose/docker-compose.yml:152-171`) übernehmbar: `FLEET_PORT`,
+  `DATABASE_URL` (Postgres, analog `auth-service`), `JWT_SECRET`, `MQTT_BROKER`. Port `8085`.
+- **TESTGAP-01** (neu, Sprint-29-Folge-Task, nie aufgegriffen): die 3 skippenden Tests in
+  `tests/integration/services_test.go` (`TestIntegration_SessionLifecycle_StartAndEnd` Zeile 184,
+  `TestIntegration_MediaFailed_TriggersDegrade_NeverSafeMode` Zeile 241,
+  `TestIntegration_EmergencyStop_TriggersSafeMode` Zeile 276) dialen WS **vor** `POST
+  /session/start` und ohne `session_id`-Query-Param. `internal/controlserver/transport/
+  websocket.go:93-97` (`authenticateWS`) verlangt `session_id` zwingend (400 ohne). Root Cause
+  bestätigt: der Kommentar "Authenticate by connecting WebSocket (transition IDLE →
+  AUTHENTICATED)" in den Tests ist veraltet — `handleSessionStart`
+  (`cmd/control-server/main.go:318-359`) führt die komplette State-Machine-Transition
+  (`advanceVehicleToActiveOperator`, Zeile 364ff., IDLE→CONNECTING→AUTHENTICATED→CONNECTED)
+  bereits selbst aus und braucht dafür **keine** vorherige WS-Verbindung, nur einen gültigen JWT
+  + `vehicleRegistry.Connected(vehicleID)`. Fix: Reihenfolge in allen 3 Tests umdrehen — erst
+  `/session/start` aufrufen und `session_id` aus der Response lesen, danach `ws://.../ws?
+  token=...&session_id=...` dialen. Kein Produktionscode-Fix nötig, nur Test-Setup.
 
-**Keine Signaturänderung nach außen ohne Zweck** (CLAUDE.MD Abschnitt 15) — beide Tasks entfernen
-lediglich Bootstrap-Methoden aus den jeweiligen Interfaces, kein API-/HTTP-Verhaltenswechsel. Kein
-neues ADR nötig (reine Interface-Verschlankung, keine Datenstruktur-/Architekturänderung).
-`docs/go-style-guide.md` gilt weiterhin für beide Tasks.
-
-Datum: 2026-07-18 | **Status: Geplant, noch nicht begonnen**
-Vorgänger: Sprint 34 ✅ (committed, Commit `6f50ba3`)
-Branch/Worktree: noch nicht festgelegt — kann in einem neuen Worktree von `main`/diesem Branch aus
-starten (Sprint 34 ist bereits committed, im Gegensatz zum Sprint-33/34-Übergang gibt es hier keine
-uncommitted Abhängigkeit, die einen bestimmten Worktree erzwingt).
+Datum: 2026-07-19 | **Status: Geplant, noch nicht begonnen**
+Vorgänger: Sprint 35 ✅ (committed, Commit `034fc79`)
+Branch/Worktree: noch nicht festgelegt.
 
 ## Tasks
 
 | ID | Task | Typ | Status |
 |----|------|-----|--------|
-| GOSTYLE-IF-03 | `pkg/audit.AuditWriter`: `WriteSync`-only Interface für die 5 Safety-/Command-Consumer, `Close` aus jedem Interface entfernen | M | ✅ |
-| GOSTYLE-IF-04 | `authservice.UserStore`: `SeedAdmin` aus Interface lösen, verbleibende 6 Methoden bestätigt in Gebrauch | M | ✅ |
-
-## Ergebnisse
-
-- **GOSTYLE-IF-03**: Konsumenten per grep bestätigt (deckt sich mit Vorrecherche, keine
-  Code-Änderung seither): `WriteSync` wird ausschließlich von `command.Engine`,
-  `transport.WSHandler`, `vehiclecontext.Registry` und den 3 Watchdog-Structs in
-  `internal/controlserver/safety/detector.go` (`DeadmanWatchdog`, `ACKTimeoutWatcher`,
-  `VehicleACKWatchdog`) gebraucht, alle über `WithAuditWriter(...)`. Neues schlankes Interface
-  `SafetyAuditWriter` (nur `WriteSync`) in `pkg/audit/writer.go` eingeführt und als Feld-/
-  Parametertyp in allen 5 Consumern (`detector.go`, `engine.go`, `registry.go`, `websocket.go`)
-  eingesetzt statt des bisherigen `audit.AuditWriter`. `AuditWriter` bleibt bestehen (jetzt via
-  Embedding `SafetyAuditWriter` + `QueryBySession`) für `newAuditWriter`s Rückgabetyp und
-  `controlServer.auditWriter` (`cmd/control-server/main.go:615`, `GET /audit/events`-Handler).
-  `Close` aus beiden Interfaces entfernt; `PostgresAuditWriter.Close` bleibt konkrete Methode
-  (weiterhin einmalig in der `newAuditWriter`-Bootstrap-Closure aufgerufen,
-  `cmd/control-server/main.go:88`). `NoopWriter.Close` dadurch tot geworden und mit gelöscht
-  (`pkg/audit/noop_writer.go`) — analog zum `NoopVehicleStore.SeedDefault`-Präzedenzfall aus
-  Sprint 34. Neue Regressionstests in `pkg/audit/writer_test.go`: 4 Compile-Time-Checks
-  (`var _ SafetyAuditWriter/AuditWriter = (*PostgresAuditWriter/NoopWriter)(nil)`) plus 2
-  Verhaltenstests für `NoopWriter` (Zero-Value-Event, leere Session-ID) — `pkg/audit` hatte zuvor
-  keine Tests.
-- **GOSTYLE-IF-04**: Konsumenten per grep bestätigt: `SeedAdmin` wird nur einmalig auf dem
-  konkreten `*PostgresUserStore` in `cmd/auth-service/main.go:30` aufgerufen, bevor der Store als
-  `UserStore` an `NewHandler` übergeben wird (Zeile 35) — nie über das Interface. Die
-  verbleibenden 6 Methoden sind alle über `h.userStore` in Gebrauch. `SeedAdmin` aus
-  `UserStore`-Interface (`internal/authservice/userstore.go`) entfernt, bleibt konkrete Methode
-  auf `PostgresUserStore`. Neuer Compile-Time-Check `internal/authservice/userstore_test.go`
-  (`var _ UserStore = (*PostgresUserStore)(nil)`); bestehender `handler_test.go` deckt die 6
-  verbleibenden Methoden bereits über `stubUserStore` ab (22 Tests, alle weiterhin grün).
-  **Nebenbefund bestätigt:** `internal/authservice/noop_userstore.go`s `NoopUserStore` ist
-  tatsächlich komplett ungenutzt — keine Referenz außerhalb der eigenen Datei, auch nicht in
-  Tests. Anders als `NoopVehicleStore.SeedDefault` in Sprint 34 wurde `NoopUserStore` nicht erst
-  durch diesen Task tot: alle 8 Methoden (inkl. der 6 weiterhin im Interface verbleibenden) waren
-  bereits vorher unreferenziert. Scope-Grenze dieses Sprints (nur `SeedAdmin` war beauftragt) —
-  bewusst **nicht** mit-gelöscht, stattdessen hier dokumentiert und als neuer Backlog-Eintrag
-  vorgeschlagen (toter Code, eigener kleiner S-Task, unabhängig von GOSTYLE-IF-04).
-
-**Verifikation gesamt**: `go build ./...`, `go vet ./...` sauber. `go test ./...` — alle Unit-/
-Package-Tests grün (`pkg/audit`, `internal/authservice`, `internal/controlserver/transport`,
-`internal/fleetgateway`, `internal/fleetservice`, `internal/vehicleconnection`, `pkg/db`,
-`pkg/env`, `tests/unit`, `tests/performance`, `cmd/vehicle-mock`); `internal/controlserver/
-{command,safety,vehiclecontext,session,statemachine}` haben weiterhin keine Testdateien (durch
-diesen Sprint nicht verändert). `tests/integration` schlägt mit 29 `connection refused`-Fehlern
-fehl, da kein docker-compose-Stack läuft — laut Sprint-Vorgabe für diesen rein
-Backend-Interface-Task ohne Schema-/API-Verhaltensänderung erwartet und kein Blocker. Die drei
-neu/verändert getesteten Pakete (`internal/authservice`, `internal/controlserver/transport`,
-`pkg/audit`) 2x hintereinander mit `-count=1` gegen frischen Zustand laufen lassen (Flakiness-
-Check gemäß CLAUDE.MD Abschnitt 17) — beide Durchläufe grün. Kein Frontend-/Browser-Check, da
-keine der beiden Änderungen client-sichtbares Verhalten oder API-Response-Shapes ändert (reine
-Interface-Verschlankung, gedeckt durch die "reine Backend-Interface-Arbeit"-Sprintvorgabe).
+| TECHDEBT-01 | `internal/authservice/noop_userstore.go` löschen (komplett unreferenziert) | S | 🔲 |
+| GOSTYLE-FMT-01 | `gofmt -w .` für die 10 aktuell unformatierten Dateien, keine Logikänderung | S | 🔲 |
+| DEPLOY-08 | `fleet-service` in `infrastructure/compose/docker-compose.prod.yml` ergänzen (analog `auth-service`/`telemetry-service`-Muster) | M | 🔲 |
+| TESTGAP-01 | 3 skippende WS-Integrationstests fixen: `/session/start` vor WS-Dial aufrufen, `session_id` im WS-URL mitgeben | S/M | 🔲 |

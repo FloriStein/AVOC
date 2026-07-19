@@ -105,6 +105,7 @@ LOG-10 → LOG-11 (nach LOG-02)
 | DEPLOY-05 | coturn EC2-Konfiguration — `external-ip` via `TURN_EXTERNAL_IP` | M | ✅ Sprint 8 | DEPLOY-01 |
 | DEPLOY-06 | Grafana Security — Login-Form + Admin-Credentials aus SSM | S | ✅ Sprint 8 | DEPLOY-03 |
 | DEPLOY-07 | EC2 Bootstrap Guide — Checkliste für ersten Deploy ab null | M | ✅ Sprint 8 | DEPLOY-03, DEPLOY-04, DEPLOY-05 |
+| DEPLOY-08 | `fleet-service` fehlt in `docker-compose.prod.yml` (gebaut laut Makefile `GO_SERVICES`, aber nie in Prod-Compose ergänzt) | M | 🔄 Sprint 36 | Bekannte, mehrfach dokumentierte Lücke (MD-Drift-Audit 2026-07-19), erstmals als Task erfasst |
 
 ---
 
@@ -427,17 +428,17 @@ Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-12`, `GOSTYLE-
 vollständig abgeschlossen — Phase 2 (Interface-Segregation, Rule 4.2/4.3) folgt koordiniert mit
 ADR-031/HEX-05.
 
-**Neuer Folge-Task (aus GOSTYLE-13 gefunden, nicht Teil des Sprint-29-Scopes):** die drei
-WS-Integrationstests in `tests/integration/services_test.go`
+**Folge-Task (aus GOSTYLE-13 gefunden, nicht Teil des Sprint-29-Scopes) — 🔄 Sprint 36
+(`TESTGAP-01`):** die drei WS-Integrationstests in `tests/integration/services_test.go`
 (`TestIntegration_SessionLifecycle_StartAndEnd`, `_MediaFailed_TriggersDegrade_NeverSafeMode`,
 `_EmergencyStop_TriggersSafeMode`) skippen im Docker-Test-Stack, weil ihre WS-Dial-URL nur
 `?token=` statt `?token=&session_id=` mitgibt — ein vorbestehender Test-Setup-Gap (nicht
 WebRTC/SFU-bedingt wie die anderen 3 bekannten Skips), der `WSHandler.readLoop` komplett ohne
-automatisierte Abdeckung lässt. Typ S, unabhängig von GOSTYLE-* erledigbar.
+automatisierte Abdeckung lässt.
 
-**Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden, unabhängig einreihbar):**
-`gofmt -l` findet 13 unformatierte Dateien — trivialer `gofmt -w .`-Task (Typ S, keine
-Logikänderung), unabhängig von GOSTYLE-* erledigbar.
+**Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden) — 🔄 Sprint 36 (`GOSTYLE-FMT-01`):**
+`gofmt -l` findet aktuell 10 unformatierte Dateien (Zahl zum Sprint-36-Kickoff neu geprüft,
+2026-07-19) — trivialer `gofmt -w .`-Task, keine Logikänderung.
 
 ### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031 — ✅ abgeschlossen (Sprint 35)
 
@@ -481,7 +482,7 @@ Referenz außerhalb der eigenen Datei, auch nicht in Tests (`handler_test.go` nu
 
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
-| TECHDEBT-01 | `internal/authservice/noop_userstore.go`s `NoopUserStore` löschen — komplett ungenutzt (kein Aufrufer außerhalb der eigenen Datei, auch nicht in Tests) | S | 🆕 offen | Nebenbefund aus GOSTYLE-IF-04 (Sprint 35). War bereits vor diesem Sprint tot, nicht durch die Interface-Verschlankung verursacht — daher nicht im Rahmen von GOSTYLE-IF-04 mit-entfernt (Scope-Grenze), eigener kleiner Folge-Task. |
+| TECHDEBT-01 | `internal/authservice/noop_userstore.go`s `NoopUserStore` löschen — komplett ungenutzt (kein Aufrufer außerhalb der eigenen Datei, auch nicht in Tests) | S | 🔄 Sprint 36 | Nebenbefund aus GOSTYLE-IF-04 (Sprint 35). War bereits vor diesem Sprint tot, nicht durch die Interface-Verschlankung verursacht — daher nicht im Rahmen von GOSTYLE-IF-04 mit-entfernt (Scope-Grenze), eigener kleiner Folge-Task. |
 
 ---
 
