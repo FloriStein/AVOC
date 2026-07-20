@@ -379,8 +379,8 @@ func TestMultiOp_Engine_Observer_Steer_Rejected(t *testing.T) {
 	eng, _, _, fwd := buildEngine(t, mgr)
 
 	// Create an OBSERVER session directly.
-	mgr.StartSession("vehicle-001", "alice")                       // controller
-	obs := mgr.StartSession("vehicle-001", "bob")                  // observer
+	mgr.StartSession("vehicle-001", "alice")      // controller
+	obs := mgr.StartSession("vehicle-001", "bob") // observer
 
 	ackBytes, err := eng.Handle(encodeCmd(t, controlv1.CommandType_COMMAND_TYPE_STEER), obs)
 	require.NoError(t, err)

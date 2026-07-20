@@ -42,10 +42,10 @@ func main() {
 	mux.HandleFunc("POST /auth/handover/token", handler.HandoverToken)
 
 	// User management — ADMIN only (ADR-024)
-	mux.HandleFunc("GET /auth/users",         handler.RequireAdmin(handler.ListUsers))
-	mux.HandleFunc("POST /auth/users",        handler.RequireAdmin(handler.CreateUser))
+	mux.HandleFunc("GET /auth/users", handler.RequireAdmin(handler.ListUsers))
+	mux.HandleFunc("POST /auth/users", handler.RequireAdmin(handler.CreateUser))
 	mux.HandleFunc("DELETE /auth/users/{id}", handler.RequireAdmin(handler.DeleteUser))
-	mux.HandleFunc("PATCH /auth/users/{id}",  handler.RequireAdmin(handler.UpdateUserRole))
+	mux.HandleFunc("PATCH /auth/users/{id}", handler.RequireAdmin(handler.UpdateUserRole))
 
 	mux.HandleFunc("GET /health", handler.Health)
 

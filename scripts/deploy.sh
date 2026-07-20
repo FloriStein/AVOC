@@ -9,6 +9,10 @@
 #   - IAM Instance Profile mit SSM-Leseberechtigung auf /avoc/*
 #   - docker-compose.prod.yml liegt in APP_DIR
 #   - mediamtx/mediamtx.yml liegt in APP_DIR (aws s3 cp ... ~/app/mediamtx/mediamtx.yml)
+#   - mosquitto/mosquitto.conf liegt in APP_DIR (mosquitto/passwd wird von diesem Skript aus
+#     dem SSM-Secret generiert, siehe MQTTAUTH-04 — nicht committen/manuell anlegen; CA +
+#     Server-Zertifikat unter mosquitto/{ca,cert,key}.pem werden ebenfalls von diesem Skript
+#     generiert, siehe MQTTS-01)
 #
 # Verwendung:
 #   AWS_REGION=eu-central-1 VERSION=latest bash ~/app/deploy.sh
@@ -54,7 +58,7 @@ get_secure() {
     --output text
 }
 
-echo "[1/3] Lade Secrets..."
+echo "[1/5] Lade Secrets..."
 
 # DB_PASSWORD + ADMIN_PASSWORD kommen aus $APP_DIR/.env (docker-compose liest sie automatisch).
 # Alle anderen Secrets kommen aus AWS SSM Parameter Store.
@@ -69,6 +73,8 @@ export TURN_EXTERNAL_IP=$(get           /avoc/prod/turn-external-ip)
 export TURN_REALM=$(get                 /avoc/prod/turn-realm)
 export TURN_USER=$(get                  /avoc/prod/turn-user)
 export TURN_PASSWORD=$(get_secure       /avoc/prod/turn-password)
+export MQTT_USERNAME=$(get              /avoc/prod/mqtt-username)
+export MQTT_PASSWORD=$(get_secure       /avoc/prod/mqtt-password)
 export GRAFANA_ADMIN_USER=$(get         /avoc/prod/grafana-admin-user)
 export GRAFANA_ADMIN_PASSWORD=$(get_secure /avoc/prod/grafana-admin-password)
 
@@ -88,6 +94,7 @@ echo "  WHIP_STREAM_KEY     loaded (SSM)"
 echo "  TURN_EXTERNAL_IP    ${TURN_EXTERNAL_IP}"
 echo "  TURN_PRIVATE_IP     ${TURN_PRIVATE_IP}"
 echo "  TURN_REALM          ${TURN_REALM}"
+echo "  MQTT_USERNAME       loaded (SSM)"
 echo "  VERSION             ${VERSION}  (Images bereits lokal via 'docker load' vorhanden — kein Registry-Pull)"
 
 # ─── Self-Signed SSL-Zertifikat (für getUserMedia auf HTTPS) ──────────────────
@@ -109,20 +116,68 @@ else
   echo "  SSL-Zertifikat vorhanden: $SSL_DIR/cert.pem"
 fi
 
+# ─── Mosquitto CA + Server-Zertifikat (MQTTS-01) ──────────────────────────────
+# Seit Sprint 40 verlangt Mosquitto TLS (Port 8883) statt Klartext. Die CA ist — anders als
+# JWT_SECRET/MQTT_PASSWORD — kein Geheimnis (nur der öffentliche Client-Vertrauensanker), daher
+# lokal auf dem EC2-Host generiert statt aus SSM geladen (siehe ADR-019 Folge-Entscheidungen).
+# Einmalig generieren; bei erneutem Deploy wird das Paar wiederverwendet (Muster wie SSL-Zertifikat
+# oben).
+
+MQTT_DIR="$APP_DIR/mosquitto"
+mkdir -p "$MQTT_DIR"
+if [ ! -f "$MQTT_DIR/cert.pem" ]; then
+  echo "Generiere Mosquitto-CA + Server-Zertifikat (CN=mosquitto)..."
+  openssl genrsa -out "$MQTT_DIR/ca-key.pem" 2048 2>/dev/null
+  openssl req -x509 -new -key "$MQTT_DIR/ca-key.pem" -days 365 -out "$MQTT_DIR/ca.pem" \
+    -subj "/CN=avoc-mosquitto-ca" 2>/dev/null
+  openssl genrsa -out "$MQTT_DIR/key.pem" 2048 2>/dev/null
+  openssl req -new -key "$MQTT_DIR/key.pem" -subj "/CN=mosquitto" -out "$MQTT_DIR/server.csr" 2>/dev/null
+  openssl x509 -req -in "$MQTT_DIR/server.csr" -CA "$MQTT_DIR/ca.pem" -CAkey "$MQTT_DIR/ca-key.pem" \
+    -CAcreateserial -days 365 -out "$MQTT_DIR/cert.pem" \
+    -extfile <(printf "subjectAltName=DNS:mosquitto,DNS:localhost,IP:127.0.0.1") 2>/dev/null
+  rm -f "$MQTT_DIR/server.csr" "$MQTT_DIR/ca.srl" "$MQTT_DIR/ca-key.pem"
+  echo "  Zertifikat erstellt: $MQTT_DIR/cert.pem (CA: $MQTT_DIR/ca.pem)"
+else
+  echo "  Mosquitto-Zertifikat vorhanden: $MQTT_DIR/cert.pem"
+fi
+
+# ─── Mosquitto Passwort-File (MQTTAUTH-04) ────────────────────────────────────
+# Der Broker verweigert seit MQTTAUTH-01 anonyme Verbindungen (allow_anonymous false) und
+# erwartet eine gehashte Passwort-Datei unter mosquitto/passwd. Wird bei jedem Deploy neu aus dem
+# SSM-Secret generiert statt committed (anders als die Dev-/Test-Datei mit ihrem festen,
+# unkritischen changeme-Passwort) — Prod-Credential darf nicht im Repo landen.
+
+echo ""
+echo "[2/5] Generiere Mosquitto-Passwort-Datei..."
+docker run --rm -v "$APP_DIR/mosquitto:/out" --entrypoint mosquitto_passwd \
+  eclipse-mosquitto:2 -b -c /out/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD" >/dev/null
+echo "  mosquitto/passwd erzeugt für Benutzer $MQTT_USERNAME"
+
+# ─── Cron-Registrierung: tägliches Audit-Store-Backup (AUDITBACKUP-03) ────────
+# backup-audit-store.sh liegt (analog deploy.sh selbst) in APP_DIR neben
+# docker-compose.prod.yml. Idempotent: bei erneutem Deploy kein doppelter Cron-Eintrag.
+
+echo ""
+echo "[3/5] Prüfe Cron-Registrierung für Audit-Store-Backup..."
+CRON_CMD="0 3 * * * /usr/bin/env bash $APP_DIR/backup-audit-store.sh >> $APP_DIR/backup-audit-store.log 2>&1"
+(crontab -l 2>/dev/null | grep -qF "backup-audit-store.sh") || \
+  { (crontab -l 2>/dev/null; echo "$CRON_CMD") | crontab -; }
+echo "  Cron-Eintrag vorhanden: backup-audit-store.sh täglich 03:00 UTC"
+
 # ─── Stack starten ────────────────────────────────────────────────────────────
 # Kein Docker-Hub-Login, kein 'docker compose pull' — Images liegen bereits lokal
 # (per 'make deploy-images' via docker save/scp/docker load übertragen).
 # Übergabe-Abweichung von ADR-019, siehe docs/deployment/UEBERGABE-ABWEICHUNGEN.md
 
 echo ""
-echo "[2/3] Prüfe Images..."
+echo "[4/5] Prüfe Images..."
 cd "$APP_DIR"
 docker compose -f docker-compose.prod.yml config --images | while read -r img; do
   docker image inspect "$img" >/dev/null 2>&1 || echo "  WARNUNG: Image fehlt lokal: $img (siehe 'make deploy-images')"
 done
 
 echo ""
-echo "[3/3] Start Stack..."
+echo "[5/5] Start Stack..."
 docker compose -f docker-compose.prod.yml up -d
 
 echo ""

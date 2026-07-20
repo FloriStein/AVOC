@@ -12,21 +12,13 @@ import (
 	"avoc/internal/fleetgateway"
 )
 
-const mqttTestBroker = "tcp://localhost:11883"
-
 // TestIntegration_FleetSimulation_PublishesRealMQTTMessages verifies FLEET-04 end-to-end across
 // the real process boundary: vehicle-mock's fleet simulation (a separate container in this test
 // stack, see docker-compose.test.yml) publishes to the real Mosquitto broker, and this test
 // subscribes as an independent MQTT client — the same verification done manually during FLEET-04
 // (docker run + mosquitto_sub), now automated and repeatable.
 func TestIntegration_FleetSimulation_PublishesRealMQTTMessages(t *testing.T) {
-	client := mqtt.NewClient(mqtt.NewClientOptions().
-		AddBroker(mqttTestBroker).
-		SetClientID("integration-test-fleet-sub").
-		SetConnectTimeout(5 * time.Second))
-	token := client.Connect()
-	require.True(t, token.WaitTimeout(5*time.Second), "MQTT connect timed out")
-	require.NoError(t, token.Error(), "MQTT connect failed")
+	client := connectTestMQTTClient(t, "integration-test-fleet-sub")
 	defer client.Disconnect(250)
 
 	var mu sync.Mutex

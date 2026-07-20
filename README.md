@@ -75,13 +75,13 @@ make build
 
 # Tests
 make test               # alle Go-Tests
-make test-safety        # Safety Test Suite (CI Safety Gate — muss 19/19 bleiben)
+make test-safety        # Safety Test Suite (CI Safety Gate — muss grün bleiben, tests/unit/safety_test.go)
 make test-integration   # Integration Tests (startet/stoppt Test-Stack automatisch)
 make test-latency       # Go Benchmark ACK-Roundtrip <100ms (ADR-010 Build-Fail)
 make test-k6            # k6 Load Test 10 VU / 30s (benötigt Docker)
 
 # Frontend Tests
-cd frontend && npm test           # Vitest Component-Tests (41 Tests)
+cd frontend && npm test           # Vitest Component-/Hook-Tests
 cd frontend && npm run test:e2e   # Playwright E2E (benötigt laufenden Stack)
 
 # Stack stoppen
@@ -180,18 +180,25 @@ docker compose -f tests/docker-compose.test.yml down
 ## Projektstruktur
 
 ```
-├── cmd/                    # Go Service Entry Points
+├── cmd/                    # Go Service Entry Points (control-server, auth-service, safety-service,
+│                           #   telemetry-service, webrtc-sfu, fleet-service, vehicle-mock)
 ├── internal/               # Go Service-interne Pakete
 │   ├── authservice/
 │   ├── controlserver/
+│   │   ├── command/        # Command Engine — Protobuf Parsing, Rate Limiting
 │   │   ├── safety/         # Safety Decision Module (DeadmanWatchdog, ACKTimeout)
 │   │   ├── session/        # Session Manager (GSA), Handover
 │   │   ├── statemachine/   # 4-Layer State Machine
-│   │   └── transport/      # WebSocket Transport Layer
+│   │   ├── transport/      # WebSocket Transport Layer
+│   │   └── vehiclecontext/ # Registry — pro Fahrzeug eigene State Machine + Watchdogs (ADR-026)
 │   ├── safetyservice/      # Safety Event Bus (In-Memory)
+│   ├── recording/          # Session Recording (MemoryRecorder, ADR-005)
 │   ├── vehicleconnection/  # Vehicle WebSocket Handler
-│   └── vehicleregistry/    # Vehicle Registry (ADR-022) — SQLiteVehicleStore, VehicleStore Interface
-├── pkg/ulid/               # ULID-Wrapper (ADR-016)
+│   ├── vehicleregistry/    # Vehicle Registry (ADR-022/023) — PostgresVehicleStore, VehicleStore Interface
+│   ├── fleetservice/       # Fleet REST-Handler, Store, Broadcast-Hub, Alert-Engine (ADR-029/031)
+│   └── fleetgateway/       # FleetGateway-Interface + Mock-/MQTT-Implementierung (ADR-027)
+├── pkg/                    # Shared Go-Pakete: ulid (ADR-016), logger (ADR-017), audit (ADR-018),
+│                           #   db, env
 ├── proto/                  # .proto Source — Single Source of Truth
 ├── gen/                    # Generated Code — gitignored
 ├── frontend/               # React 18 + TypeScript + Vite + Tailwind
@@ -201,8 +208,9 @@ docker compose -f tests/docker-compose.test.yml down
 │   ├── coturn/             # STUN/TURN Konfiguration
 │   ├── mediamtx/           # MediaMTX WHIP/WHEP Config (ADR-020)
 │   ├── mosquitto/          # MQTT Broker Konfiguration
+│   ├── grafana/ loki/ promtail/  # Log-Aggregation & -Visualisierung (ADR-017)
 │   └── AWS/                # CDK Stack (EC2, Security Groups)
-└── tests/unit/             # Safety Test Suite (19 Szenarien, Sprint 2)
+└── tests/unit/             # Safety Test Suite (siehe tests/unit/safety_test.go)
 ```
 
 ---
@@ -258,3 +266,43 @@ make proto-gen-ts    # TypeScript → frontend/src/gen/
 - Safety Tests (19/19) müssen grün bleiben: `make test-safety`
 - Änderungen an `detector.go`, `statemachine.go`, `websocket.go` erfordern Test-Update
 - SAFE_MODE-Transitionen: erst `AuditWriter.WriteSync()` (Phase 7 — ADR-018), dann Transition
+
+### CI-Pipeline & Branch-Protection (Sprint 41, ADR-006-Bestandsaufnahme)
+
+`.github/workflows/` enthält 5 Dateien, 4 davon Merge-Gates (siehe ADR-006 + CLAUDE.MD §17):
+
+| Datei | Jobs | Blocking? |
+|-------|------|-----------|
+| `lint.yml` | `golangci-lint` | Nein (`continue-on-error`, Rollout noch nicht abgeschlossen) |
+| `test-go.yml` | `unit` (`make test-unit`), `safety` (`make test-safety`), `integration` (`make test-integration`) | **Ja, alle 3** |
+| `test-frontend.yml` | `vitest` (`npm run test`) | **Ja** |
+| `test-latency.yml` | `go-benchmark` (`make test-latency`), `k6` (`make test-k6`) | Nein — bewusste Abweichung von ADR-006 ("BLOCKING"), siehe Begründung dort und in `tasks/sprints/41-ci-gates-einfuehren.md` (Shared-Runner-Rauschen) |
+| `test-e2e.yml` | `playwright` (`npm run test:e2e`) | Nein (ADR-006 WebRTC/E2E Non-Determinism Policy) |
+
+**Required Status Checks — vorbereitet, NICHT aktiviert:** Branch-Protection ist eine geteilte
+Repo-Einstellung (betrifft alle künftigen PRs) und wurde in Sprint 41 bewusst nicht scharf
+geschaltet — das erfordert explizite Nutzerbestätigung (MB-Regeln zu risikoreichen/schwer
+umkehrbaren Aktionen). Bei Aktivierung sind genau diese 4 Checks als "Required" einzutragen
+(GitHub → Settings → Branches → Branch protection rule für `main` → "Require status checks to
+pass before merging"):
+
+```
+Unit Tests            (test-go.yml       / job: unit)
+Safety Test Suite     (test-go.yml       / job: safety)
+Integration Tests (Docker) (test-go.yml  / job: integration)
+Vitest Unit Tests      (test-frontend.yml / job: vitest)
+```
+
+`golangci-lint`, `go-benchmark`, `k6` und `playwright` bleiben absichtlich außen vor (non-blocking
+per Design, siehe Tabelle oben). Äquivalenter `gh`-Befehl (zur Referenz, nicht ausgeführt):
+
+```bash
+gh api repos/:owner/:repo/branches/main/protection \
+  --method PUT \
+  -f "required_status_checks[strict]=true" \
+  -f "required_status_checks[contexts][]=Unit Tests" \
+  -f "required_status_checks[contexts][]=Safety Test Suite" \
+  -f "required_status_checks[contexts][]=Integration Tests (Docker)" \
+  -f "required_status_checks[contexts][]=Vitest Unit Tests" \
+  -f "enforce_admins=true"
+```

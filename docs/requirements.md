@@ -72,7 +72,7 @@ Fernsteuerung). Details siehe "Notfall-Trigger-Modell" unten.
 
 - **Indoor:** SVG-Karte. Für den Start soll eine Beispiel-SVG-Karte (Werkshalle/Betriebsgelände) selbst erstellt werden — kein vorhandenes Material vom AG
 - **Outdoor:** **ebenfalls SVG-Karte**, aber geo-referenziert — die SVG wird als Overlay über echte GPS-Koordinaten gelegt (Leaflet `imageOverlay`/`svgOverlay` mit Bounds), keine externen Kartenkacheln/SaaS-Abhängigkeit nötig
-- **Routen-Darstellung:** sowohl geplante Route als auch gefahrene Historie, mit unterschiedlichen visuellen Markierungen (nicht identisch dargestellt) — Historie-Persistenzform noch offen (`CONTEXT.MD`)
+- **Routen-Darstellung:** sowohl geplante Route als auch gefahrene Historie, mit unterschiedlichen visuellen Markierungen (nicht identisch dargestellt) — Historie-Persistenz seit Sprint 32 umgesetzt (`vehicle_position_history`-Tabelle, `ADR-033`)
 - **Zonen:** verwaltbares Konzept, nicht hart codiert — deckt sich mit AP3 "Räumliche Zonenzuweisung" (Admin-Konsole verwaltet Zonen)
 - **Stationen:** auf der Karte markierte Punkte, Grundlage für das Task-Modell (siehe unten)
 
@@ -316,14 +316,19 @@ Regel: NO_OPERATOR → SYSTEM SAFE_MODE. Max. 1 ACTIVE_OPERATOR pro Session.
 - Lokale Entwicklung vollständig via `docker-compose up`
 - **Services:**
   - `frontend` — React App (Vite Build, nginx serving)
+  - `postgres` — PostgreSQL, gemeinsame DB `avoc` (ADR-023)
   - `control-server` — Go (WebSocket, 4-Layer State Machine, Safety Decision, Session Manager/GSA, ULID Generation)
   - `auth-service` — Go (JWT, Operator-Rollen, Handover-Token)
   - `safety-service` — Go (Safety Event Bus, In-Memory)
   - `telemetry-service` — Go (MQTT Bridge / Mosquitto Client)
-  - `webrtc-sfu` — Go/Pion (Media Server, Recording, Multi-Operator)
+  - `webrtc-sfu` — Go/Pion (passiver Session-Event-Subscriber, ADR-020)
+  - `mediamtx` — WHIP/WHEP Router (Video-Ingestion/-Distribution, ADR-020)
+  - `fleet-service` — Go (Fleet-Domäne: Zonen/Stationen/Tasks/Alerts/Live-Status, ADR-027/028/029/031); Dev-Stack, aktuell nicht in `docker-compose.prod.yml` (siehe `docs/deployment/ec2-bootstrap.md`)
+  - `vehicle-mock` — Go (Fahrzeug-/Fleet-Simulator, ADR-021/027)
   - `stun-turn` — coturn (NAT Traversal für Vehicle ↔ Internet ↔ OCC)
   - `mosquitto` — Eclipse Mosquitto (MQTT Broker)
   - `loki` — Grafana Loki (Log-Aggregation — Phase 7)
+  - `promtail` — Grafana Promtail (Log-Collector)
   - `grafana` — Grafana (Log-Visualisierung, Session-Dashboards — Phase 7)
 - Kein Kubernetes in dieser Phase
 - Full local reproducibility via `docker-compose up`
@@ -346,21 +351,21 @@ Regel: NO_OPERATOR → SYSTEM SAFE_MODE. Max. 1 ACTIVE_OPERATOR pro Session.
 |--------|-----------------|-------------|
 | Technical Log | Ja | async slog → stdout → Loki |
 | Audit Log | Nein | async slog → stdout → Loki |
-| Safety Event | Niemals | **synchron** via `AuditWriter.WriteSync()` → SQLite + Loki |
+| Safety Event | Niemals | **synchron** via `AuditWriter.WriteSync()` → PostgreSQL + Loki |
 
 ### Safety-Log-Garantie
 
 - Safety Events (`EMERGENCY_STOP`, `DEADMAN_TIMEOUT`, `SAFE_MODE_ENTERED`, `SAFE_MODE_EXITED`, `COMMAND_ACK_TIMEOUT`, `SAFETY_BUS_FAILURE`, `OPERATOR_HANDOVER_COMPLETED`, `SESSION_STARTED`, `SESSION_ENDED`) müssen garantiert persistiert werden
 - Persistenz erfolgt **vor** dem Abschluss der SAFE_MODE-Transition (fsync)
 - Loki-Ausfall darf Safety-Event-Persistenz nicht beeinflussen
-- Audit Store: SQLite WAL-Modus (embedded, kein extra Service — ADR-018)
+- Audit Store: PostgreSQL, gemeinsame DB `avoc` (ADR-018/023)
 
 ### Session-Rekonstruktion
 
 - Eine vollständige Teleoperation-Session muss über Frontend-, Backend-, Safety-, Telemetry- und Video-Ereignisse hinweg rekonstruierbar sein
 - Korrelation über `session_id` (ULID, ADR-016) als primären Anker
 - Grafana-Dashboard: LogQL-Abfragen wie `{session_id="01J..."}` über alle Services
-- SQLite-Query: `SELECT * FROM audit_events WHERE session_id=? ORDER BY timestamp`
+- PostgreSQL-Query: `SELECT * FROM audit_events WHERE session_id=$1 ORDER BY timestamp`
 
 ### Latenz-Anforderung
 

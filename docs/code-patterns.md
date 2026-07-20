@@ -14,33 +14,40 @@ Die State Machine ist der Safety-Kern des Systems. Transitionen sind durch eine 
 
 ```go
 // Erlaubte Übergänge — jede nicht gelistete Kombination wird abgelehnt.
+// SAFE_MODE ist von jedem Nicht-Idle-Zustand aus erreichbar (CRITICAL kann jederzeit eintreten).
 var validSystemTransitions = map[SystemState][]SystemState{
     StateIdle:          {StateConnecting},
     StateConnecting:    {StateAuthenticated, StateSafeMode},
     StateAuthenticated: {StateConnected, StateSafeMode},
-    StateConnected:     {StateDegraded, StateSafeMode},
-    StateDegraded:      {StateConnected, StateSafeMode},
-    StateSafeMode:      {StateRecovering},
+    StateConnected:     {StateDegraded, StateSafeMode, StateIdle},
+    StateDegraded:      {StateConnected, StateSafeMode, StateIdle},
+    StateSafeMode:      {StateRecovering, StateIdle},
     StateRecovering:    {StateAuthenticated, StateSafeMode},
 }
 
 // TransitionSystem setzt den SYSTEM STATE und erzwingt abhängige CONTROL STATE-Regeln.
-// Ungültige Transitionen werden geloggt und verworfen — kein Panic, kein Crash.
+// Ungültige Transitionen werden strukturiert geloggt und verworfen — kein Panic, kein Crash.
 func (m *Machine) TransitionSystem(next SystemState) {
     m.mu.Lock()
     defer m.mu.Unlock()
 
     if !isValidTransition(m.System, next) {
-        log.Printf("[STATE] invalid transition rejected: %s → %s", m.System, next)
+        svcLog.Warn("invalid state transition rejected", "from", m.System, "to", next)
         return  // System bleibt im aktuellen Zustand
     }
 
+    svcLog.Event(logger.EventStateTransition, "system state transition", "from", m.System, "to", next)
     m.System = next
     switch next {
     case StateSafeMode:
         m.Control = ControlBlocked  // SAFE_MODE erzwingt CONTROL_BLOCKED
     case StateConnected:
         m.Control = ControlActive
+    case StateIdle:
+        m.Control = ControlInit
+        m.Operator = OpNoOperator
+    // weitere Fälle (StateAuthenticated, StateRecovering, StateDegraded) setzen/erhalten
+    // CONTROL STATE analog — siehe state.go für die vollständige Tabelle.
     }
 }
 ```
@@ -212,60 +219,78 @@ func (b *tokenBucket) allow() bool {
 
 **Datei:** [internal/controlserver/transport/websocket.go](../internal/controlserver/transport/websocket.go)
 
-Der JWT-Token wird im WebSocket-Handshake validiert — entweder als `Authorization: Bearer <token>` Header oder als `?token=` Query-Parameter:
+Der JWT-Token wird im WebSocket-Handshake validiert — entweder als `Authorization: Bearer <token>` Header oder als `?token=` Query-Parameter. `ServeWS` selbst bleibt kurz (Rule 2.2) und delegiert an Helper — `authenticateWS` (Token + Session), `recoverFromSafeMode` (Recovery- vs. Normal-Pfad):
 
 ```go
 func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
-    tokenStr := extractToken(r)
-    claims, err := h.validateJWT(tokenStr)
-    if err != nil {
-        http.Error(w, "invalid token", http.StatusUnauthorized)
+    auth, ok := h.authenticateWS(w, r)
+    if !ok {
         return
     }
+    claims, sess := auth.claims, auth.sess
+    isObserver := sess.OperatorRole == "OBSERVER"
 
-    conn, _ := upgrader.Upgrade(w, r, nil)
+    conn, err := upgrader.Upgrade(w, r, nil)
+    if err != nil {
+        svcLog.Error("WebSocket upgrade failed", "error", err)
+        return
+    }
     defer conn.Close()
 
-    // Recovery-Pfad: SAFE_MODE → RECOVERING → AUTHENTICATED
-    // Normal-Pfad:   IDLE → CONNECTING → AUTHENTICATED
-    if current, _, _, _ := h.sm.Get(); current == statemachine.StateSafeMode {
-        h.sm.TransitionSystem(statemachine.StateRecovering)
-    } else {
-        h.sm.TransitionSystem(statemachine.StateConnecting)
+    if !isObserver {
+        h.recoverFromSafeMode(sess)  // SAFE_MODE → RECOVERING oder IDLE → CONNECTING → AUTHENTICATED
     }
-    h.sm.TransitionSystem(statemachine.StateAuthenticated)
 
     go h.heartbeat(conn)
-    h.readLoop(conn, claims)
+    h.readLoop(conn, claims, sess, isObserver)
 }
 ```
 
-Im ReadLoop: Commands in SAFE_MODE werden still verworfen, Disconnect → SAFE_MODE + Recovery Checkpoint:
+**`wsConn`-Bündel-Pattern (Rule 2.3):** `readLoop`/`processWSMessage`/`handleWSDisconnect` brauchen alle dieselben 5 Werte (Connection, VehicleContext, Claims, Session, Observer-Flag) — statt fünf Parameter durchzureichen, werden sie einmal in `wsConn` gebündelt:
 
 ```go
-func (h *WSHandler) readLoop(conn *websocket.Conn, claims *Claims) {
-    defer func() {
-        h.deadman.Stop()
-        sysState, _, _, _ := h.sm.Get()
-        if sysState != statemachine.StateSafeMode {
-            // WS-Disconnect → CRITICAL → SAFE_MODE (ADR-009/010)
-            h.sm.TransitionSystem(statemachine.StateSafeMode)
-        }
-        // Recovery Checkpoint speichern
-        h.sessionMgr.SaveCheckpoint(...)
-        h.sessionMgr.PushSFUEvent("SESSION_SAFE_MODE")
-    }()
+type wsConn struct {
+    conn       *websocket.Conn
+    vc         *vehiclecontext.VehicleContext
+    claims     *Claims
+    sess       session.Session
+    isObserver bool
+}
+```
+
+Im ReadLoop: Commands in SAFE_MODE werden still verworfen (in `processWSMessage`, hier nicht gezeigt), Disconnect → **nur bei ACTIVE_OPERATOR** SAFE_MODE + Recovery Checkpoint (OBSERVER-Disconnects lösen bewusst kein SAFE_MODE aus, ADR-025):
+
+```go
+func (h *WSHandler) readLoop(conn *websocket.Conn, claims *Claims, sess session.Session, isObserver bool) {
+    ws := wsConn{conn: conn, vc: h.vehicleContexts.Get(sess.VehicleID), claims: claims, sess: sess, isObserver: isObserver}
+    defer h.handleWSDisconnect(ws)
 
     for {
         _, msg, err := conn.ReadMessage()
         if err != nil { return }  // Verbindung geschlossen → defer greift
-
-        sysState, ctrlState, _, _ := h.sm.Get()
-        if sysState == statemachine.StateSafeMode || ctrlState == statemachine.ControlBlocked {
-            continue  // Commands in SAFE_MODE still verwerfen (ADR-011)
-        }
-        // ... Command verarbeiten
+        if !h.processWSMessage(ws, msg) { return }
     }
+}
+
+func (h *WSHandler) handleWSDisconnect(ws wsConn) {
+    if ws.isObserver {
+        h.sessionMgr.ReleaseSession(ws.sess.ID)  // kein SAFE_MODE für Observer
+        return
+    }
+    ws.vc.Deadman.Stop()
+    // Session bereits via POST /session/end beendet? → WS-Close ist gewollt, kein SAFE_MODE.
+    _, sessionStillActive := h.sessionMgr.GetSession(ws.sess.ID)
+    sysState, _, _, _ := ws.vc.SM.Get()
+    if sessionStillActive && sysState != statemachine.StateSafeMode {
+        h.auditWSDisconnect(ws)  // AuditWriter.WriteSync() vor der Transition (ADR-018)
+        ws.vc.SM.TransitionSystem(statemachine.StateSafeMode)
+    }
+    if !sessionStillActive {
+        return
+    }
+    sys, ctrl, _, _ := ws.vc.SM.Get()
+    h.sessionMgr.SaveCheckpoint(string(sys), string(ctrl), "WS_DISCONNECT")
+    h.sessionMgr.PushSFUEvent("SESSION_SAFE_MODE")
 }
 ```
 

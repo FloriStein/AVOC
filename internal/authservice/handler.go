@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
 // OperatorRole maps to ADR-011 OPERATOR STATE roles.
@@ -22,20 +20,13 @@ const (
 	RoleVehicle        OperatorRole = "VEHICLE"
 )
 
-// Claims extends jwt.RegisteredClaims with system-specific fields.
-// JWT = Identity only — no Session-ID (ADR-016).
-type Claims struct {
-	jwt.RegisteredClaims
-	Role OperatorRole `json:"role"`
-}
-
 type Handler struct {
-	secret    []byte
+	tokens    TokenIssuer
 	userStore UserStore
 }
 
 func NewHandler(secret string, userStore UserStore) *Handler {
-	return &Handler{secret: []byte(secret), userStore: userStore}
+	return &Handler{tokens: NewJWTTokenIssuer(secret), userStore: userStore}
 }
 
 type loginRequest struct {
@@ -71,7 +62,7 @@ func (h *Handler) OperatorLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.issueToken(user.Username, user.Role, 24*time.Hour)
+	token, err := h.tokens.IssueToken(user.Username, user.Role, 24*time.Hour)
 	if err != nil {
 		http.Error(w, "token issuance failed", http.StatusInternalServerError)
 		return
@@ -86,7 +77,7 @@ func (h *Handler) VehicleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.issueToken(req.Username, RoleVehicle, 168*time.Hour)
+	token, err := h.tokens.IssueToken(req.Username, RoleVehicle, 168*time.Hour)
 	if err != nil {
 		http.Error(w, "token issuance failed", http.StatusInternalServerError)
 		return
@@ -101,7 +92,7 @@ func (h *Handler) ValidateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := h.parseToken(req.Token)
+	claims, err := h.tokens.ParseToken(req.Token)
 	if err != nil {
 		writeJSON(w, validateResponse{Valid: false, Error: err.Error()})
 		return
@@ -120,13 +111,13 @@ func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := h.parseToken(req.Token)
+	claims, err := h.tokens.ParseToken(req.Token)
 	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
 
-	token, err := h.issueToken(claims.Subject, claims.Role, 24*time.Hour)
+	token, err := h.tokens.IssueToken(claims.Subject, claims.Role, 24*time.Hour)
 	if err != nil {
 		http.Error(w, "token refresh failed", http.StatusInternalServerError)
 		return
@@ -145,7 +136,7 @@ func (h *Handler) HandoverToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.CurrentToken != "" {
-		if _, err := h.parseToken(req.CurrentToken); err != nil {
+		if _, err := h.tokens.ParseToken(req.CurrentToken); err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -156,7 +147,7 @@ func (h *Handler) HandoverToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.issueToken(req.TargetID, RoleActiveOperator, 1*time.Hour)
+	token, err := h.tokens.IssueToken(req.TargetID, RoleActiveOperator, 1*time.Hour)
 	if err != nil {
 		http.Error(w, "handover token issuance failed", http.StatusInternalServerError)
 		return
@@ -302,41 +293,12 @@ func (h *Handler) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-func (h *Handler) issueToken(subject string, role OperatorRole, ttl time.Duration) (string, error) {
-	now := time.Now()
-	claims := Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   subject,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-		},
-		Role: role,
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.secret)
-}
-
-// parseToken rejects a token whose header claims a signing method other than the HMAC family
-// (SEC-01) — without this check, jwt.ParseWithClaims trusts whatever alg the caller sends
-// (including "none" or an asymmetric algorithm), which can let a forged token bypass the secret
-// entirely (the classic JWT "alg confusion" attack). Mirrors the check already present in
-// internal/fleetservice/handler.go and cmd/control-server/main.go.
-func (h *Handler) parseToken(tokenStr string) (*Claims, error) {
-	claims := &Claims{}
-	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return h.secret, nil
-	})
-	return claims, err
-}
-
 func (h *Handler) claimsFromRequest(r *http.Request) (*Claims, error) {
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return nil, fmt.Errorf("missing token")
 	}
-	return h.parseToken(strings.TrimPrefix(authHeader, "Bearer "))
+	return h.tokens.ParseToken(strings.TrimPrefix(authHeader, "Bearer "))
 }
 
 func (h *Handler) callerID(r *http.Request) string {
@@ -344,7 +306,7 @@ func (h *Handler) callerID(r *http.Request) string {
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return ""
 	}
-	claims, err := h.parseToken(strings.TrimPrefix(authHeader, "Bearer "))
+	claims, err := h.tokens.ParseToken(strings.TrimPrefix(authHeader, "Bearer "))
 	if err != nil {
 		return ""
 	}

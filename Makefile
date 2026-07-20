@@ -1,4 +1,4 @@
-.PHONY: proto-gen proto-gen-ts dev-frontend build up down test test-safety test-integration test-latency test-k6 lint clean build-prod push
+.PHONY: proto-gen proto-gen-ts dev-frontend build up down test test-unit test-safety test-integration test-latency test-k6 lint clean build-prod push
 
 # ─── Dev-Stack Isolation über parallele Worktrees (TASKUI-05) ─────────────────
 # infrastructure/compose/docker-compose.yml pins `name: avoc` — every worktree checked out
@@ -70,6 +70,12 @@ down:
 test:
 	go test ./...
 
+# Run Go unit tests only, excluding tests/integration (CIGATE-01) — that package requires the
+# Docker test stack (see test-integration below) and fails standalone. `test` above stays
+# unchanged for devs with a locally running stack.
+test-unit:
+	go test $$(go list ./... | grep -v /tests/integration)
+
 # Run safety test suite only (CI safety gate — must stay 19/19 green)
 test-safety:
 	go test ./tests/unit/... -v -run Safety
@@ -104,7 +110,7 @@ test-k6:
 	@echo "Starting test stack for k6..."
 	docker compose -f tests/docker-compose.test.yml up --build -d
 	@sleep 5
-	docker run --rm --network host grafana/k6 run - < tests/performance/latency.js; \
+	docker run --rm -i --network host grafana/k6 run - < tests/performance/latency.js; \
 	EXIT=$$?; \
 	docker compose -f tests/docker-compose.test.yml down; \
 	exit $$EXIT

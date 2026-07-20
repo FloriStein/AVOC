@@ -1,5 +1,14 @@
 // Safety Test Suite — dedicated scenario-based tests for all CRITICAL triggers (ADR-006/009/011).
 // Each test maps to a documented failure class. These tests are the safety gate in CI.
+//
+// Scope note (SAFETYBUS-02, Sprint 42): these tests cover the trigger logic only — state machine
+// transitions and that the Publisher interface (internal/controlserver/safety.Publisher) is called
+// with the correct SafetyEventType, verified against mocks.MockSafetyPublisher. They do not exercise
+// the real Safety Event Bus (internal/safetyservice.Bus) that HTTPPublisher talks to in production
+// via POST /safety/event (cmd/safety-service/main.go's newSafetyMux). For that, see
+// safety_bus_integration_test.go, which wires HTTPPublisher against a real safetyservice.Bus behind
+// a local httptest.Server and verifies via bus.GetSafetyState() — currently for the Dead-man-Timeout
+// and ACK-Timeout triggers.
 package unit_test
 
 import (

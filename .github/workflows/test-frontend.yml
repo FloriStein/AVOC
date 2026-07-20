@@ -1,0 +1,55 @@
+name: Test Frontend
+
+# ADR-006 (Testing Strategy) + CLAUDE.MD §17: blocking CI gate for the frontend unit/component
+# tests (Vitest — functionally equivalent to the Jest choice in ADR-006, see ADR-006 update).
+# CIGATE-03 (tasks/backlog.md EPIC "CI-Gates einführen").
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  vitest:
+    name: Vitest Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # src/gen/*.ts (protobuf message classes) is gitignored, build-time-generated — vitest
+      # imports it directly (src/lib/ws-client.ts), so it must exist before `npm run test`.
+      # Reuses `make proto-gen-ts` (Docker, avoids a local protoc dependency on the runner) —
+      # same target used for local dev, see Makefile.
+      - name: Generate TypeScript proto code
+        run: make proto-gen-ts
+
+      # `docker run` (no --user override, apk add needs root inside the container) writes
+      # frontend/node_modules back through the bind mount as root:root — same root-owned
+      # node_modules issue README.md's Troubleshooting section already documents for local dev
+      # ("Cannot find @rollup/rollup-linux-x64-gnu"). Reuse that exact fix here instead of sudo,
+      # since it doesn't depend on the runner's sudo config: delete the root-owned node_modules
+      # via a container (package-lock.json is left alone — CI needs it intact for `npm ci`,
+      # unlike the README's `npm install` fix for local dev).
+      - name: Remove root-owned node_modules from Docker proto generation
+        run: |
+          docker run --rm -v "$(pwd)/frontend:/app" -w /app node:22-alpine \
+            sh -c 'rm -rf node_modules'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Re-run npm ci on the host (glibc) after proto-gen-ts's own npm ci ran inside the Alpine
+      # (musl) container above — npm ci does a clean reinstall, so this replaces any
+      # musl-linked native binaries (esbuild, rollup, tailwind oxide) with the correct
+      # ubuntu-latest (glibc) build before tests run. src/gen/ is untouched (outside node_modules).
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: npm run test
+        working-directory: frontend
+        run: npm run test

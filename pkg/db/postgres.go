@@ -16,7 +16,7 @@ import (
 // unless-stopped` policy restarts this service without honoring
 // `depends_on: service_healthy` (only `docker compose up` does).
 const (
-	DefaultConnectRetries   = 10
+	DefaultConnectRetries    = 10
 	DefaultConnectRetryDelay = 2 * time.Second
 )
 

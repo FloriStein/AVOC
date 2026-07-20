@@ -44,7 +44,7 @@ type WSHandler struct {
 	vehicleContexts *vehiclecontext.Registry
 	sessionMgr      *session.Manager
 	engine          *command.Engine
-	auditWriter     audit.AuditWriter
+	auditWriter     audit.SafetyAuditWriter
 }
 
 func NewWSHandler(
@@ -62,7 +62,7 @@ func NewWSHandler(
 }
 
 // WithAuditWriter sets the audit writer for WS_DISCONNECT persistence (ADR-018).
-func (h *WSHandler) WithAuditWriter(aw audit.AuditWriter) *WSHandler {
+func (h *WSHandler) WithAuditWriter(aw audit.SafetyAuditWriter) *WSHandler {
 	h.auditWriter = aw
 	return h
 }
@@ -308,8 +308,8 @@ func (h *WSHandler) processWSMessage(ws wsConn, msg []byte) bool {
 }
 
 // validateJWT rejects a token whose header claims a signing method other than the HMAC family
-// (SEC-01) — see internal/authservice/handler.go's parseToken for the full rationale (JWT "alg
-// confusion" attack).
+// (SEC-01) — see internal/authservice/tokenissuer.go's JWTTokenIssuer.ParseToken for the full
+// rationale (JWT "alg confusion" attack).
 func (h *WSHandler) validateJWT(tokenStr string) (*Claims, error) {
 	claims := &Claims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {

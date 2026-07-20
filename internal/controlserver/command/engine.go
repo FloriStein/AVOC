@@ -40,7 +40,7 @@ type Engine struct {
 	vehicleContexts  *vehiclecontext.Registry
 	safetyPub        safety.Publisher
 	sessionMgr       *session.Manager
-	auditWriter      audit.AuditWriter
+	auditWriter      audit.SafetyAuditWriter
 	vehicleForwarder VehicleForwarder
 	limiter          *tokenBucket
 }
@@ -59,7 +59,7 @@ func NewEngine(
 }
 
 // WithAuditWriter sets the audit writer for EMERGENCY_STOP persistence (ADR-018).
-func (e *Engine) WithAuditWriter(aw audit.AuditWriter) *Engine {
+func (e *Engine) WithAuditWriter(aw audit.SafetyAuditWriter) *Engine {
 	e.auditWriter = aw
 	return e
 }

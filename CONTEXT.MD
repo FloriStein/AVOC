@@ -264,18 +264,18 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 | Prioritätsmodell technisch (Channels vs. Header-Flag) | offen | ADR-008 Folge — BE-04 nutzt Publisher-Pattern; explizite Channel-Trennung noch offen |
 | Session Recording Storage (DB / Files / Object Storage) | offen | ADR-005 Folge — MemoryRecorder seit Sprint 4 als Platzhalter aktiv; Storage-ADR ausstehend |
 | DDS-Produktivimplementierung | Nicht in diesem Scope | ADR-002 Folge |
-| Backup-Strategie Audit Store (SQLite Volume) | offen | ADR-019 möglich — SQLite-Volume-Sicherung für Produktivbetrieb (LOG-10 implementiert) |
-| vehicle-mock in Makefile GO_SERVICES | offen | ADR-021 Folge — `make build-prod` baut vehicle-mock nicht |
+| Backup-Strategie Audit Store | offen | ADR-019 möglich — Audit Store läuft seit ADR-023 in der gemeinsamen PostgreSQL-DB `avoc` (nicht mehr SQLite); Backup-Strategie für `avoc` insgesamt weiterhin offen (LOG-10 implementiert) |
+| ~~vehicle-mock in Makefile GO_SERVICES~~ | gelöst | `make build-prod`/`push` bauen/pushen `vehicle-mock` inzwischen explizit als eigenes Image (separat von `GO_SERVICES`, siehe `Makefile`) |
 | session_id in MQTT-TelemetryEvent | offen | ADR-021 Folge — Log-Korrelations-Gap: vehicle-mock hat keinen Operator-Session-Kontext |
 | Vehicle-Dropdown Live-State-Badge | offen | ADR-026 Folge (MV-09) — bewusst ausgeklammert (Grill-Me 2026-06-14) |
-| Multi-Vehicle Handover | offen | ADR-026 Folge (MV-11) — `HandoverManager` nutzt noch eine globale State Machine für die OPERATOR-Schicht |
+| ~~Multi-Vehicle Handover~~ | ✅ bereits erledigt | ADR-026 Folge (MV-11) — bei Sprint-30-Bearbeitung als bereits behoben vorgefunden (Commit `f68346a`, 2026-07-15): `HandoverManager` löst pro Fahrzeug über `vehiclecontext.Registry` auf; Regressionstest `TestSafety_Handover_TwoVehicles_IndependentHandovers` |
 | Produktiv-Video-Empfang (WHEP) auf AWS nach WEBRTC-10-Fix mit echtem Chromium verifizieren | offen | ADR-014/020 Folge — Sprint 32 hat den `actpass → active`-SDP-Zwang entfernt und lokal gegen `mediamtx:latest` (Pion-WHIP-Client, kein echter Browser) verifiziert (`docs/webrtc.md`), Produktivverifikation mit echtem Chromium auf AWS steht noch aus |
 | Konkrete ROS2/DDS-Fahrzeugschnittstelle (IBATOUR) | offen | ADR-027 Folge — Workshop mit Professur Logistik (Teil von AP1) noch ausstehend; `FleetGateway`-Interface läuft bis dahin gegen Mock/Simulation. Bezug zu ADR-002 (Safety Bus bereits DDS-interface-kompatibel designed) prüfen, sobald die reale Schnittstelle bekannt ist |
 | Handshake-basierte Autonomie-Rückgabe (statt einfachem Session-Ende) | offen | ADR-028 Folge — bewusst zurückgestellt, `endSession()` reicht für den Anfang, siehe `tasks/backlog.md` |
 | ~~Persistenzform für "gefahrene Route" (Historie)~~ | ✅ Sprint 32 | `ADR-033` — einfache `vehicle_position_history`-Tabelle (kein Zeitreihen-DB-Dienst), gedrosselter Schreibpfad, 30-Tage-Retention |
 | Task-Status-Übergangstabelle dupliziert (Go Backend + TypeScript Frontend) | offen | ADR-030 Folge — Frontend spiegelt die Zustandsmaschine nur für UI-Button-Sichtbarkeit, Backend bleibt autoritativ |
 | ~~Vollständige Task-Status-Audit-Historie~~ | ✅ Sprint 31 | `ADR-032` — additive `task_status_history`-Tabelle, `GET /fleet/tasks/{id}/history` |
-| Prinzip 6 ("Interface over Implementation") in der Praxis lückenhaft | offen | ADR-031 Bestandsaufnahme (2026-07-16) — `safety-service`s Bus-Interface (ADR-002) existiert nicht als Go-Code, `SessionRecorder` (ADR-005) existiert, wird aber nirgends als Interface-Typ verwendet; `fleetgateway` (ADR-027) ist bisher der einzige Service-Port, der das Prinzip tatsächlich durchsetzt |
+| Prinzip 6 ("Interface over Implementation") — `safety-service`s Bus-Interface (ADR-002) existiert weiterhin nicht als Go-Code | offen | ADR-031 Bestandsaufnahme (2026-07-16). Die übrigen zwei Teilbefunde sind inzwischen behoben (Go-Coding-Style-Guide-Rollout Phase 2, Rule 4.2/4.3, Sprint 34/35, `tasks/backlog.md` EPIC "Go Coding Style Guide Rollout"): `SessionRecorder` (ADR-005) war tote Abstraktion und wurde entfernt (GOSTYLE-IF-01); `fleetgateway` (ADR-027) wird jetzt tatsächlich interface-typisiert konsumiert (GOSTYLE-IF-02); `AuditWriter`/`UserStore`/`VehicleStore`/`safety.Publisher` wurden ebenfalls konsumentenseitig verschlankt (GOSTYLE-IF-03/04/05/06) |
 
 ---
 
@@ -291,7 +291,7 @@ JWT = Identity (Wer bist du?) ≠ Session-ID (In welchem Kontext?)
 8. **Global Session Authority** — Control Server ist einziger Session-Erzeuger und Single Source of Truth (ADR-015)
 9. **Correlation-First** — alle Kanäle tragen Session-ID (ULID); vollständige Rekonstruierbarkeit (ADR-016)
 10. **Hybrid Logging** — Technical Logs async (slog → Loki); Safety Events sync (AuditWriter.WriteSync + fsync vor SAFE_MODE); drei Log-Klassen (ADR-017/018)
-11. **Safety-Log-Garantie** — Safety Events dürfen niemals verloren gehen; separater SQLite Audit Store orthogonal zu Loki (ADR-018)
+11. **Safety-Log-Garantie** — Safety Events dürfen niemals verloren gehen; separater PostgreSQL Audit Store (`avoc`-DB) orthogonal zu Loki (ADR-018, Storage seit ADR-023 PostgreSQL statt SQLite)
 12. **Vehicle-Feedback-First** — InputIndicatorPanel zeigt was beim Fahrzeug ankommt, nicht was der Operator eingibt; Ist-Werte > Soll-Werte für Safety-Awareness (ADR-021)
 13. **Per-Vehicle Safety Isolation** — State Machine und Deadman-/ACK-Watchdogs existieren pro Fahrzeug, nicht global; ein Fahrzeug in SAFE_MODE darf kein anderes Fahrzeug blockieren (ADR-026)
 14. **Control-first Kanaltrennung** — Control (WS/Protobuf, ADR-004/010) und Video (WHIP/WHEP, ADR-014/020) laufen über vollständig getrennte Transportkanäle statt einer gemeinsamen WebRTC-PeerConnection mit DataChannel+Media-Track. Verhindert, dass Steuerbefehle hinter Video-Traffic anstehen — Standard-WebRTC priorisiert bei Bandbreitenengpässen Audio > Video > Daten, für Teleoperation genau falsch herum (ein verlorener Steuerbefehl ist kritisch, ein eingefrorenes Videobild ist überlebbar → DEGRADED statt SAFE_MODE, Prinzip 1). Deckt sich mit dokumentierter Branchenpraxis ("Control-first architecture", Recherche 2026-07-10 — RoboticsTomorrow, Adamo, AWS Teleoperation-Referenzarchitektur)

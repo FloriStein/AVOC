@@ -1,0 +1,56 @@
+name: Test Go
+
+# ADR-006 (Testing Strategy) + CLAUDE.MD §17: blocking CI gates for the Go backend.
+# 3 jobs, all blocking (no continue-on-error): unit, safety, integration.
+# CIGATE-02 (tasks/backlog.md EPIC "CI-Gates einführen").
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: make test-unit
+        run: make test-unit
+
+  safety:
+    name: Safety Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: make test-safety
+        run: make test-safety
+
+  integration:
+    name: Integration Tests (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: make test-integration
+        run: make test-integration

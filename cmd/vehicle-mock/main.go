@@ -8,7 +8,8 @@
 // Usage (via Docker Compose):
 //
 //	VEHICLE_ID=vehicle-001 CONTROL_SERVER_URL=ws://control-server:8080/vehicle/ws
-//	JWT_SECRET=... MQTT_BROKER=mosquitto:1883
+//	JWT_SECRET=... MQTT_BROKER=mosquitto:8883 MQTT_USERNAME=... MQTT_PASSWORD=...
+//	MQTT_CA_CERT=/mosquitto-ca/ca.pem
 package main
 
 import (
@@ -24,10 +25,11 @@ import (
 	telemetryv1 "avoc/gen/go/telemetry/v1"
 	vehiclev1 "avoc/gen/go/vehicle/v1"
 	"avoc/pkg/logger"
+	"avoc/pkg/mqtttls"
 	"avoc/pkg/ulid"
 
-	"github.com/golang-jwt/jwt/v5"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 )
@@ -35,9 +37,9 @@ import (
 var log = logger.New("vehicle-mock")
 
 const (
-	reconnectDelay  = 5 * time.Second
-	telemetryHz     = 2 * time.Second // publish telemetry every 2s
-	actuatorLag     = 0.15            // simulated lag: actual trails commanded by 15%
+	reconnectDelay = 5 * time.Second
+	telemetryHz    = 2 * time.Second // publish telemetry every 2s
+	actuatorLag    = 0.15            // simulated lag: actual trails commanded by 15%
 )
 
 type state struct {
@@ -55,13 +57,16 @@ func main() {
 	vehicleID := envOr("VEHICLE_ID", "vehicle-001")
 	wsURL := envOr("CONTROL_SERVER_URL", "ws://control-server:8080/vehicle/ws")
 	jwtSecret := os.Getenv("JWT_SECRET")
-	mqttBroker := envOr("MQTT_BROKER", "mosquitto:1883")
+	mqttBroker := envOr("MQTT_BROKER", "mosquitto:8883")
+	mqttUsername := os.Getenv("MQTT_USERNAME")
+	mqttPassword := os.Getenv("MQTT_PASSWORD")
+	mqttCACertPath := os.Getenv("MQTT_CA_CERT")
 
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET required")
 	}
 
-	mqttClient := connectMQTT(mqttBroker, vehicleID)
+	mqttClient := connectMQTT(mqttBroker, vehicleID, mqttUsername, mqttPassword, mqttCACertPath)
 	defer mqttClient.Disconnect(250)
 
 	// FLEET-04: independent fleet vehicles (Lastenrad/Lastenzug, ADR-029) simulated on the same
@@ -257,10 +262,18 @@ func publishTelemetry(mqttClient mqtt.Client, vehicleID string, st *state) {
 	}
 }
 
-func connectMQTT(broker, vehicleID string) mqtt.Client {
+func connectMQTT(broker, vehicleID, username, password, caCertPath string) mqtt.Client {
+	tlsConfig, err := mqtttls.LoadClientConfig(caCertPath)
+	if err != nil {
+		log.Fatal("MQTT TLS config invalid", "error", err)
+	}
+
 	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://" + broker).
+		AddBroker("tls://" + broker).
+		SetTLSConfig(tlsConfig).
 		SetClientID("avoc-vehicle-mock-" + vehicleID).
+		SetUsername(username).
+		SetPassword(password).
 		SetAutoReconnect(true).
 		SetConnectRetryInterval(reconnectDelay).
 		SetOnConnectHandler(func(_ mqtt.Client) {

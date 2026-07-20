@@ -1,6 +1,6 @@
 # ADR-031: Migration zu hexagonaler Architektur (Ports & Adapters) — Strangler-Fig, Pilot fleet-service
 
-Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)** — Fortsetzung auf weitere Services ist ein bewusster Entscheidungspunkt nach Pilot-Abschluss, kein Automatismus (siehe "Offene Punkte")
+Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)**, **Schritt 2 (auth-service) abgeschlossen (Sprint 37, 2026-07-19)**, **Schritt 3 (telemetry-service) freigegeben, Sprint 43 vorgemerkt (2026-07-19)** — siehe "Offene Punkte".
 
 ## Kontext
 
@@ -216,6 +216,81 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 - Startzeitpunkt hängt vom AP2/AP3-Fortschritt ab, ist also nicht fest planbar
 
 ## Offene Punkte / Nächste Schritte
+
+> **Update (2026-07-19, Sprint-37-Kickoff):** Entscheidungspunkt getroffen — Nutzer gibt
+> Fortsetzung mit Schritt 2 (auth-service) frei, nachdem Sprint-33- und Sprint-34-Kickoff diesen
+> Punkt noch mangels neuen Anlasses zurückgestellt hatten. Scope unverändert zur Priorisierung
+> oben: nur der JWT-Port (`internal/authservice/handler.go:305-332`, `issueToken`/`parseToken`
+> direkt gegen `golang-jwt/jwt/v5`) — die Use-Case-Extraktion (Login-/Handover-Policy als reine
+> Funktionen getrennt von HTTP) bleibt, analog zu `HEX-06` beim Piloten, ein separater
+> Entscheidungspunkt **nach** Abschluss des Ports, kein automatischer Bestandteil dieses Schritts.
+> Anders als beim `fleet-service`-Piloten ist der Testgewinn hier **nicht** DB-Unabhängigkeit
+> (`handler_test.go` läuft bereits ohne externe Ressource — JWT-Signierung ist reine Berechnung,
+> keine I/O) — der Nutzen ist Dependency Inversion: `Handler` importiert danach `golang-jwt/jwt/v5`
+> nicht mehr direkt, sondern nur noch über den `TokenIssuer`-Port. `telemetry-service` (Schritt 3
+> der Priorisierung) bleibt bewusst außerhalb dieses Sprints — eigener, separat zu entscheidender
+> Folgeschritt, um Sprints klein zu halten (ein Service pro Sprint, wie beim Piloten). Task-Plan:
+> `tasks/backlog.md` (EPIC-Abschnitt), Details/Vorrecherche in `tasks/current-sprint.md` (Sprint 37).
+>
+> **Nebenbefund, bewusst außerhalb dieses Schritts:** `golang-jwt/jwt/v5` wird direkt (mit
+> identischem Alg-Confusion-Guard, SEC-01) in 6 Paketen importiert (`cmd/control-server/main.go`,
+> `cmd/vehicle-mock/main.go`, `internal/authservice/handler.go`, `internal/fleetservice/handler.go`,
+> `internal/vehicleconnection/handler.go`, `internal/controlserver/transport/websocket.go`) — ein
+> potenzielles Rule-3.1-Duplikat (gemeinsames `pkg/authtoken`), aber eine
+> paketübergreifende Extraktion ist nicht Teil des in diesem ADR beauftragten Scopes (nur
+> `auth-service`s eigener Handler/JWT-Code). Dokumentiert als möglicher späterer Folge-Task, nicht
+> mit diesem Schritt vermischt.
+>
+> **Update (2026-07-19, Sprint 37 abgeschlossen):** Schritt 2 (auth-service) fertig. Neuer Port
+> `TokenIssuer` (`internal/authservice/tokenissuer.go`: `IssueToken`/`ParseToken`) mit Adapter
+> `JWTTokenIssuer` — übernimmt `issueToken`/`parseToken` sowie den SEC-01-Alg-Confusion-Guard
+> unverändert. `Handler.secret []byte` → `Handler.tokens TokenIssuer`; `NewHandler(secret string,
+> userStore UserStore)` konstruiert den `JWTTokenIssuer` intern, externe Signatur unverändert
+> (`cmd/auth-service/main.go` unangetastet, wie erwartet). `handler.go` importiert
+> `github.com/golang-jwt/jwt/v5` danach nicht mehr — der `Claims`-Typ (embeddet
+> `jwt.RegisteredClaims`) wanderte nach `tokenissuer.go`, da er sonst weiterhin einen direkten
+> JWT-Import in `handler.go` erzwungen hätte. Verifikation: `go build ./...`, `go vet ./...`, `go
+> test ./internal/authservice/...` — alle 22 bestehenden Tests grün, keine Regression, kein neuer
+> Fake nötig (JWT-Signierung bleibt reine Berechnung). HEXAUTH-04 (optionale Use-Case-Extraktion)
+> und `telemetry-service` (Schritt 3) bleiben wie geplant eigene, separat zu entscheidende
+> Folgeschritte. Nebenbefund (`pkg/authtoken`-Duplikat) weiterhin unangetastet.
+
+> **Update (2026-07-19, Sprint-43-Kickoff):** Nutzer gibt Fortsetzung mit Schritt 3
+> (telemetry-service) frei. Scope folgt der Priorisierung oben — kleinster Service (~114 Zeilen
+> `internal/telemetryservice/client.go`), "keine Interfaces, keine Tests, aber triviales reines
+> Passthrough". Anders als beim Piloten (`FleetStore`) und Schritt 2 (`TokenIssuer`) liegt der Gap
+> hier nicht in einer fehlenden Abstraktion über einer Postgres-/JWT-Abhängigkeit, sondern darin,
+> dass `Client.client` direkt gegen `paho.mqtt.golang`s breites `mqtt.Client`-Interface (14
+> Methoden, u.a. `Publish`/`AddRoute`, die telemetryservice nie braucht) programmiert statt gegen
+> einen schmalen, projekteigenen Port (GOSTYLE Rule 2.2 Interface-Segregation, analog
+> `fleetgateway.FleetGateway`). Ein neuer `MQTTConnection`-Port kapselt zusätzlich `mqtt.Token`/
+> `mqtt.Message` (Domain-Seite sieht nur `error`/`[]byte`) und macht `Connect()`/`subscribe()`
+> erstmals ohne echten Broker testbar — `internal/telemetryservice` und `cmd/telemetry-service`
+> haben aktuell 0 Tests (derselbe Bestandsaufnahme-Befund wie bei `safety-service`/`webrtc-sfu`/
+> `recording` vor Sprint 39), Testaufbau ist daher direkter Bestandteil dieses Schritts, kein
+> separater Folge-Task. Use-Case-Extraktion ist hier kein Thema — `handleMessage`/`GetLatest` sind
+> laut Bestandsaufnahme oben bereits "triviales reines Passthrough", keine vermischte
+> Business-Logik wie bei `HEX-06`/`HEXAUTH-04`. Task-Plan: `tasks/backlog.md` EPIC-Abschnitt
+> (`HEXTELE-01..04`), Details/Vorrecherche in Sprint 43, sobald `tasks/current-sprint.md` frei ist
+> (eingereiht nach Sprint 40/41/42).
+
+> **Update (2026-07-19, Sprint 43 abgeschlossen):** Schritt 3 (telemetry-service) fertig. Neuer
+> Port `MQTTConnection` (`internal/telemetryservice/mqttconnection.go`: `Connect`/`Subscribe`/
+> `Disconnect`/`IsConnected`, 4 Methoden statt paho.mqtt.golangs 14) mit Adapter `PahoConnection` —
+> kapselt `mqtt.Token`/`mqtt.Message` intern, die `Subscribe`-Callback-Signatur der Domain-Seite
+> ist bereits `func(topic string, payload []byte)`. `Client.client mqtt.Client` →
+> `Client.client MQTTConnection`; `Connect()` konstruiert `PahoConnection` intern,
+> `NewClient(broker, username, password string)` unverändert (`cmd/telemetry-service/main.go`
+> unangetastet, wie erwartet). `client.go` importiert `github.com/eclipse/paho.mqtt.golang`
+> danach nicht mehr. Testabdeckung war direkter Bestandteil dieses Schritts (nicht separater
+> Folge-Task, siehe Vorrecherche oben): 16 neue Unit-Tests (`FakeMQTTConnection`-Testdoppel,
+> `internal/telemetryservice/client_test.go` 13 Tests inkl. eines `-race`-Nebenläufigkeitstests,
+> `cmd/telemetry-service/main_test.go` 3 Tests analog Sprint-39-Muster) — zuvor 0 Tests in beiden
+> Paketen. `go build ./...`/`go vet ./...` (gesamtes Repo) sauber, `go test
+> ./internal/telemetryservice/... ./cmd/telemetry-service/... -race -count=1` zweimal grün, keine
+> Flakiness. Details: `tasks/sprints/43-hexagonal-migration-telemetry-service.md`. Use-Case-
+> Extraktion war hier von vornherein kein Thema (siehe Vorrecherche — `handleMessage`/`GetLatest`
+> bereits reine Funktionen). `control-server` bleibt wie geplant außerhalb dieses Schritts.
 
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe

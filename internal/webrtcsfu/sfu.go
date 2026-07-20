@@ -45,7 +45,7 @@ type SFU struct {
 	mu      sync.RWMutex
 	api     *webrtc.API
 	peers   map[string]*Peer
-	routing map[string][]string      // sessionID → operator peer IDs
+	routing map[string][]string         // sessionID → operator peer IDs
 	state   map[string]SessionEventType // sessionID → last event type
 }
 
@@ -155,9 +155,9 @@ func (s *SFU) CreateVehicleOffer(sessionID, peerID, sdpOffer string) (string, er
 
 	s.mu.Lock()
 	s.peers[peerID] = &Peer{
-		ID:        peerID,
-		Role:      "vehicle",
-		SessionID: sessionID,
+		ID:         peerID,
+		Role:       "vehicle",
+		SessionID:  sessionID,
 		Connection: pc,
 	}
 	s.mu.Unlock()

@@ -105,6 +105,7 @@ LOG-10 → LOG-11 (nach LOG-02)
 | DEPLOY-05 | coturn EC2-Konfiguration — `external-ip` via `TURN_EXTERNAL_IP` | M | ✅ Sprint 8 | DEPLOY-01 |
 | DEPLOY-06 | Grafana Security — Login-Form + Admin-Credentials aus SSM | S | ✅ Sprint 8 | DEPLOY-03 |
 | DEPLOY-07 | EC2 Bootstrap Guide — Checkliste für ersten Deploy ab null | M | ✅ Sprint 8 | DEPLOY-03, DEPLOY-04, DEPLOY-05 |
+| DEPLOY-08 | `fleet-service` fehlt in `docker-compose.prod.yml` (gebaut laut Makefile `GO_SERVICES`, aber nie in Prod-Compose ergänzt) | M | ✅ Sprint 36 | Service-Block ergänzt, analog `auth-service`/`telemetry-service`-Muster. Details in `tasks/sprints/36-restposten-bereinigung-iii.md` |
 
 ---
 
@@ -369,6 +370,48 @@ zurückstellen (kein neuer Anlass, passt zum Ziel kleinerer, token-budgetierter 
 inhaltlich relevant: `auth-service` ist ohnehin Ziel von `SEC-01` (JWT-Sicherheitslücke) in Sprint
 34 — eine Hexagonal-Migration desselben Codes im selben Sprint hätte unnötig Overhead erzeugt.
 
+### Fortsetzung, Schritt 2 — auth-service (JWT-Port), freigegeben Sprint-37-Kickoff
+
+**Freigabe (2026-07-19):** Nutzer entscheidet sich explizit für Fortsetzung der
+Hexagonal-Migration, damit ist der seit Sprint 34 zurückgestellte Entscheidungspunkt aufgelöst.
+Scope folgt der Priorisierung in ADR-031 Schritt 2 (`auth-service`, Storage-Seite bereits über
+`UserStore` gelöst — nur JWT-Port fehlt). `telemetry-service` (Schritt 3) bleibt bewusst ein
+eigener, separat zu entscheidender Folgeschritt (ein Service pro Sprint, wie beim Piloten).
+Use-Case-Extraktion (Login-/Handover-Policy als reine Funktionen) ist, analog zu `HEX-06` beim
+Piloten, ein eigener Entscheidungspunkt **nach** Abschluss des Ports — nicht automatisch Teil
+dieses Schritts.
+
+Vorrecherche (2026-07-19, vor Sprint-Start durchgeführt): `internal/authservice/handler.go:305-332`
+— `issueToken`/`parseToken` sind private `Handler`-Methoden, die direkt gegen
+`golang-jwt/jwt/v5` arbeiten (`jwt.NewWithClaims`/`jwt.ParseWithClaims`), `Handler.secret []byte`
+als Feld (Zeile 33). Anders als beim `FleetStore`-Piloten bringt der Port hier **keine
+DB-Unabhängigkeit** — `handler_test.go` läuft bereits ohne externe Ressource, da JWT-Signierung
+reine Berechnung ist (`UserStore` ist über `stubUserStore` bereits vollständig entkoppelt). Der
+Nutzen ist Dependency Inversion: `Handler` importiert `golang-jwt/jwt/v5` danach nicht mehr direkt.
+`cmd/auth-service/main.go:35` ruft `authservice.NewHandler(secret, userStore)` auf (`secret` als
+`string`) — Konstruktorsignatur bleibt unverändert, wenn `NewHandler` intern einen
+`JWTTokenIssuer` aus dem `secret`-String baut (identisches Muster zu HEX-02: `cmd/fleet-service/
+main.go:59` musste bei der `FleetStore`-Umstellung ebenfalls nicht angepasst werden, da
+`*PostgresFleetStore` das neue Interface strukturell bereits erfüllte).
+
+**Nebenbefund, bewusst außerhalb dieses Schritts:** `golang-jwt/jwt/v5` mit identischem
+Alg-Confusion-Guard (SEC-01) direkt in 6 Paketen importiert (`cmd/control-server/main.go`,
+`cmd/vehicle-mock/main.go`, `internal/authservice/handler.go`, `internal/fleetservice/handler.go`,
+`internal/vehicleconnection/handler.go`, `internal/controlserver/transport/websocket.go`) —
+potenzielles Rule-3.1-Duplikat (gemeinsames `pkg/authtoken` denkbar), aber paketübergreifende
+Extraktion ist nicht Teil des ADR-031-Scopes für diesen Schritt (nur `auth-service`s eigener
+Handler-Code). Dokumentiert als möglicher späterer Folge-Task, nicht mit diesem Schritt vermischt.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| HEXAUTH-01 | `TokenIssuer`-Port definieren (`IssueToken(subject string, role OperatorRole, ttl time.Duration) (string, error)`, `ParseToken(tokenStr string) (*Claims, error)`) in neuer Datei `internal/authservice/tokenissuer.go`; `JWTTokenIssuer`-Struct (wraps `golang-jwt/jwt/v5`, übernimmt `issueToken`/`parseToken`-Logik unverändert von `Handler`) + `NewJWTTokenIssuer(secret string)`. Compile-Time-Check `var _ TokenIssuer = (*JWTTokenIssuer)(nil)`. Kein `Handler`-Wechsel in diesem Schritt (mirrors HEX-01). | S | ✅ Sprint 37 | — |
+| HEXAUTH-02 | `Handler.secret []byte` → `Handler.tokens TokenIssuer` (`internal/authservice/handler.go:33`). `NewHandler(secret string, userStore UserStore)` konstruiert `JWTTokenIssuer` intern — externe Signatur unverändert, `cmd/auth-service/main.go:35` braucht keine Anpassung (mirrors HEX-02/Fleet-Precedent). Alle Aufrufer von `h.issueToken`/`h.parseToken` auf `h.tokens.IssueToken`/`h.tokens.ParseToken` umgestellt, die beiden alten privaten Methoden entfernt. HTTP-Verhalten unverändert. | S | ✅ Sprint 37 | HEXAUTH-01 |
+| HEXAUTH-03 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./internal/authservice/...` grün (weiterhin ohne `DATABASE_URL`, wie zuvor — kein neuer Testgewinn hier, nur Architektur-Sauberkeit). ADR-031-Status-Update (Schritt 2 abgeschlossen) + `DECISIONS.MD` + dieser Backlog-Eintrag. | S | ✅ Sprint 37 | HEXAUTH-02 |
+| HEXAUTH-04 | *(Optional, eigener Entscheid nach HEXAUTH-03)* Use-Case-Schicht aus `Handler` extrahieren (Login-/Handover-/Registrierungs-Policy als reine Funktionen zwischen HTTP-Layer und `TokenIssuer`/`UserStore`) — nur falls nach HEXAUTH-01..03 als lohnend bewertet, kein Bestandteil dieses Schritts selbst, analog `HEX-06`. | M | 🔲 Backlog (optional) | HEXAUTH-03 |
+
+**Nach HEXAUTH-03:** nächster Entscheidungspunkt, ob `telemetry-service` (ADR-031 Schritt 3)
+folgt — kein Automatismus, analog zum Entscheidungspunkt nach dem Piloten.
+
 ---
 
 ## EPIC: Go Coding Style Guide Rollout
@@ -427,37 +470,47 @@ Umgesetzt und nach `tasks/current-sprint.md` verschoben (`GOSTYLE-12`, `GOSTYLE-
 vollständig abgeschlossen — Phase 2 (Interface-Segregation, Rule 4.2/4.3) folgt koordiniert mit
 ADR-031/HEX-05.
 
-**Neuer Folge-Task (aus GOSTYLE-13 gefunden, nicht Teil des Sprint-29-Scopes):** die drei
-WS-Integrationstests in `tests/integration/services_test.go`
+**Folge-Task (aus GOSTYLE-13 gefunden, nicht Teil des Sprint-29-Scopes) — ✅ Sprint 36
+(`TESTGAP-01`):** die drei WS-Integrationstests in `tests/integration/services_test.go`
 (`TestIntegration_SessionLifecycle_StartAndEnd`, `_MediaFailed_TriggersDegrade_NeverSafeMode`,
-`_EmergencyStop_TriggersSafeMode`) skippen im Docker-Test-Stack, weil ihre WS-Dial-URL nur
-`?token=` statt `?token=&session_id=` mitgibt — ein vorbestehender Test-Setup-Gap (nicht
+`_EmergencyStop_TriggersSafeMode`) skippten im Docker-Test-Stack, weil ihre WS-Dial-URL nur
+`?token=` statt `?token=&session_id=` mitgab — ein vorbestehender Test-Setup-Gap (nicht
 WebRTC/SFU-bedingt wie die anderen 3 bekannten Skips), der `WSHandler.readLoop` komplett ohne
-automatisierte Abdeckung lässt. Typ S, unabhängig von GOSTYLE-* erledigbar.
+automatisierte Abdeckung ließ. Behoben: Reihenfolge umgekehrt (`/session/start` vor WS-Dial) plus
+zusätzlich gefundener `vehicleRegistry.Connected`-Blocker durch `/vehicle/ws`-Registrierung der
+Test-Vehicles gelöst. Details in `tasks/sprints/36-restposten-bereinigung-iii.md`.
 
-**Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden, unabhängig einreihbar):**
-`gofmt -l` findet 13 unformatierte Dateien — trivialer `gofmt -w .`-Task (Typ S, keine
-Logikänderung), unabhängig von GOSTYLE-* erledigbar.
+**Bonus, außerhalb des Style-Guide-Scopes (nebenbei gefunden) — ✅ Sprint 36 (`GOSTYLE-FMT-01`):**
+`gofmt -l` fand 10 unformatierte Dateien (9 nach der TECHDEBT-01-Löschung) — mit `gofmt -w .`
+behoben, keine Logikänderung. Details in `tasks/sprints/36-restposten-bereinigung-iii.md`.
 
-### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031
+### Phase 2 — Interface-Segregation (Rule 4.2/4.3), nachgelagert nach ADR-031 — ✅ abgeschlossen (Sprint 35)
 
 **Start erst nach `HEX-05`** (Hexagonal-Pilot fleet-service abgeschlossen) **und** nach
 AP2/AP3-Meilensteinen, analog zum ADR-031-Timing. Koordiniert mit dem Hexagonal-Epic oben —
 dieselben Interfaces, unterschiedlicher Fokus (dort: Repository-Port für `fleet-service`; hier:
-Methodenzahl/Konsumenten-Zuschnitt projektweit).
+Methodenzahl/Konsumenten-Zuschnitt projektweit). Alle 6 Tasks (GOSTYLE-IF-01..06) abgeschlossen,
+keine weiteren Interface-Segregation-Folgetasks offen.
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
 | GOSTYLE-IF-01 | `recording.SessionRecorder` (6 Methoden, aktuell nirgends als Interface-Typ konsumiert): klären, ob Interface tatsächlich verwendet werden soll (`*MemoryRecorder` → `SessionRecorder` in `cmd/control-server/main.go:102`) oder aufgelöst wird, solange nur eine Implementierung existiert (Rule 1.2 — Abstraktion ohne Konsument ist unbegründet) | S | ✅ Sprint 34 | Interface komplett entfernt (`internal/recording/recorder.go`) — Details/Ergebnisse in `tasks/current-sprint.md` |
 | GOSTYLE-IF-02 | `fleetgateway.FleetGateway` (3 Methoden, ungenutzt als Typ): gleiche Frage wie IF-01. `fleetservice.Dispatcher` (1 Methode) ist bereits der korrekte konsumentenseitige Schnitt und bleibt unverändert | S | ✅ Sprint 34 | **Nicht** wie IF-01 gelöscht (aktives ADR-027 schreibt die Abstraktion bewusst vor) — stattdessen tatsächlich nutzbar gemacht: `subscribeVehicleStatus`/`subscribeVehicleAlerts` in `cmd/fleet-service/main.go` nehmen jetzt `fleetgateway.FleetGateway` statt `*MQTTGateway` entgegen. Details in `tasks/current-sprint.md` |
-| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | 🔄 Sprint 35 | HEX-05 |
-| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | 🔄 Sprint 35 | HEX-05 |
+| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | ✅ Sprint 35 | Neues `SafetyAuditWriter`-Interface (`WriteSync`-only) eingeführt, in allen 5 Consumern eingesetzt. `Close` aus `AuditWriter`/`SafetyAuditWriter` entfernt, dadurch `NoopWriter.Close` tot geworden und mit gelöscht. Details in `tasks/current-sprint.md` |
+| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | ✅ Sprint 35 | `SeedAdmin` aus `UserStore` entfernt, verbleibende 6 Methoden bestätigt in Gebrauch. Nebenbefund: `NoopUserStore` komplett ungenutzt (unabhängig von diesem Task, siehe neuer Eintrag unten). Details in `tasks/current-sprint.md` |
 | GOSTYLE-IF-05 | `vehicleregistry.VehicleStore` (5 Methoden): `SeedDefault` (Bootstrap) aus Interface lösen, analog IF-04 | S | ✅ Sprint 34 | `SeedDefault` aus `VehicleStore` entfernt, dadurch `NoopVehicleStore.SeedDefault` tot geworden und mit gelöscht. Details in `tasks/current-sprint.md` |
 | GOSTYLE-IF-06 | `controlserver/safety.Publisher` (2 Methoden) in `PublishEvent`-only Interface für `Engine`/Watchdogs aufteilen; `TriggerEmergencyStop` bleibt eigener Zugriffspfad, analog zum bereits vorbildlichen `vehicleconnection.safetyPublisher`-Muster | S | ✅ Sprint 34 | `TriggerEmergencyStop` aus `Publisher` entfernt (nur je über den konkreten `*HTTPPublisher` aufgerufen, nie interface-typisiert). Details in `tasks/current-sprint.md` |
 
 **Nebenbefund, nicht Teil dieses Style-Guide-Scopes (Sicherheitsauffälligkeit):** beim
 Duplikat-Scan (Rule 3.1) fiel auf, dass der JWT-Alg-Confusion-Check in mehreren JWT-Parse-Stellen
 fehlt. Kein Style-Guide-Thema — als `SEC-01` aufgenommen, siehe EPIC "Security Findings" unten.
+
+**Nebenbefund aus GOSTYLE-IF-04 (Sprint 35, kein Interface-Segregation-Thema):**
+`internal/authservice/noop_userstore.go`s `NoopUserStore` ist komplett ungenutzt — keine
+Referenz außerhalb der eigenen Datei, auch nicht in Tests (`handler_test.go` nutzt einen eigenen
+`stubUserStore`). War bereits vor GOSTYLE-IF-04 tot (nicht erst durch das Entfernen von
+`SeedAdmin` verursacht, anders als der `NoopVehicleStore.SeedDefault`-Fall in Sprint 34). Als
+`TECHDEBT-01` aufgenommen, siehe EPIC "Tech Debt" unten.
 
 ---
 
@@ -467,6 +520,363 @@ fehlt. Kein Style-Guide-Thema — als `SEC-01` aufgenommen, siehe EPIC "Security
 |----|------|-----|--------|---------|
 | SEC-01 | JWT-Alg-Confusion-Check fehlt an 3 von 5 `jwt.Parse*`-Stellen | S/M | ✅ Sprint 34 | Alle drei Stellen gefixt (`authservice.parseToken`, `transport.validateJWT`, `vehicleconnection.validateJWT`) — `t.Method.(*jwt.SigningMethodHMAC)`-Check ergänzt, analog zu den bereits korrekten Stellen. Regressionstests mit gefälschtem `alg:none`-Token an allen drei Stellen (2x gegen Flakiness geprüft, CLAUDE.MD Abschnitt 17). Details/Ergebnisse in `tasks/current-sprint.md`. |
 
+### MQTT-Authentifizierung (Mosquitto Passwort-File), ✅ Sprint 38
+
+**Freigabe (2026-07-19):** Nutzerentscheidung gegenüber der Alternative "Hexagonal-Migration
+Schritt 3 (telemetry-service)" — Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles").
+Schließt den seit Projektbeginn offenen Punkt "MQTT-Authentifizierung (Mosquitto Passwort-File)"
+unten in "Offene Entscheidungen". Kein neues ADR nötig — ADR-003 legt Mosquitto bereits fest,
+dieser Sprint aktiviert nur dessen eingebauten `password_file`-Mechanismus. TLS/MQTTS
+(Transportverschlüsselung) ist bewusst **nicht** Teil dieses Sprints. Vollständige Vorrecherche
+(Datei-/Zeilenreferenzen zu den 3 Go-MQTT-Verbindungsstellen, 3 Compose-Dateien, SSM/Deploy-
+Präzedenzfall `TURN_USER`/`TURN_PASSWORD`) in `tasks/sprints/38-mqtt-authentifizierung.md`.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| MQTTAUTH-01 | Mosquitto-Configs (Dev/Prod/Test) auf `allow_anonymous false` + `password_file` umstellen, gehashte Dev-/Test-Passwd-Dateien committen | S | ✅ Sprint 38 | — |
+| MQTTAUTH-02 | `SetUsername`/`SetPassword` an den 3 Go-MQTT-Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`) + neue `MQTT_USERNAME`/`MQTT_PASSWORD`-Env-Vars | M | ✅ Sprint 38 | MQTTAUTH-01 |
+| MQTTAUTH-03 | Neue Env-Vars an alle 4 MQTT-Consumer-Services in allen 3 Compose-Dateien durchreichen + `.env.example` | S | ✅ Sprint 38 | MQTTAUTH-02 |
+| MQTTAUTH-04 | `scripts/setup-ssm.sh`/`scripts/deploy.sh`: SSM-Parameter + Passwd-Datei-Generierung zur Deploy-Zeit, analog `TURN_USER`/`TURN_PASSWORD` | M | ✅ Sprint 38 | MQTTAUTH-01 |
+| MQTTAUTH-05 | Bestehende Unit-/Integrationstests mit direkten MQTT-Verbindungen (`fleetgateway/mqtt_test.go`, `fleet_simulation_test.go`, `fleet_service_test.go`) auf neue Credentials umstellen | S | ✅ Sprint 38 | MQTTAUTH-01..03 |
+| MQTTAUTH-06 | Verifikation (Docker-Test-Stack + Dev-Stack) + Doku-Updates (`DECISIONS.MD`, `docs/architecture.md`) | S | ✅ Sprint 38 | MQTTAUTH-02..05 |
+
+---
+
+## EPIC: Testabdeckung sicherheitsrelevanter Services (ADR-031-Bestandsaufnahme) ✅ Sprint 39
+
+**Freigabe (2026-07-19):** Nutzerentscheidung gegenüber drei Alternativen (Hexagonal-Migration
+Schritt 3 telemetry-service, TLS/MQTTS-Härtung, Session-Recording-Storage-Entscheidung) —
+Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles") + Abschnitt 17 (Teststandard).
+Schließt den seit der ADR-031-Bestandsaufnahme (2026-07-16) offenen Punkt "Testabdeckung
+`safety-service`/`webrtc-sfu`/`internal/recording` (0 Tests)" unten in "Offene Entscheidungen".
+Reine Testabdeckung, keine Produktivcode-Verhaltensänderung, kein neues ADR nötig. Vollständige
+Vorrecherche in `tasks/current-sprint.md` (Sprint 39).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| TESTCOV-01 | `internal/recording/memory_recorder_test.go` — vollständige `MemoryRecorder`-Abdeckung (Start/EndSession, drei Record*-Methoden, `GetEntries`-Kopie-statt-Referenz, Session-Isolation) | S | ✅ Sprint 39 | — |
+| TESTCOV-02 | `internal/safetyservice/bus_test.go` — `Bus`-Abdeckung (Publish/TriggerEmergencyStop/GetSafetyState/Subscribe mit mehreren Handlern/Reset), inkl. `-race`-Nebenläufigkeitstest | M | ✅ Sprint 39 | — |
+| TESTCOV-03 | `cmd/safety-service/main_test.go` — HTTP-Handler-Tests (`newSafetyMux`, 4 Endpoints, `httptest`) | S/M | ✅ Sprint 39 | TESTCOV-02 |
+| TESTCOV-04 | `internal/webrtcsfu/sfu_test.go` — `HandleSessionEvent`-Zustandsübergänge + `registerOperatorSubscription`-Dedup-Logik + `removePeer`, via `webrtc.NewPeerConnection` ohne echte Netzwerk-Negotiation | M | ✅ Sprint 39 | — |
+| TESTCOV-05 | `cmd/webrtc-sfu/main_test.go` — HTTP-Handler-Tests (`newSFUMux`, 4 Endpoints, `httptest`; Erfolgsfall der Offer/Subscribe-Endpoints bewusst außerhalb des Scopes) | S | ✅ Sprint 39 | TESTCOV-04 |
+| TESTCOV-06 | Verifikation (`go build`/`go vet`/`go test ./...` + `-race` für `safetyservice`/`webrtcsfu`) + Doku-Updates (`DECISIONS.MD`, `tasks/backlog.md`, `CONTEXT.MD`-Aktualitätsprüfung) | S | ✅ Sprint 39 | TESTCOV-01..05 |
+
+**Nicht Teil dieses Sprints:** echte End-to-End-WebRTC-SDP-Negotiation (`CreateVehicleOffer`/
+`SubscribeOperator`/`negotiateAnswer`, ADR-006: "zu flaky in CI"), `SFU.forwardTrack`
+(RTP-Kopierschleife), Hexagonal-Migration der drei Services selbst (bleibt eigener,
+separat zu entscheidender ADR-031-Folgeschritt).
+
+---
+
+## EPIC: TLS/MQTTS-Härtung für Mosquitto ✅ Sprint 40
+
+**Freigabe (2026-07-19):** Nutzerentscheidung gegenüber zwei Alternativen (Hexagonal-Migration
+Schritt 3 telemetry-service, Session-Recording-Storage-Entscheidung) — Begründung CLAUDE.MD §0
+Priorität 1 ("Sicherheit schlägt alles"). Sprint-38-Nachfolge: Mosquitto-Authentifizierung war
+bereits geschlossen, Transportverschlüsselung bewusst ausgeklammert (`DECISIONS.MD` Zeile
+"TLS/MQTTS-Härtung für Mosquitto"). Kein neues ADR nötig — ADR-003 legt Mosquitto bereits fest,
+dieser Sprint aktiviert nur dessen eingebauten TLS-Listener-Mechanismus. Trust-Modell bei der
+Planung entschieden: echte CA-Zertifikatsprüfung (keine `InsecureSkipVerify`), kein mTLS (würde
+Sprint 38s Username/Passwort-Auth duplizieren), harter Cutover auf Port 8883 ohne
+Parallelbetrieb mit 1883. Vollständige Vorrecherche (Datei-/Zeilenreferenzen zu den 3
+Go-MQTT-Verbindungsstellen, 3 Compose-Dateien, nginx-Zertifikats-Präzedenzfall in
+`scripts/deploy.sh`) in `tasks/current-sprint.md` (Sprint 40).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| MQTTS-01 | Zertifikatserzeugung: selbstsignierte CA + Mosquitto-Server-Zertifikat (Dev/Test committed, Prod via `scripts/deploy.sh` analog SSL-/Passwd-Muster) | S/M | ✅ Sprint 40 | — |
+| MQTTS-02 | `mosquitto.conf`/`mosquitto-test.conf`/Prod-Konfiguration: `listener 1883` → `listener 8883` + `cafile`/`certfile`/`keyfile` | S | ✅ Sprint 40 | MQTTS-01 |
+| MQTTS-03 | Go-Client-TLS an den 3 Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`): `tcp://`→`tls://`, `SetTLSConfig` mit `RootCAs`, neue `MQTT_CA_CERT`-Env-Var | M | ✅ Sprint 40 | MQTTS-01 |
+| MQTTS-04 | Drei Compose-Dateien: Port 8883, CA/Cert/Key-Volume-Mounts, `MQTT_CA_CERT`-Env-Var an den 4 Consumer-Services | S/M | ✅ Sprint 40 | MQTTS-01..03 |
+| MQTTS-05 | Testinfrastruktur: committetes Test-CA/Zertifikat-Paar, `mqtt_test.go`-Helper + 3 abhängige Testdateien auf TLS umstellen, Gegenprobe-Test „Verbindung ohne gültige CA abgelehnt" | S/M | ✅ Sprint 40 | MQTTS-01..04 |
+| MQTTS-06 | Verifikation (`go build`/`go vet`/`go test ./...` + `make test-integration` gegen echten TLS-Broker) + Doku-Updates (`DECISIONS.MD`, `docs/architecture.md`, `tasks/backlog.md`) | S | ✅ Sprint 40 | MQTTS-01..05 |
+
+**Nicht Teil dieses Sprints:** mTLS/Client-Zertifikate (siehe Trust-Modell-Begründung oben),
+CA-Rotationsstrategie für Produktivbetrieb, SSM-Verteilung der CA (öffentliches Zertifikat, lokal
+auf dem EC2-Host generiert, kein Cross-Host-Bedarf).
+
+---
+
+## EPIC: CI-Gates einführen (ADR-006-Bestandsaufnahme) ✅ Sprint 41
+
+**Freigabe (2026-07-19):** Nutzer hat am 2026-07-19 eine Testing-Strategie-Bestandsaufnahme gegen
+ADR-006 (Testing Strategy) + CLAUDE.MD Abschnitt 17 angefordert. Größter gefundener Bruch
+zwischen Dokumentation und Realität: `.github/workflows/` enthält ausschließlich `lint.yml`
+(non-blocking, `continue-on-error: true`) — die von ADR-006 beschriebene Pipeline mit 4
+blockierenden Gates (Unit Go+Frontend, Safety Test Suite, Integration, Latency) + 1 non-blocking
+WebRTC-E2E-Job existiert nicht. Alle Prüfungen laufen ausschließlich manuell über bestehende
+`Makefile`-Targets (`test`/`test-safety`/`test-integration`/`test-latency`/`test-k6`) — der
+Kommentar in `test-safety` ("CI safety gate — must stay 19/19 green") ist irreführend, es gibt
+kein CI dafür. Nutzerentscheidung: dieser Befund wird priorisiert vor zwei kleineren Audit-Funden
+(Concurrency-Test-Lücke in `internal/webrtcsfu/sfu_test.go`, Safety-Test-Suite testet aktuell den
+falschen Typ — bleiben offene Folgepunkte unten). **Eingereiht nach Sprint 40 (TLS/MQTTS-Härtung)
+— wird erst zu Sprint 41, sobald Sprint 40 abgeschlossen ist**, `tasks/current-sprint.md` bleibt
+bis dahin unverändert Sprint 40.
+
+*Nachtrag:* Sprints 41-44 wurden in parallelen Worktrees geplant/umgesetzt, bevor Sprint 40s Code
+tatsächlich geschrieben wurde (Sprint 40 blieb als "Geplant, noch nicht begonnen" in
+`tasks/current-sprint.md` stehen, während 41-44 unabhängig liefen) — die ursprüngliche
+Reihenfolgen-Prämisse oben traf real nicht zu, alle fünf Sprints sind inzwischen ✅.
+
+**Architektur-Entscheidung (bei der Planung getroffen):**
+- **Latenz-Gate (`test-latency`/`test-k6`) bewusst non-blocking**, obwohl ADR-006 es als
+  "BLOCKING" dokumentiert: GitHub-gehostete Runner haben stark schwankende CPU-Zuteilung
+  (Shared-Tenancy) — eine harte `<100ms`-Assertion würde auf einem verrauschten Runner Merges
+  blockieren, ohne dass sich der Code geändert hat (False Positives). Gleiches Muster wie ADR-006s
+  eigene Begründung für die WebRTC-Non-Determinism-Policy (non-blocking + sichtbar statt hartes
+  Gate). Ergebnis bleibt sichtbar (Benchmark-Output als Job-Log/Artifact), blockiert aber keinen
+  Merge. Verschärfung auf "blocking" ist ein möglicher Folge-Task, sobald genug CI-Läufe
+  Rausch-Baseline zeigen.
+- **Bestehender Playwright-Spec (`tests/e2e/dashboard.spec.ts`) wird als non-blocking
+  Informational-Job eingebunden**, aber nicht inhaltlich vertieft (bleibt oberflächlich, siehe
+  Audit-Punkt D) — Ausbau der E2E-Tiefe ist ein eigener, größerer Folge-Task.
+- **Branch-Protection-Aktivierung (Required Status Checks) nur vorbereitet, nicht scharf
+  geschaltet** — das ist eine Repo-Einstellung, die alle zukünftigen PRs/Merges betrifft
+  (geteiltes System), daher explizite Nutzerbestätigung vor Aktivierung nötig (siehe MB-Regeln zu
+  risikoreichen/schwer umkehrbaren Aktionen).
+
+**Vorrecherche (2026-07-19):**
+- `Makefile:69-116`: `test` (`go test ./...` — läuft `tests/integration/...` **mit**, schlägt ohne
+  laufenden Docker-Stack fehl, siehe Sprint-39-Verifikation), `test-safety` (`go test
+  ./tests/unit/... -run Safety`, kein Docker nötig), `test-integration` (bringt
+  `tests/docker-compose.test.yml`-Stack hoch, `go test ./tests/integration/...`, fährt Stack
+  wieder runter), `test-latency` (Docker-Stack + `BenchmarkControlACKRoundtrip`,
+  `b.Fatalf` bei p99>100ms), `test-k6` (Docker-Stack + k6 gegen `tests/performance/latency.js`,
+  `thresholds: p(99)<100`).
+- **`test` läuft für eine saubere CI-Unit-Gate nicht direkt verwendbar**, da es
+  `tests/integration/...` ungefiltert mitnimmt — braucht einen neuen, zusätzlichen
+  `test-unit`-Target (paketgefiltert, `go list ./... | grep -v /tests/integration`), ohne das
+  bestehende `test`-Target zu ändern (Devs mit lokal laufendem Stack nutzen `test` weiterhin wie
+  bisher).
+- `.github/workflows/lint.yml` ist die einzige bestehende CI-Datei — dient als Stil-Vorlage
+  (Trigger `on: push: branches: [main] / pull_request`, `actions/setup-go@v5`, Go 1.23).
+- `tests/docker-compose.test.yml:1-4`: Kommentar bestätigt bewusst "Kein WebRTC/coturn — zu
+  flaky in CI" — GitHub-Actions-Runner (`ubuntu-latest`) haben Docker Engine + `docker compose`
+  v2 vorinstalliert, kein zusätzliches Setup nötig; Images werden aus Source gebaut
+  (`build: context: ..`), erster CI-Lauf zeigt reale Build-Zeit (ggf. `timeout-minutes` setzen).
+- `frontend/package.json`: `"test": "vitest run"` (Vitest, nicht Jest wie in ADR-006 benannt —
+  funktional gleichwertig, keine Änderung nötig), `"test:e2e": "playwright test"`.
+- **ADR-006-Update nötig**: Abschnitt "Update (2026-07-15)" wird um einen zweiten Update-Absatz
+  ergänzt (CI-Automatisierung Sprint 41, Latenz-Gate-Abweichung non-blocking begründet).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| CIGATE-01 | `Makefile`: neuer `test-unit`-Target (paketgefiltert ohne `tests/integration`), bestehende Targets unverändert | S | ✅ Sprint 41 | — |
+| CIGATE-02 | `.github/workflows/test-go.yml`: 3 blockierende Jobs — `unit` (`make test-unit`), `safety` (`make test-safety`), `integration` (`make test-integration`, Docker-Stack) | M | ✅ Sprint 41 | CIGATE-01 |
+| CIGATE-03 | `.github/workflows/test-frontend.yml`: Vitest-Unit-Tests blockierend (`npm ci && npm run test`) | S | ✅ Sprint 41 | — |
+| CIGATE-04 | `.github/workflows/test-latency.yml`: Go-Benchmark + k6, bewusst non-blocking (`continue-on-error: true`, begründeter Kommentar analog `lint.yml`) | S/M | ✅ Sprint 41 | CIGATE-01 |
+| CIGATE-05 | Bestehenden Playwright-Spec als non-blocking Informational-Job einbinden (kein Ausbau der Testtiefe) | S | ✅ Sprint 41 | — |
+| CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | ✅ Sprint 41 | CIGATE-02, CIGATE-03 |
+| CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | 🔶 Sprint 41 (siehe Hinweis unten) | CIGATE-01..06 |
+
+**Hinweis zu CIGATE-07:** "2 aufeinanderfolgende grüne CI-Läufe" im Sinne von echten GitHub-Actions-
+Runs konnte in diesem Sprint nicht verifiziert werden, da kein Commit/Push erfolgte (Nutzervorgabe:
+"nicht committen ohne ausdrückliche Aufforderung"). Ersatzweise wurden alle 3 blockierenden
+`test-go.yml`-Jobs sowie der `test-frontend.yml`-Job **lokal je 2× mit frischem Cache
+(`-count=1`)** gegen den jeweils echten Docker-Stack ausgeführt (siehe
+`tasks/sprints/41-ci-gates-einfuehren.md`, Abschnitt Ergebnisse) — durchgehend grün, keine
+Flakiness beobachtet. Alle 5 Workflow-Dateien wurden zusätzlich mit `actionlint` syntax-/
+semantik-geprüft (0 Findings). Die erste echte GitHub-Actions-Ausführung steht nach Push durch den
+Nutzer noch aus.
+
+**Nicht Teil dieses Sprints:** Latenz-Gate als hartes Blocking-Gate (siehe Architektur-
+Entscheidung oben), Vertiefung der Playwright-E2E-Tests bzw. echte WebRTC-SDP/ICE-E2E-Automatisierung
+(Audit-Punkt F — WebRTC bleibt bewusster Nicht-Scope, analog `WEBRTC-10`), Concurrency-Test-Lücke
+in `internal/webrtcsfu/sfu_test.go` und weiteren Packages (eigener, kleinerer Folge-Task), Safety
+Test Suite inhaltlich auf den echten `safetyservice.Bus` ausrichten (separater Folge-Task).
+
+**Bei der Umsetzung gefunden, nicht Teil dieses Sprints (siehe `DECISIONS.MD`):**
+`BenchmarkControlACKRoundtrip` skipt immer (fehlender `session_id`-Query-Parameter, ADR-025-Drift),
+`tests/e2e/dashboard.spec.ts` erwartet Dashboard-Inhalt ohne vorherigen Login — beide unkritisch
+(non-blocking Gates), aber als offene Folgepunkte dokumentiert.
+
+---
+
+## EPIC: Testing-Debt aus ADR-006-Bestandsaufnahme schließen ✅ Sprint 42
+
+**Freigabe (2026-07-19):** Nutzer priorisiert bei der Testing-Strategie-Bestandsaufnahme
+(siehe EPIC "CI-Gates einführen") CI-Gates zuerst (Sprint 41), lässt aber zwei kleinere Funde als
+offene Folgepunkte in `DECISIONS.MD` stehen (Zeilen 82/83). Sprint 42 schließt genau diese zwei
+Funde. Ausgeführt in separatem Worktree (`feature/fleet-service-foundation-testdebt`), parallel zu
+Sprint 41 (separater Worktree/Strang, CI-Gates) — keine Code-Überschneidung, siehe
+`tasks/sprints/42-testing-debt-adr-006.md` für das vollständige Ergebnis.
+
+**Vorrecherche (2026-07-19):**
+- **Fund 1 — Concurrency-Test-Lücke `internal/webrtcsfu/sfu_test.go`:** `SFU` (`internal/webrtcsfu/
+  sfu.go:44-50`) hat ein `sync.RWMutex` (`s.mu`), das `peers`/`routing`/`state`-Maps schützt —
+  echter geteilter Zustand, alle Zugriffe laufen bereits korrekt durch `s.mu.Lock()`/`RLock()`.
+  `sfu_test.go` (Sprint 39, 10 Tests) prüft aber nur sequenzielles Verhalten, kein Test ruft
+  `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer` aus mehreren Goroutinen
+  gleichzeitig auf — anders als `internal/safetyservice/bus_test.go` (selber Sprint 39), das mit
+  `TestBus_ConcurrentPublishAndRead` genau so einen Test hat (WaitGroup + Timeout-Channel-Helfer
+  `waitOrTimeout`). Fix: identisches Testmuster in `sfu_test.go` nachbauen (Helfer lokal dupliziert,
+  analog zum akzeptierten Duplikat-Präzedenzfall aus Sprint 38 `MQTTAUTH-05`, drei identische
+  MQTT-Test-Helfer in separaten Testdateien).
+- **Fund 2 — `tests/unit/safety_test.go` testet nicht den echten `safetyservice.Bus`:** Die 20
+  Tests der "Safety Test Suite" (Datei-Header nennt sie explizit "the safety gate in CI") bauen
+  `statemachine.Machine` + `mocks.MockSafetyPublisher` zusammen (`newTestSetup`, Zeile 21-33) und
+  prüfen nur, dass `Publisher.PublishEvent(...)` mit dem richtigen `SafetyEventType` aufgerufen
+  wird (z.B. Zeile 89 `assert.Equal(t, safetyservice.EventDeadmanTimeout, pub.LastEventType())`).
+  Der eigentliche Bus (`internal/safetyservice.Bus`, Produktivcode in `cmd/safety-service/main.go`)
+  wird dabei nie erreicht — `internal/controlserver/safety.HTTPPublisher` (Produktiv-Implementierung
+  von `Publisher`, `internal/controlserver/safety/http_publisher.go`) schickt Events per HTTP-POST
+  an `/safety/event`, das erst serverseitig `bus.PublishSafetyEvent(event)` aufruft
+  (`cmd/safety-service/main.go:38-48`, `newSafetyMux`). `newSafetyMux` liegt in `package main` und
+  ist daher aus `tests/unit` (package `unit_test`) nicht importierbar — Fix baut keinen
+  Produktivcode um, sondern verdrahtet in einer neuen Testdatei einen minimalen lokalen
+  `httptest.Server`-Handler für `POST /safety/event` (identische zwei Zeilen wie in `newSafetyMux`,
+  bewusst dupliziert statt Produktivcode zu exportieren — kein Scope für einen Hexagonal-Schritt
+  hier) und lässt `HTTPPublisher` (mit `baseURL` = Test-Server-URL) echte Events an einen echten
+  `safetyservice.NewBus()` schicken, verifiziert über `bus.GetSafetyState()`.
+- **CLAUDE.MD-Leitplanken**: Abschnitt 17 (Teststandard) fordert für Typ M/L explizit
+  "Nebenläufigkeit" als Fallgruppe (Fund 1) sowie Integrationstests gegen reale Abhängigkeiten statt
+  In-Memory-Mocks wo sinnvoll (Fund 2 — `HTTPPublisher` gegen echten `Bus` statt nur gegen
+  `MockSafetyPublisher`).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| SFUCONC-01 | `internal/webrtcsfu/sfu_test.go`: neuer Concurrency-Test (mehrere Goroutinen rufen `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer` gleichzeitig auf), lokaler `waitOrTimeout`-Helfer analog `bus_test.go`, `go test -race` grün. | S | ✅ Sprint 42 | — |
+| SAFETYBUS-01 | Neue Testdatei `tests/unit/safety_bus_integration_test.go`: minimaler lokaler `httptest.Server`-Handler für `POST /safety/event` (dupliziert `newSafetyMux`s zwei Zeilen, kein Produktivcode-Umbau), `HTTPPublisher` gegen echten `safetyservice.NewBus()` verdrahtet, mind. 2 ADR-006-CRITICAL-Szenarien (Dead-man-Timeout, ACK-Timeout) verifiziert über `bus.GetSafetyState()`. | S/M | ✅ Sprint 42 | — |
+| SAFETYBUS-02 | Datei-Header-Kommentar in `tests/unit/safety_test.go` präzisieren: bestehende 20 Tests decken Trigger-Logik (State-Machine → `Publisher`) ab, nicht den Bus selbst; Verweis auf die neuen Bus-Integrationstests aus `SAFETYBUS-01`. `docs/adr/006-testing-strategy.md` falls dort die Suite beschrieben wird, ebenfalls präzisieren. | S | ✅ Sprint 42 | SAFETYBUS-01 |
+| TESTDEBT-VERIFY-01 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./... -race` (mind. 2x gegen Flakiness, CLAUDE.MD §17), `DECISIONS.MD`-Zeilen 82/83 auf ✅, `tasks/backlog.md`-Status-Update. | S | ✅ Sprint 42 | SFUCONC-01, SAFETYBUS-01, SAFETYBUS-02 |
+
+**Nicht Teil dieses Sprints:** Umbau von `cmd/safety-service/main.go`s `newSafetyMux` in ein
+exportiertes/testbares Konstrukt (Hexagonal-artiger Schritt, eigener Entscheidungspunkt falls
+später gewünscht), Abdeckung aller 5 ADR-006-CRITICAL-Szenarien gegen den echten Bus (nur die 2
+wichtigsten Dead-man/ACK-Timeout, Rest bleibt Mock-basiert), Concurrency-Tests für weitere Packages
+über `webrtcsfu` hinaus.
+
+---
+
+## EPIC: Hexagonale Architektur-Migration — Schritt 3, telemetry-service (ADR-031) ✅ Sprint 43 abgeschlossen
+
+Strategie/Priorisierung: [ADR-031](../docs/adr/031-hexagonal-architecture-migration.md), Update
+"Sprint-43-Kickoff". Fortsetzung nach Pilot (fleet-service, ✅ Sprint 33) und Schritt 2
+(auth-service, ✅ Sprint 37) — Nutzer gibt Fortsetzung mit `telemetry-service` (Schritt 3 der
+ADR-031-Priorisierung) am 2026-07-19 frei, nachdem dieser Entscheidungspunkt zuvor mehrfach
+zurückgestellt wurde. Details/Ergebnisse: `tasks/sprints/43-hexagonal-migration-telemetry-service.md`.
+
+**Vorrecherche (2026-07-19):**
+- `internal/telemetryservice/client.go` (114 Zeilen, gesamter Service): `Client.client` (Zeile 29)
+  ist vom Typ `mqtt.Client` — das ist bereits ein Interface, aber eines aus der Drittanbieter-
+  Bibliothek `paho.mqtt.golang` (14 Methoden, u.a. `Publish`/`AddRoute`/`OptionsReader`, die
+  telemetryservice nie nutzt). Kein projekteigener, schmaler Port — Verstoß gegen GOSTYLE Rule 2.2
+  (Interface-Segregation) und ADR-031-Regel 3 (Driven Ports vom Consumer definiert, nicht vom
+  Adapter/Anbieter). `Connect()` (Zeile 44-64) baut `mqtt.NewClientOptions()...` und ruft
+  `c.client.Connect()`/`token.Wait()`/`token.Error()` direkt auf; `subscribe()` (Zeile 66-74)
+  ebenso mit `mqtt.Token`.
+- **`internal/telemetryservice` und `cmd/telemetry-service` haben aktuell 0 Tests** (`find
+  internal/telemetryservice cmd/telemetry-service -name "*_test.go"` liefert nichts) — derselbe
+  Bestandsaufnahme-Befund wie bei `safety-service`/`webrtc-sfu`/`internal/recording` vor Sprint 39.
+  Grund: `Connect()`/`subscribe()` sind ohne echten MQTT-Broker nicht sinnvoll testbar, solange sie
+  direkt gegen `mqtt.Client` programmieren. Ein projekteigener `MQTTConnection`-Port löst dieses
+  Problem als direkten Nebeneffekt der Migration (kein separater Testabdeckungs-Sprint nötig).
+- `handleMessage`/`GetLatest` (Zeile 76-107) sind bereits reine Domain-Logik (Proto-Parse,
+  Map-Zugriff hinter `sync.RWMutex`) ohne I/O — laut ADR-031-Bestandsaufnahme "triviales reines
+  Passthrough". Keine Use-Case-Extraktion nötig (anders als `HEX-06`/`HEXAUTH-04`, die für
+  fleet-/auth-service optional zur Debatte stehen).
+- `cmd/telemetry-service/main.go:29` (`telemetryservice.NewClient(broker, username, password)`) —
+  externe Konstruktorsignatur bleibt unverändert, analog zum Präzedenzfall `HEX-02`/`HEXAUTH-02`
+  (`*PostgresFleetStore` bzw. `JWTTokenIssuer` wurden beide intern konstruiert, ohne den Aufrufer
+  anzupassen).
+- `cmd/telemetry-service/main.go:38-79` (`newTelemetryMux`) — analoges Muster zu den in Sprint 39
+  getesteten `newSafetyMux`/`newSFUMux`, aber bisher ungetestet.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| HEXTELE-01 | `MQTTConnection`-Port definieren (neue Datei `internal/telemetryservice/mqttconnection.go`): schmales Interface (`Connect() error`, `Subscribe(topic string, qos byte, handler func(topic string, payload []byte)) error`, `Disconnect(quiesceMs uint)`, `IsConnected() bool`) statt direkter Kopplung an `paho.mqtt.golang`s `mqtt.Client`. `PahoConnection`-Adapter kapselt `mqtt.Token`/`mqtt.Message`-Handling intern. Compile-Time-Check `var _ MQTTConnection = (*PahoConnection)(nil)`. | S | ✅ Sprint 43 | — |
+| HEXTELE-02 | `Client.client` (`internal/telemetryservice/client.go:29`) von `mqtt.Client` auf `MQTTConnection`-Port umgestellt. `Connect()`/`subscribe()`/`Disconnect()` rufen den Port statt paho direkt auf. `NewClient`-Signatur unverändert, Adapter wird intern konstruiert (`cmd/telemetry-service/main.go:29` unangetastet, analog `HEX-02`/`HEXAUTH-02`). | S | ✅ Sprint 43 | HEXTELE-01 |
+| HEXTELE-03 | Erste Testabdeckung `internal/telemetryservice` + `cmd/telemetry-service` (aktuell 0 Tests): `FakeMQTTConnection`-Testdoppel; Tests für `handleMessage` (Proto-Parse, fehlender/leerer `vehicle_id`, Malformed Payload), `GetLatest`, `Connect`/`subscribe`-Wiring über den Fake (kein echter Broker nötig); `main_test.go` für `newTelemetryMux` via `httptest` (analog Sprint-39-Muster `main_test.go` für `safety-service`/`webrtc-sfu`). | M | ✅ Sprint 43 | HEXTELE-02 |
+| HEXTELE-04 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./internal/telemetryservice/... ./cmd/telemetry-service/... -race` (mind. 2x gegen Flakiness, CLAUDE.MD §17). ADR-031-Status-Update (Schritt 3 abgeschlossen, analog Sprint-37/HEXAUTH-03-Eintrag), `DECISIONS.MD`, `tasks/backlog.md`-Status-Update. | S | ✅ Sprint 43 | HEXTELE-03 |
+
+**Nicht Teil dieses Sprints:** Use-Case-Extraktion (kein Bedarf, siehe Vorrecherche —
+`handleMessage`/`GetLatest` sind bereits reine Funktionen), `control-server` (Schritt 4/5 der
+ADR-031-Priorisierung, ausdrücklich zuletzt/eigenes ADR nötig), `safety-service`/`webrtc-sfu`/
+`recording` (Hexagonal-Migration dort, unabhängig von der bereits vorhandenen Sprint-39-
+Testabdeckung, ein separater Entscheidungspunkt).
+
+---
+
+## EPIC: Backup-Strategie Audit Store (ADR-018/023 Folge) ✅ Sprint 44
+
+**Freigabe (2026-07-19):** Nutzer wählt dieses Thema für Sprint 44 gegenüber zwei Alternativen
+(Migration zu AWS ECR, Session-Recording-Storage-Entscheidung). Schließt den seit ADR-019
+offenen Punkt "Audit Store Backup-Strategie". **Eingereiht nach Sprint 43** — wird erst zu
+Sprint 44, sobald Sprint 43 abgeschlossen ist, `tasks/current-sprint.md` bleibt bis dahin
+unverändert.
+
+**Wichtiger Vorrecherche-Befund — Backlog-Text war veraltet:** `tasks/backlog.md` und
+`docs/adr/019-deployment-strategy.md` beschrieben den offenen Punkt bisher als "SQLite Volume auf
+S3" (Stand ADR-018, Sprint 7). Tatsächlich hat ADR-023 (PostgreSQL-Migration) SQLite bereits
+vollständig ersetzt: `audit_events` liegt seither in PostgreSQL (`postgres-data`-Docker-Volume,
+`infrastructure/compose/docker-compose.prod.yml:31-46`), das `audit-data`-Volume aus ADR-018
+existiert im Compose-Setup nicht mehr. `cmd/control-server/main.go:81-89` (`newAuditWriter`) nutzt
+`audit.NewPostgresAuditWriter(db)`, kein SQLite-Pfad mehr im Code. ADR-023 selbst nennt
+"Standardisierte Backup-Workflows (`pg_dump`)" bereits als erwarteten Vorteil der Migration — der
+Backup-Task war seither nur nie eingeplant. Beide Doku-Stellen oben in diesem Sprint bereits auf
+"Postgres-Volume" korrigiert.
+
+**Architektur-Entscheidung (bei der Planung getroffen):**
+- **`pg_dump` gegen den laufenden `postgres`-Container statt Datei-Kopie des Docker-Volumes** —
+  ein Volume-Snapshot während laufendem Betrieb kann inkonsistent sein (kein atomarer Zustand),
+  `pg_dump` liefert einen konsistenten logischen Dump zur Laufzeit, ohne den Service zu stoppen.
+  Kein `pg_basebackup`/WAL-Archivierung (Point-in-Time-Recovery) — für dieses Betriebsmodell
+  (Single-Instance-Testbetrieb, kein HA-Anspruch) ist ein tägliches logisches Backup ausreichend,
+  analog zur bereits akzeptierten "kein Cross-Host-Bedarf"-Argumentation aus Sprint 40.
+- **S3-Bucket-Name per SSM statt hartkodiert** — der bestehende `AppBucket` (CDK,
+  `infrastructure/AWS/cdk_server-stack.ts:75-79`, bereits `grantReadWrite` für die Instance-Role,
+  siehe Kommentar Zeile 138 "für zukünftige Audit-Log-Backups, ADR-018") bekommt einen neuen
+  `ssm.StringParameter` unter `/avoc/prod/backup-bucket-name` direkt im selben CDK-Stack (kein
+  manueller Zusatzschritt nach `cdk deploy` nötig) — konsistent mit dem bestehenden
+  SSM-getriebenen Secret-Verteilungsmuster in `scripts/deploy.sh`.
+- **S3-Lifecycle-Regel statt manueller Löschung** — Backups unter Prefix `backups/postgres/`
+  verfallen nach 30 Tagen automatisch (`lifecycleRules` im CDK-Stack), damit der ohnehin schon
+  `versioned: true`/`autoDeleteObjects: true` konfigurierte Bucket nicht unbegrenzt wächst.
+- **Tägliches Cron-Backup auf dem EC2-Host statt Container-internem Scheduler** — einfachste
+  Lösung ohne neuen Docker-Compose-Service, analog zur bestehenden "generiere/registriere einmalig
+  bei Deploy"-Philosophie in `scripts/deploy.sh` (SSL-Zertifikat, Mosquitto-Passwd).
+
+**Vorrecherche (2026-07-19):**
+- `infrastructure/compose/docker-compose.prod.yml:31-46`: `postgres`-Service, `POSTGRES_USER=avoc`,
+  `POSTGRES_DB=avoc`, `POSTGRES_PASSWORD=${DB_PASSWORD}` (aus `$APP_DIR/.env`, nicht SSM — siehe
+  `scripts/deploy.sh` Kommentar Zeile 61-62), Healthcheck `pg_isready -U avoc -d avoc`.
+- `infrastructure/AWS/cdk_server-stack.ts:75-79`: `AppBucket` (`s3.Bucket`, `versioned: true`,
+  `removalPolicy: DESTROY`, `autoDeleteObjects: true`), Zeile 139 `bucket.grantReadWrite(instance.role)`
+  bereits vorhanden. Zeile 203-205: `CfnOutput BucketName` existiert bereits, aber landet aktuell
+  nur in der CDK-Konsolenausgabe, nicht in SSM — Backup-Skript bräuchte sonst den Bucket-Namen
+  hartkodiert oder manuell in `.env` gepflegt.
+- `scripts/deploy.sh:38-51` (`get`/`get_secure`-Helfer für SSM-Parameter) — Muster für den neuen
+  `/avoc/prod/backup-bucket-name`-Parameter wiederverwendbar.
+- `scripts/deploy.sh:94-115` (SSL-Zertifikat-Generierung, "einmalig generieren, wiederverwenden")
+  als Strukturvorbild für ein neues Skript `scripts/backup-audit-store.sh` (hier aber täglich
+  ausgeführt statt einmalig).
+- CDK verwendet `aws-cdk-lib/aws-s3` bereits (Zeile 5); `aws-cdk-lib/aws-ssm` (für
+  `ssm.StringParameter`) ist als Teil von `aws-cdk-lib` bereits verfügbar, kein neues
+  `package.json`-Dependency nötig.
+- `docs/adr/023-postgresql-migration.md:71` nennt "Standardisierte Backup-Workflows (`pg_dump`)"
+  bereits explizit als erwarteten Vorteil — dieser Sprint löst genau dieses Versprechen ein.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| AUDITBACKUP-01 | CDK-Stack (`infrastructure/AWS/cdk_server-stack.ts`): neuer `ssm.StringParameter` (`/avoc/prod/backup-bucket-name` = `bucket.bucketName`) + S3-Lifecycle-Regel (Prefix `backups/postgres/`, Expiration 30 Tage) auf `AppBucket`. | S | ✅ Sprint 44 | — |
+| AUDITBACKUP-02 | Neues Skript `scripts/backup-audit-store.sh`: liest Bucket-Namen aus SSM (`get`-Helfer analog `deploy.sh`), `docker compose exec postgres pg_dump -U avoc avoc \| gzip`, Upload via `aws s3 cp` nach `s3://$BUCKET/backups/postgres/$(date +%F)-avoc.sql.gz`. | S | ✅ Sprint 44 | AUDITBACKUP-01 |
+| AUDITBACKUP-03 | Cron-Registrierung: `scripts/deploy.sh` ergänzt einen idempotenten Crontab-Eintrag (täglich, z.B. 03:00 UTC) für `backup-audit-store.sh` unter `ec2-admin` — Prüfung auf Doppel-Registrierung analog zum "generiere einmalig"-Muster (`crontab -l \| grep -q ... \|\| ...`). | S | ✅ Sprint 44 | AUDITBACKUP-02 |
+| AUDITBACKUP-04 | Verifikation: lokaler Trockenlauf von `backup-audit-store.sh` gegen den Dev-`postgres`-Container (Dump + lokale Datei, kein echter S3-Upload nötig für den Test). Doku: `docs/adr/019-deployment-strategy.md` Zeile "Audit Store Backup-Strategie" auf ✅, `DECISIONS.MD`, `tasks/backlog.md`-Status-Update. | S | ✅ Sprint 44 | AUDITBACKUP-01..03 |
+
+**Nicht Teil dieses Sprints:** Point-in-Time-Recovery (`pg_basebackup`/WAL-Archivierung — kein
+HA-Anspruch für Single-Instance-Testbetrieb), automatisierter Restore-Test/-Runbook (eigener
+Folge-Task, sobald ein erstes echtes Backup vorliegt), Verschlüsselung des Dumps vor Upload
+(Bucket-seitige S3-Default-Encryption gilt bereits, kein zusätzlicher Client-seitiger Schritt in
+diesem Scope).
+
+---
+
+## EPIC: Tech Debt
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| TECHDEBT-01 | `internal/authservice/noop_userstore.go`s `NoopUserStore` löschen — komplett ungenutzt (kein Aufrufer außerhalb der eigenen Datei, auch nicht in Tests) | S | ✅ Sprint 36 | Nebenbefund aus GOSTYLE-IF-04 (Sprint 35). War bereits vor diesem Sprint tot, nicht durch die Interface-Verschlankung verursacht — daher nicht im Rahmen von GOSTYLE-IF-04 mit-entfernt (Scope-Grenze), eigener kleiner Folge-Task. Datei komplett gelöscht. Details in `tasks/sprints/36-restposten-bereinigung-iii.md` |
+
 ---
 
 ## Offene Entscheidungen (blockieren zukünftige Tasks)
@@ -475,9 +885,9 @@ fehlt. Kein Style-Guide-Thema — als `SEC-01` aufgenommen, siehe EPIC "Security
 |---|---|---|
 | Session Recording Storage (DB / Files / Object Storage) | offen | ADR-005 Folge — MemoryRecorder als Platzhalter |
 | DDS-Produktivimplementierung | Nicht in diesem Scope | ADR-002 Folge |
-| Backup-Strategie Audit Store (SQLite Volume → S3) | offen | ADR-018 Folge — S3-Bucket im CDK vorhanden |
+| ~~Backup-Strategie Audit Store (Postgres `postgres-data`-Volume → S3)~~ | ✅ Sprint 44 | ADR-018/023 Folge — `pg_dump`+S3 täglich per Cron, siehe EPIC oben (`AUDITBACKUP-01..04`) |
 | Migration zu AWS ECR | offen | ADR-019 Folge — für Produktivbetrieb |
-| MQTT-Authentifizierung (Mosquitto Passwort-File) | offen | Port 1883 aktuell ohne Auth offen |
+| ~~MQTT-Authentifizierung (Mosquitto Passwort-File)~~ | ✅ Sprint 38 | Port 1883 lief seit Sprint 9 ohne Auth — siehe EPIC "Security Findings" oben (`MQTTAUTH-01..06`). TLS/MQTTS bewusst weiterhin offen (siehe dort) |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + SQLite-Registry; `~^vehicle-.*`-Regex aktiv |
 | E2E Smoke Test mit aktiver WHIP-Quelle | offen | WEBRTC-09 Rest — Browser WiFi + 5G ICE-Pair verifizieren |
 | ~~OBS-01 Vehicle Heartbeat~~ | ✅ Sprint 31 | AckBadge zeigt "Zuletzt gesehen vor Xs" aus `useTelemetry.ts`s `ageSinceUpdateMs`, unabhängig vom ACK-Kommandofluss |

@@ -3,6 +3,7 @@ import { Construct } from "constructs";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 
 export class StreamingStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -76,6 +77,21 @@ export class StreamingStack extends cdk.Stack {
       versioned: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      // AUDITBACKUP-01: tägliche pg_dump-Backups verfallen nach 30 Tagen automatisch,
+      // damit der Bucket nicht unbegrenzt wächst (scripts/backup-audit-store.sh).
+      lifecycleRules: [
+        {
+          prefix: "backups/postgres/",
+          expiration: cdk.Duration.days(30),
+        },
+      ],
+    });
+
+    // AUDITBACKUP-01: Bucket-Name per SSM statt hartkodiert in scripts/backup-audit-store.sh —
+    // konsistent mit dem bestehenden SSM-Secret-Verteilungsmuster in scripts/deploy.sh.
+    new ssm.StringParameter(this, "BackupBucketNameParam", {
+      parameterName: "/avoc/prod/backup-bucket-name",
+      stringValue: bucket.bucketName,
     });
 
     // =========================
