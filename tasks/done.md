@@ -9,6 +9,13 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 44 — Backup-Strategie Audit Store (ADR-018/023 Folge) ✅
+2026-07-19 → [tasks/sprints/44-backup-strategie-audit-store.md](sprints/44-backup-strategie-audit-store.md)
+- Schließt seit ADR-019 offenen Punkt "Audit Store Backup-Strategie" — Backlog-Text war veraltet ("SQLite Volume"), korrigiert auf PostgreSQL (`postgres-data`-Volume, seit ADR-023). Nutzerentscheidung 2026-07-19 gegenüber 2 Alternativen (Migration zu AWS ECR, Session-Recording-Storage-Entscheidung).
+- Neues `scripts/backup-audit-store.sh`: täglicher `pg_dump`+`gzip`-Dump gegen den laufenden `postgres`-Container, Upload nach `s3://<AppBucket>/backups/postgres/<Datum>-avoc.sql.gz`. Bucket-Name per neuem CDK-`ssm.StringParameter` (`/avoc/prod/backup-bucket-name`), 30-Tage-S3-Lifecycle-Regel auf dem Prefix. `scripts/deploy.sh` registriert den Cronjob (03:00 UTC) idempotent bei jedem Deploy.
+- Bewusst nicht Teil des Scopes: Point-in-Time-Recovery (`pg_basebackup`/WAL), automatisierter Restore-Test, client-seitige Verschlüsselung des Dumps.
+- Verifiziert: lokaler Trockenlauf des unveränderten Skripts gegen den echten Dev-`postgres`-Container (Fake-`aws`-Wrapper statt echtem SSM/S3-Call) — erzeugte echten `pg_dump`-Dump, gzip-valide, korrekter S3-Pfad. Cron-Idempotenz-Idiom zusätzlich gegen den echten `crontab`-Befehl der Maschine geprüft (Doppel-Registrierung ausgeschlossen, vorhandene fremde Einträge bleiben erhalten). Kein `cdk deploy`/echter AWS-Call (separater späterer Schritt).
+
 ## Sprint 43 — Hexagonale Architektur-Migration Schritt 3: telemetry-service (ADR-031) ✅
 2026-07-19 → [tasks/sprints/43-hexagonal-migration-telemetry-service.md](sprints/43-hexagonal-migration-telemetry-service.md)
 - Fortsetzung nach Pilot (fleet-service, Sprint 33) und Schritt 2 (auth-service, Sprint 37) — Nutzerfreigabe 2026-07-19 für Schritt 3 (telemetry-service).

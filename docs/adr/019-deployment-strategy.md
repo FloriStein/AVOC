@@ -165,6 +165,6 @@ Unterschiede zu `docker-compose.yml` (Entwicklung):
 | Thema | Referenz |
 |-------|----------|
 | Migration zu ECR für Produktivbetrieb | ADR-020 möglich |
-| Audit Store Backup-Strategie (Postgres `postgres-data`-Volume auf S3) | 🔲 Sprint 44 vorgemerkt — ADR-018/023 Folge, `pg_dump`+S3, S3-Bucket vorhanden (CDK). Wortlaut korrigiert: Audit Store lief bis Sprint 7 auf SQLite (ADR-018), migrierte in Sprint ~19-22 auf PostgreSQL (ADR-023) — `audit-data`-Volume existiert nicht mehr, ersetzt durch `postgres-data` |
+| Audit Store Backup-Strategie (Postgres `postgres-data`-Volume auf S3) | ✅ Sprint 44 — `scripts/backup-audit-store.sh` (täglich, `pg_dump`+`gzip`+S3), Cron-Registrierung via `scripts/deploy.sh`, S3-Bucket-Name per SSM (`/avoc/prod/backup-bucket-name`), 30-Tage-Lifecycle-Regel im CDK-Stack |
 | HTTPS / TLS-Terminierung (Let's Encrypt / ACM) | Offen — für Testphase HTTP akzeptabel |
 | MQTT-Authentifizierung (Mosquitto mit Passwort-File) | Offen — für Testphase ohne Auth |

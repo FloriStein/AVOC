@@ -792,7 +792,7 @@ Testabdeckung, ein separater Entscheidungspunkt).
 
 ---
 
-## EPIC: Backup-Strategie Audit Store (ADR-018/023 Folge) 🔲 Sprint 44 vorgemerkt
+## EPIC: Backup-Strategie Audit Store (ADR-018/023 Folge) ✅ Sprint 44
 
 **Freigabe (2026-07-19):** Nutzer wählt dieses Thema für Sprint 44 gegenüber zwei Alternativen
 (Migration zu AWS ECR, Session-Recording-Storage-Entscheidung). Schließt den seit ADR-019
@@ -853,10 +853,10 @@ Backup-Task war seither nur nie eingeplant. Beide Doku-Stellen oben in diesem Sp
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| AUDITBACKUP-01 | CDK-Stack (`infrastructure/AWS/cdk_server-stack.ts`): neuer `ssm.StringParameter` (`/avoc/prod/backup-bucket-name` = `bucket.bucketName`) + S3-Lifecycle-Regel (Prefix `backups/postgres/`, Expiration 30 Tage) auf `AppBucket`. | S | 🔲 Sprint 44 | — |
-| AUDITBACKUP-02 | Neues Skript `scripts/backup-audit-store.sh`: liest Bucket-Namen aus SSM (`get`-Helfer analog `deploy.sh`), `docker compose exec postgres pg_dump -U avoc avoc \| gzip`, Upload via `aws s3 cp` nach `s3://$BUCKET/backups/postgres/$(date +%F)-avoc.sql.gz`. | S | 🔲 Sprint 44 | AUDITBACKUP-01 |
-| AUDITBACKUP-03 | Cron-Registrierung: `scripts/deploy.sh` ergänzt einen idempotenten Crontab-Eintrag (täglich, z.B. 03:00 UTC) für `backup-audit-store.sh` unter `ec2-admin` — Prüfung auf Doppel-Registrierung analog zum "generiere einmalig"-Muster (`crontab -l \| grep -q ... \|\| ...`). | S | 🔲 Sprint 44 | AUDITBACKUP-02 |
-| AUDITBACKUP-04 | Verifikation: lokaler Trockenlauf von `backup-audit-store.sh` gegen den Dev-`postgres`-Container (Dump + lokale Datei, kein echter S3-Upload nötig für den Test). Doku: `docs/adr/019-deployment-strategy.md` Zeile "Audit Store Backup-Strategie" auf ✅, `DECISIONS.MD`, `tasks/backlog.md`-Status-Update. | S | 🔲 Sprint 44 | AUDITBACKUP-01..03 |
+| AUDITBACKUP-01 | CDK-Stack (`infrastructure/AWS/cdk_server-stack.ts`): neuer `ssm.StringParameter` (`/avoc/prod/backup-bucket-name` = `bucket.bucketName`) + S3-Lifecycle-Regel (Prefix `backups/postgres/`, Expiration 30 Tage) auf `AppBucket`. | S | ✅ Sprint 44 | — |
+| AUDITBACKUP-02 | Neues Skript `scripts/backup-audit-store.sh`: liest Bucket-Namen aus SSM (`get`-Helfer analog `deploy.sh`), `docker compose exec postgres pg_dump -U avoc avoc \| gzip`, Upload via `aws s3 cp` nach `s3://$BUCKET/backups/postgres/$(date +%F)-avoc.sql.gz`. | S | ✅ Sprint 44 | AUDITBACKUP-01 |
+| AUDITBACKUP-03 | Cron-Registrierung: `scripts/deploy.sh` ergänzt einen idempotenten Crontab-Eintrag (täglich, z.B. 03:00 UTC) für `backup-audit-store.sh` unter `ec2-admin` — Prüfung auf Doppel-Registrierung analog zum "generiere einmalig"-Muster (`crontab -l \| grep -q ... \|\| ...`). | S | ✅ Sprint 44 | AUDITBACKUP-02 |
+| AUDITBACKUP-04 | Verifikation: lokaler Trockenlauf von `backup-audit-store.sh` gegen den Dev-`postgres`-Container (Dump + lokale Datei, kein echter S3-Upload nötig für den Test). Doku: `docs/adr/019-deployment-strategy.md` Zeile "Audit Store Backup-Strategie" auf ✅, `DECISIONS.MD`, `tasks/backlog.md`-Status-Update. | S | ✅ Sprint 44 | AUDITBACKUP-01..03 |
 
 **Nicht Teil dieses Sprints:** Point-in-Time-Recovery (`pg_basebackup`/WAL-Archivierung — kein
 HA-Anspruch für Single-Instance-Testbetrieb), automatisierter Restore-Test/-Runbook (eigener
@@ -880,7 +880,7 @@ diesem Scope).
 |---|---|---|
 | Session Recording Storage (DB / Files / Object Storage) | offen | ADR-005 Folge — MemoryRecorder als Platzhalter |
 | DDS-Produktivimplementierung | Nicht in diesem Scope | ADR-002 Folge |
-| Backup-Strategie Audit Store (Postgres `postgres-data`-Volume → S3) | 🔲 Sprint 44 vorgemerkt | ADR-018/023 Folge — S3-Bucket im CDK vorhanden. Wortlaut korrigiert (war "SQLite Volume", Audit Store läuft seit ADR-023 auf Postgres, `audit-data`-Volume existiert nicht mehr) |
+| ~~Backup-Strategie Audit Store (Postgres `postgres-data`-Volume → S3)~~ | ✅ Sprint 44 | ADR-018/023 Folge — `pg_dump`+S3 täglich per Cron, siehe EPIC oben (`AUDITBACKUP-01..04`) |
 | Migration zu AWS ECR | offen | ADR-019 Folge — für Produktivbetrieb |
 | ~~MQTT-Authentifizierung (Mosquitto Passwort-File)~~ | ✅ Sprint 38 | Port 1883 lief seit Sprint 9 ohne Auth — siehe EPIC "Security Findings" oben (`MQTTAUTH-01..06`). TLS/MQTTS bewusst weiterhin offen (siehe dort) |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + SQLite-Registry; `~^vehicle-.*`-Regex aktiv |

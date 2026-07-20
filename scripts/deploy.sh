@@ -56,7 +56,7 @@ get_secure() {
     --output text
 }
 
-echo "[1/4] Lade Secrets..."
+echo "[1/5] Lade Secrets..."
 
 # DB_PASSWORD + ADMIN_PASSWORD kommen aus $APP_DIR/.env (docker-compose liest sie automatisch).
 # Alle anderen Secrets kommen aus AWS SSM Parameter Store.
@@ -121,10 +121,21 @@ fi
 # unkritischen changeme-Passwort) — Prod-Credential darf nicht im Repo landen.
 
 echo ""
-echo "[2/4] Generiere Mosquitto-Passwort-Datei..."
+echo "[2/5] Generiere Mosquitto-Passwort-Datei..."
 docker run --rm -v "$APP_DIR/mosquitto:/out" --entrypoint mosquitto_passwd \
   eclipse-mosquitto:2 -b -c /out/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD" >/dev/null
 echo "  mosquitto/passwd erzeugt für Benutzer $MQTT_USERNAME"
+
+# ─── Cron-Registrierung: tägliches Audit-Store-Backup (AUDITBACKUP-03) ────────
+# backup-audit-store.sh liegt (analog deploy.sh selbst) in APP_DIR neben
+# docker-compose.prod.yml. Idempotent: bei erneutem Deploy kein doppelter Cron-Eintrag.
+
+echo ""
+echo "[3/5] Prüfe Cron-Registrierung für Audit-Store-Backup..."
+CRON_CMD="0 3 * * * /usr/bin/env bash $APP_DIR/backup-audit-store.sh >> $APP_DIR/backup-audit-store.log 2>&1"
+(crontab -l 2>/dev/null | grep -qF "backup-audit-store.sh") || \
+  { (crontab -l 2>/dev/null; echo "$CRON_CMD") | crontab -; }
+echo "  Cron-Eintrag vorhanden: backup-audit-store.sh täglich 03:00 UTC"
 
 # ─── Stack starten ────────────────────────────────────────────────────────────
 # Kein Docker-Hub-Login, kein 'docker compose pull' — Images liegen bereits lokal
@@ -132,14 +143,14 @@ echo "  mosquitto/passwd erzeugt für Benutzer $MQTT_USERNAME"
 # Übergabe-Abweichung von ADR-019, siehe docs/deployment/UEBERGABE-ABWEICHUNGEN.md
 
 echo ""
-echo "[3/4] Prüfe Images..."
+echo "[4/5] Prüfe Images..."
 cd "$APP_DIR"
 docker compose -f docker-compose.prod.yml config --images | while read -r img; do
   docker image inspect "$img" >/dev/null 2>&1 || echo "  WARNUNG: Image fehlt lokal: $img (siehe 'make deploy-images')"
 done
 
 echo ""
-echo "[4/4] Start Stack..."
+echo "[5/5] Start Stack..."
 docker compose -f docker-compose.prod.yml up -d
 
 echo ""
