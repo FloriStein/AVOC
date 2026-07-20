@@ -8,19 +8,20 @@ const (
 	EventSessionEnded   = "SESSION_ENDED"
 
 	// Safety critical events — these also write to SQLite via AuditWriter (ADR-018)
-	EventSafeModeEntered   = "SAFE_MODE_ENTERED"
-	EventEmergencyStop     = "EMERGENCY_STOP"
-	EventDeadmanTimeout    = "DEADMAN_TIMEOUT"
-	EventDeadmanArmed      = "DEADMAN_ARMED"
-	EventDeadmanStarted    = "DEADMAN_STARTED"
-	EventDeadmanStopped    = "DEADMAN_STOPPED"
-	EventAckTimeout        = "COMMAND_ACK_TIMEOUT"
-	EventVehicleACKTimeout = "VEHICLE_ACK_TIMEOUT"
-	EventSafetyBusDown     = "SAFETY_BUS_DOWN"
-	EventWsDisconnect      = "WS_DISCONNECT_CRITICAL"
-	EventWsConnected       = "WS_CONNECTED"
-	EventWsSessionInvalid  = "WS_SESSION_NOT_FOUND"
-	EventOperatorHandover  = "OPERATOR_HANDOVER_COMPLETED"
+	EventSafeModeEntered       = "SAFE_MODE_ENTERED"
+	EventEmergencyStop         = "EMERGENCY_STOP"
+	EventDeadmanTimeout        = "DEADMAN_TIMEOUT"
+	EventDeadmanArmed          = "DEADMAN_ARMED"
+	EventDeadmanStarted        = "DEADMAN_STARTED"
+	EventDeadmanStopped        = "DEADMAN_STOPPED"
+	EventAckTimeout            = "COMMAND_ACK_TIMEOUT"
+	EventVehicleACKTimeout     = "VEHICLE_ACK_TIMEOUT"
+	EventSafetyBusDown         = "SAFETY_BUS_DOWN"
+	EventWsDisconnect          = "WS_DISCONNECT_CRITICAL"
+	EventWsConnected           = "WS_CONNECTED"
+	EventWsSessionInvalid      = "WS_SESSION_NOT_FOUND"
+	EventOperatorHandover      = "OPERATOR_HANDOVER_COMPLETED"
+	EventAuthWatchdogTriggered = "AUTH_WATCHDOG_TRIGGERED" // DRIFT-K1 (2026-07-16)
 
 	// System events
 	EventStateTransition  = "STATE_TRANSITION_SYSTEM"

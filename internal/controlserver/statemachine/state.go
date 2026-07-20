@@ -120,10 +120,18 @@ func isValidTransition(current, next SystemState) bool {
 func (m *Machine) TransitionSystem(next SystemState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.transitionSystemLocked(next)
+}
 
+// transitionSystemLocked performs the validated SYSTEM STATE transition and its
+// dependent CONTROL STATE update. Caller must hold m.mu. Shared by TransitionSystem
+// and TransitionOperator's NO_OPERATOR→SAFE_MODE branch (2026-07-16, DRIFT-K2) so
+// every path into SAFE_MODE goes through the same validSystemTransitions guard —
+// previously TransitionOperator set m.System directly, bypassing isValidTransition.
+func (m *Machine) transitionSystemLocked(next SystemState) bool {
 	if !isValidTransition(m.System, next) {
 		svcLog.Warn("invalid state transition rejected", "from", m.System, "to", next)
-		return
+		return false
 	}
 
 	svcLog.Event(logger.EventStateTransition, "system state transition",
@@ -147,6 +155,7 @@ func (m *Machine) TransitionSystem(next SystemState) {
 	case StateDegraded:
 		// Control remains active during DEGRADED — video loss never blocks control (ADR-011)
 	}
+	return true
 }
 
 // TransitionToConnected atomically moves AUTHENTICATED → CONNECTED and activates control.
@@ -167,19 +176,34 @@ func (m *Machine) TransitionToConnected() bool {
 
 // TransitionMedia updates media state and maps MEDIA_FAILED/DEGRADED → SYSTEM DEGRADED.
 // MEDIA events NEVER trigger SAFE_MODE (ADR-009 Invariant 1).
+//
+// Recovery (2026-07-16, DRIFT-K3): MediaConnected while System is already DEGRADED
+// transitions back to CONNECTED — closes a gap where video recovering after a drop
+// left SYSTEM STATE stuck at DEGRADED forever (CONTEXT.MD documents CONNECTED ⇄
+// DEGRADED as bidirectional; only the DEGRADED-entry direction was implemented).
 func (m *Machine) TransitionMedia(next MediaState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Media = next
-	if (next == MediaFailed || next == MediaDegraded) && m.System == StateConnected {
+	switch {
+	case (next == MediaFailed || next == MediaDegraded) && m.System == StateConnected:
 		svcLog.Event(logger.EventMediaStateChange,
 			"media failure → SYSTEM DEGRADED (Invariant 1: never SAFE_MODE)",
 			"media_state", next)
-		m.System = StateDegraded
+		m.transitionSystemLocked(StateDegraded)
+	case next == MediaConnected && m.System == StateDegraded:
+		svcLog.Event(logger.EventMediaStateChange,
+			"media recovered → SYSTEM DEGRADED→CONNECTED",
+			"media_state", next)
+		m.transitionSystemLocked(StateConnected)
 	}
 }
 
 // TransitionOperator updates operator state and enforces NO_OPERATOR → SAFE_MODE (ADR-011).
+// The SAFE_MODE branch routes through transitionSystemLocked (2026-07-16, DRIFT-K2) —
+// previously set m.System directly, bypassing the validSystemTransitions guard that
+// every other CRITICAL trigger (Deadman, ACKTimeout, SafetyBusWatchdog, ...) goes
+// through via TransitionSystem.
 func (m *Machine) TransitionOperator(next OperatorState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -187,7 +211,6 @@ func (m *Machine) TransitionOperator(next OperatorState) {
 	if next == OpNoOperator && (m.System == StateConnected || m.System == StateDegraded) {
 		svcLog.Event(logger.EventSafeModeEntered,
 			"NO_OPERATOR → SAFE_MODE", "trigger", "no_active_operator")
-		m.System = StateSafeMode
-		m.Control = ControlBlocked
+		m.transitionSystemLocked(StateSafeMode)
 	}
 }

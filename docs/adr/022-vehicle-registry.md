@@ -93,3 +93,12 @@ Der Auto-Start (`startSessionIfNeeded` beim AUTHENTICATED-Eintritt) wurde entfer
 **Auto-Register beim WS-Connect:** Abgelehnt, weil unbekannte Fahrzeuge automatisch als vertrauenswürdig behandelt würden — sicherheitskritisch für ein Teleoperationssystem.
 
 **Multi-Vehicle gleichzeitig:** Bleibt ausgeschlossen (ADR-015). Erhöht die kognitive Last des Operators und die Systemkomplexität ohne Mehrwert für den aktuellen Use Case.
+
+---
+
+## Update (2026-07-16)
+
+`ADR-023` ersetzt SQLite vollständig durch PostgreSQL. Die hier beschriebene `vehicles`-Tabelle
+liegt seither in der gemeinsamen PostgreSQL-Datenbank (`avoc`) statt in `avoc_audit.db` — die
+shared-WAL-Connection-Begründung (Abschnitt „Abgelehnte Alternativen") ist damit historisch, das
+`VehicleStore`-Interface und der REST-Vertrag bleiben unverändert. Details: `ADR-023`.

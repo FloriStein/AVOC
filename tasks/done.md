@@ -3,9 +3,7 @@
 Lifecycle: backlog → sprint → done
 
 Kompakter Index aller abgeschlossenen Sprints. Volltext (Tasks, Testprotokolle, Datei-Listen,
-Scope-Details) je Sprint in [tasks/sprints/](sprints/). Sprint 26 existiert auf diesem Branch
-nicht — Nummernkollision mit einem nie gemergten Parallel-Strang (`feature/docs-drift-audit`,
-siehe `tasks/backlog.md`).
+Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
@@ -117,6 +115,14 @@ Sprint 40 unten.)
 ## Sprint 27 — Fundament: `pkg/db`, `pkg/env`, non-blocking Linter-Gate ✅
 2026-07-17 → [tasks/sprints/27-fundament-pkg-db-env-linter.md](sprints/27-fundament-pkg-db-env-linter.md)
 - Erster Go-Style-Guide-Rollout-Sprint: DB-Open+WaitForReady- und `envOr`-Dreifach-Duplikate in `pkg/db`/`pkg/env` gebündelt; `golangci-lint` als non-blocking Warn-Gate eingerichtet.
+
+## Sprint 26 — Drift-Audit MD-Doku vs. Ist-Zustand + DRIFT-K1/K2/K3-Sicherheitsfixes ✅
+2026-07-16 (Audit) / 2026-07-17 (Fixes) / 2026-07-20 (gemerged) → [tasks/sprints/26-drift-audit-md-doku-vs-ist-zustand.md](sprints/26-drift-audit-md-doku-vs-ist-zustand.md)
+- Reine Bestandsaufnahme (kein Fix-Scope): 38 bestätigte Drifts zwischen `docs/vision.md`/34 ADRs/`CLAUDE.MD`/`CONTEXT.MD`/`requirements.md` und dem tatsächlichen Code-/Test-/Deployment-Zustand, konsolidiert in `docs/drift-audit-2026-07.md` (6 Kritisch, 25 Mittel, 7 Niedrig), als `DRIFT-*`-Tasks in `tasks/backlog.md` aufgenommen.
+- Fast-Track (2026-07-16): 24 reine Doku-Korrekturen (DRIFT-M01..M17, N01..N07) — ADR-Update-Blöcke, Cross-Referenzen, zwei Code-Kommentar-Fixes.
+- DRIFT-K1/K2/K3 (2026-07-17): drei CRITICAL/DEGRADED-Safety-Trigger aus ADR-009, die zuvor nur synthetisch in Unit-Tests existierten, bekamen einen echten Produktivpfad — neuer `AuthWatchdog` (Auth Invalidation), `TransitionOperator(OpNoOperator)` im WS-Disconnect-Handler (No Active Operator), `MEDIA_DEGRADED`-Schwellwerte + Recovery-Pfad (Media-DEGRADED-Wiring). Je Befund eigene Grill-Me-Session (Typ L).
+- Branch (`feature/drift-k1-k3-safety-model`) wurde erst am 2026-07-20 gemerged, 33 Commits nach seinem Abzweigpunkt — `AuthWatchdog`/`vehiclecontext.Registry` mussten dabei auf die inzwischen (Sprint 28/29) verschlankte `audit.SafetyAuditWriter`-Schnittstelle umgestellt werden, die DRIFT-K1/K2-Anpassungen in die inzwischen (Sprint 29) extrahierten `handleSessionStart`/`handleSessionEnd`/`recoverFromSafeMode`/`handleWSDisconnect`-Methoden übertragen werden statt in die ursprünglichen (inzwischen aufgelösten) Inline-Handler.
+- Verifiziert: `go build`/`go vet ./...` sauber, `go test ./... -race` grün für alle Pakete außer den erwartbaren `tests/integration`-Fehlschlägen (kein laufender Docker-Teststack).
 
 ## Sprint 25 — Audio-Benachrichtigungen ✅
 2026-07-16 → [tasks/sprints/25-audio-benachrichtigungen.md](sprints/25-audio-benachrichtigungen.md)

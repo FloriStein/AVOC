@@ -27,6 +27,12 @@ async function loadSchemas() {
 
 loadSchemas()
 
+// Fallback-Ordinalzahlen für CommandType, falls gen/ noch nicht geladen ist (proto/control.proto).
+// Nur der Edge-Case-Pfad vor loadSchemas()-Abschluss nutzt diese Werte.
+const COMMAND_TYPE_STEER_FALLBACK = 1
+const COMMAND_TYPE_THROTTLE_FALLBACK = 2
+const COMMAND_TYPE_BRAKE_FALLBACK = 3
+
 const generateULID = monotonicFactory()
 const INTERVAL_MS = 50 // 20 Hz
 const MOVE_KEYS = new Set([
@@ -96,14 +102,14 @@ export function useControls(
         const bv = gp.buttons[6]?.value ?? 0
         if (sv !== 0 || tv !== 0 || bv > 0.1) {
           wasInputActiveRef.current = true
-          if (sv !== 0) sendCmd(CommandType?.STEER ?? 1, sv)
-          if (tv !== 0) sendCmd(CommandType?.THROTTLE ?? 2, tv)
-          if (bv > 0.1) sendCmd(CommandType?.BRAKE ?? 3, bv)
+          if (sv !== 0) sendCmd(CommandType?.STEER ?? COMMAND_TYPE_STEER_FALLBACK, sv)
+          if (tv !== 0) sendCmd(CommandType?.THROTTLE ?? COMMAND_TYPE_THROTTLE_FALLBACK, tv)
+          if (bv > 0.1) sendCmd(CommandType?.BRAKE ?? COMMAND_TYPE_BRAKE_FALLBACK, bv)
           setSteer(sv); setThrottle(tv); setActiveMode('gamepad')
         } else {
           if (wasInputActiveRef.current) {
-            sendCmd(CommandType?.STEER ?? 1, 0)
-            sendCmd(CommandType?.THROTTLE ?? 2, 0)
+            sendCmd(CommandType?.STEER ?? COMMAND_TYPE_STEER_FALLBACK, 0)
+            sendCmd(CommandType?.THROTTLE ?? COMMAND_TYPE_THROTTLE_FALLBACK, 0)
             wasInputActiveRef.current = false
           }
           setSteer(0); setThrottle(0); setActiveMode('none')
@@ -118,8 +124,8 @@ export function useControls(
         const { x, y } = joyPosRef.current
         const sv = x * s
         const tv = y * s
-        if (Math.abs(sv) > 0.01) sendCmd(CommandType?.STEER ?? 1, sv)
-        if (Math.abs(tv) > 0.01) sendCmd(CommandType?.THROTTLE ?? 2, tv)
+        if (Math.abs(sv) > 0.01) sendCmd(CommandType?.STEER ?? COMMAND_TYPE_STEER_FALLBACK, sv)
+        if (Math.abs(tv) > 0.01) sendCmd(CommandType?.THROTTLE ?? COMMAND_TYPE_THROTTLE_FALLBACK, tv)
         setSteer(sv); setThrottle(tv); setActiveMode('joystick')
         return
       }
@@ -134,13 +140,13 @@ export function useControls(
 
       if (sv !== 0 || tv !== 0) {
         wasInputActiveRef.current = true
-        if (sv !== 0) sendCmd(CommandType?.STEER ?? 1, sv * s)
-        if (tv !== 0) sendCmd(CommandType?.THROTTLE ?? 2, tv * s)
+        if (sv !== 0) sendCmd(CommandType?.STEER ?? COMMAND_TYPE_STEER_FALLBACK, sv * s)
+        if (tv !== 0) sendCmd(CommandType?.THROTTLE ?? COMMAND_TYPE_THROTTLE_FALLBACK, tv * s)
         setSteer(sv * s); setThrottle(tv * s); setActiveMode('keyboard')
       } else {
         if (wasInputActiveRef.current) {
-          sendCmd(CommandType?.STEER ?? 1, 0)
-          sendCmd(CommandType?.THROTTLE ?? 2, 0)
+          sendCmd(CommandType?.STEER ?? COMMAND_TYPE_STEER_FALLBACK, 0)
+          sendCmd(CommandType?.THROTTLE ?? COMMAND_TYPE_THROTTLE_FALLBACK, 0)
           wasInputActiveRef.current = false
         }
         setSteer(0); setThrottle(0); setActiveMode('none')
