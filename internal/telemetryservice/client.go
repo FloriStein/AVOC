@@ -22,31 +22,34 @@ const (
 
 // Client manages the MQTT connection and caches the latest TelemetryEvent per vehicle.
 type Client struct {
-	broker   string
-	username string
-	password string
-	client   MQTTConnection
-	mu       sync.RWMutex
-	latest   map[string]*telemetryv1.TelemetryEvent
+	broker     string
+	username   string
+	password   string
+	caCertPath string
+	client     MQTTConnection
+	mu         sync.RWMutex
+	latest     map[string]*telemetryv1.TelemetryEvent
 }
 
-func NewClient(broker, username, password string) *Client {
+func NewClient(broker, username, password, caCertPath string) *Client {
 	return &Client{
-		broker:   broker,
-		username: username,
-		password: password,
-		latest:   make(map[string]*telemetryv1.TelemetryEvent),
+		broker:     broker,
+		username:   username,
+		password:   password,
+		caCertPath: caCertPath,
+		latest:     make(map[string]*telemetryv1.TelemetryEvent),
 	}
 }
 
 // Connect establishes the MQTT connection with automatic reconnect.
 func (c *Client) Connect() error {
-	c.client = NewPahoConnection(
+	conn, err := NewPahoConnection(
 		PahoConnectionConfig{
-			Broker:   c.broker,
-			Username: c.username,
-			Password: c.password,
-			ClientID: "avoc-telemetry-service",
+			Broker:     c.broker,
+			Username:   c.username,
+			Password:   c.password,
+			ClientID:   "avoc-telemetry-service",
+			CACertPath: c.caCertPath,
 		},
 		func() {
 			svcLog.Info("MQTT connected", "broker", c.broker)
@@ -56,6 +59,10 @@ func (c *Client) Connect() error {
 			svcLog.Warn("MQTT connection lost", "error", err)
 		},
 	)
+	if err != nil {
+		return err
+	}
+	c.client = conn
 	return c.client.Connect()
 }
 

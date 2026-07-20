@@ -13,7 +13,7 @@ import (
 )
 
 func TestTelemetryMux_GetLatest_MissingVehicleID(t *testing.T) {
-	client := telemetryservice.NewClient("test-broker:1883", "", "")
+	client := telemetryservice.NewClient("test-broker:1883", "", "", "")
 	mux := newTelemetryMux(client)
 
 	req := httptest.NewRequest(http.MethodGet, "/telemetry/latest/", nil)
@@ -24,7 +24,7 @@ func TestTelemetryMux_GetLatest_MissingVehicleID(t *testing.T) {
 }
 
 func TestTelemetryMux_GetLatest_UnknownVehicle_NotFound(t *testing.T) {
-	client := telemetryservice.NewClient("test-broker:1883", "", "")
+	client := telemetryservice.NewClient("test-broker:1883", "", "", "")
 	mux := newTelemetryMux(client)
 
 	req := httptest.NewRequest(http.MethodGet, "/telemetry/latest/unknown-vehicle", nil)
@@ -35,7 +35,7 @@ func TestTelemetryMux_GetLatest_UnknownVehicle_NotFound(t *testing.T) {
 }
 
 func TestTelemetryMux_Health(t *testing.T) {
-	client := telemetryservice.NewClient("test-broker:1883", "", "")
+	client := telemetryservice.NewClient("test-broker:1883", "", "", "")
 	mux := newTelemetryMux(client)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)

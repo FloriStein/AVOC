@@ -166,5 +166,6 @@ Unterschiede zu `docker-compose.yml` (Entwicklung):
 |-------|----------|
 | Migration zu ECR für Produktivbetrieb | ADR-020 möglich |
 | Audit Store Backup-Strategie (Postgres `postgres-data`-Volume auf S3) | ✅ Sprint 44 — `scripts/backup-audit-store.sh` (täglich, `pg_dump`+`gzip`+S3), Cron-Registrierung via `scripts/deploy.sh`, S3-Bucket-Name per SSM (`/avoc/prod/backup-bucket-name`), 30-Tage-Lifecycle-Regel im CDK-Stack |
-| HTTPS / TLS-Terminierung (Let's Encrypt / ACM) | Offen — für Testphase HTTP akzeptabel |
-| MQTT-Authentifizierung (Mosquitto mit Passwort-File) | Offen — für Testphase ohne Auth |
+| HTTPS / TLS-Terminierung (Let's Encrypt / ACM statt Self-Signed) | Offen — Self-Signed-Zertifikat seit ✅ Sprint 10 im Einsatz, echte CA für Produktivbetrieb noch offen |
+| MQTT-Authentifizierung (Mosquitto mit Passwort-File) | ✅ Sprint 38 |
+| MQTT-Transportverschlüsselung (TLS/MQTTS) | ✅ Sprint 40 — Details `tasks/sprints/40-tls-mqtts-haertung.md` |

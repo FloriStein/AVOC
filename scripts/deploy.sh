@@ -10,7 +10,9 @@
 #   - docker-compose.prod.yml liegt in APP_DIR
 #   - mediamtx/mediamtx.yml liegt in APP_DIR (aws s3 cp ... ~/app/mediamtx/mediamtx.yml)
 #   - mosquitto/mosquitto.conf liegt in APP_DIR (mosquitto/passwd wird von diesem Skript aus
-#     dem SSM-Secret generiert, siehe MQTTAUTH-04 — nicht committen/manuell anlegen)
+#     dem SSM-Secret generiert, siehe MQTTAUTH-04 — nicht committen/manuell anlegen; CA +
+#     Server-Zertifikat unter mosquitto/{ca,cert,key}.pem werden ebenfalls von diesem Skript
+#     generiert, siehe MQTTS-01)
 #
 # Verwendung:
 #   AWS_REGION=eu-central-1 VERSION=latest bash ~/app/deploy.sh
@@ -112,6 +114,31 @@ if [ ! -f "$SSL_DIR/cert.pem" ]; then
   echo "  Zertifikat erstellt: $SSL_DIR/cert.pem"
 else
   echo "  SSL-Zertifikat vorhanden: $SSL_DIR/cert.pem"
+fi
+
+# ─── Mosquitto CA + Server-Zertifikat (MQTTS-01) ──────────────────────────────
+# Seit Sprint 40 verlangt Mosquitto TLS (Port 8883) statt Klartext. Die CA ist — anders als
+# JWT_SECRET/MQTT_PASSWORD — kein Geheimnis (nur der öffentliche Client-Vertrauensanker), daher
+# lokal auf dem EC2-Host generiert statt aus SSM geladen (siehe ADR-019 Folge-Entscheidungen).
+# Einmalig generieren; bei erneutem Deploy wird das Paar wiederverwendet (Muster wie SSL-Zertifikat
+# oben).
+
+MQTT_DIR="$APP_DIR/mosquitto"
+mkdir -p "$MQTT_DIR"
+if [ ! -f "$MQTT_DIR/cert.pem" ]; then
+  echo "Generiere Mosquitto-CA + Server-Zertifikat (CN=mosquitto)..."
+  openssl genrsa -out "$MQTT_DIR/ca-key.pem" 2048 2>/dev/null
+  openssl req -x509 -new -key "$MQTT_DIR/ca-key.pem" -days 365 -out "$MQTT_DIR/ca.pem" \
+    -subj "/CN=avoc-mosquitto-ca" 2>/dev/null
+  openssl genrsa -out "$MQTT_DIR/key.pem" 2048 2>/dev/null
+  openssl req -new -key "$MQTT_DIR/key.pem" -subj "/CN=mosquitto" -out "$MQTT_DIR/server.csr" 2>/dev/null
+  openssl x509 -req -in "$MQTT_DIR/server.csr" -CA "$MQTT_DIR/ca.pem" -CAkey "$MQTT_DIR/ca-key.pem" \
+    -CAcreateserial -days 365 -out "$MQTT_DIR/cert.pem" \
+    -extfile <(printf "subjectAltName=DNS:mosquitto,DNS:localhost,IP:127.0.0.1") 2>/dev/null
+  rm -f "$MQTT_DIR/server.csr" "$MQTT_DIR/ca.srl" "$MQTT_DIR/ca-key.pem"
+  echo "  Zertifikat erstellt: $MQTT_DIR/cert.pem (CA: $MQTT_DIR/ca.pem)"
+else
+  echo "  Mosquitto-Zertifikat vorhanden: $MQTT_DIR/cert.pem"
 fi
 
 # ─── Mosquitto Passwort-File (MQTTAUTH-04) ────────────────────────────────────

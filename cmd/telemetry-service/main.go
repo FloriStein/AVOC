@@ -23,8 +23,9 @@ func main() {
 	}
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
+	caCertPath := os.Getenv("MQTT_CA_CERT")
 
-	client := telemetryservice.NewClient(broker, username, password)
+	client := telemetryservice.NewClient(broker, username, password, caCertPath)
 	if err := client.Connect(); err != nil {
 		log.Fatal("MQTT connect failed", "broker", broker, "error", err)
 	}

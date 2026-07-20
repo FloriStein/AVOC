@@ -116,22 +116,28 @@ services:
       - "8083:8083"
     environment:
       TELEMETRY_PORT: "8083"
-      MQTT_BROKER: "mosquitto:1883"
+      MQTT_BROKER: "mosquitto:8883"
       MQTT_USERNAME: ${MQTT_USERNAME:-avoc}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-changeme}
+      MQTT_CA_CERT: /mosquitto-ca/ca.pem
+    volumes:
+      - ../mosquitto/certs/ca.pem:/mosquitto-ca/ca.pem:ro
     depends_on:
       - mosquitto
     networks:
       - avoc-net
 
-  # ─── MQTT Broker ───────────────────────────────────────────────────────────
+  # ─── MQTT Broker (TLS, Sprint 40 MQTTS-04) ─────────────────────────────────
   mosquitto:
     image: eclipse-mosquitto:2
     ports:
-      - "1883:1883"
+      - "8883:8883"
     volumes:
       - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ../mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ../mosquitto/certs/ca.pem:/mosquitto/config/ca.pem:ro
+      - ../mosquitto/certs/cert.pem:/mosquitto/config/cert.pem:ro
+      - ../mosquitto/certs/key.pem:/mosquitto/config/key.pem:ro
     networks:
       - avoc-net
 
@@ -164,9 +170,12 @@ services:
       FLEET_PORT: "8085"
       DATABASE_URL: "postgres://avoc:${DB_PASSWORD:-avoc_dev_secret}@postgres:5432/avoc?sslmode=disable"
       JWT_SECRET: ${JWT_SECRET}
-      MQTT_BROKER: "mosquitto:1883"
+      MQTT_BROKER: "mosquitto:8883"
       MQTT_USERNAME: ${MQTT_USERNAME:-avoc}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-changeme}
+      MQTT_CA_CERT: /mosquitto-ca/ca.pem
+    volumes:
+      - ../mosquitto/certs/ca.pem:/mosquitto-ca/ca.pem:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -262,9 +271,10 @@ services:
       VEHICLE_ID: "vehicle-001"
       CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"
       JWT_SECRET: ${JWT_SECRET}
-      MQTT_BROKER: "mosquitto:1883"
+      MQTT_BROKER: "mosquitto:8883"
       MQTT_USERNAME: ${MQTT_USERNAME:-avoc}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-changeme}
+      MQTT_CA_CERT: /mosquitto-ca/ca.pem
       # FLEET-04: zusätzliche autonome Flottenfahrzeuge (ADR-029), unabhängig vom
       # Direct-Teleop-Fahrzeug oben — Format "id:typ,id:typ", publizieren über MQTT
       # (fleet/{id}/status|alert, siehe internal/fleetgateway).
@@ -273,6 +283,8 @@ services:
       # statt hartcodierter Demo-Koordinaten; fällt automatisch auf die Demo-Koordinaten zurück,
       # falls fleet-service nicht erreichbar ist oder noch keine 2 geo-verorteten Stationen hat.
       FLEET_SERVICE_URL: "http://fleet-service:8085"
+    volumes:
+      - ../mosquitto/certs/ca.pem:/mosquitto-ca/ca.pem:ro
     depends_on:
       - control-server
       - fleet-service
@@ -293,9 +305,12 @@ services:
       VEHICLE_ID: "vehicle-002"
       CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"
       JWT_SECRET: ${JWT_SECRET}
-      MQTT_BROKER: "mosquitto:1883"
+      MQTT_BROKER: "mosquitto:8883"
       MQTT_USERNAME: ${MQTT_USERNAME:-avoc}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-changeme}
+      MQTT_CA_CERT: /mosquitto-ca/ca.pem
+    volumes:
+      - ../mosquitto/certs/ca.pem:/mosquitto-ca/ca.pem:ro
     depends_on:
       - control-server
       - mosquitto

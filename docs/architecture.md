@@ -71,9 +71,14 @@ sich mit dem hier gewählten Design (Recherche 2026-07-10, siehe `CONTEXT.MD` Ar
 - Asynchron, fire-and-forget (ADR-012b)
 - Authentifiziert via Mosquitto `password_file` (Sprint 38, MQTTAUTH-01..06) — Broker verweigert
   anonyme Verbindungen (`allow_anonymous false`), alle 3 Go-Clients (`telemetryservice`,
-  `fleetgateway`, `vehicle-mock`) setzen `MQTT_USERNAME`/`MQTT_PASSWORD`. Transportverschlüsselung
-  (TLS/MQTTS) bewusst nicht Teil dieses Sprints — Klartext-Credentials über das interne
-  `avoc-net`-Bridge-Netzwerk, analog `DATABASE_URL`.
+  `fleetgateway`, `vehicle-mock`) setzen `MQTT_USERNAME`/`MQTT_PASSWORD`.
+- Transportverschlüsselung: TLS-Listener Port 8883 (Sprint 40, MQTTS-01..06) — Port 1883 hart
+  abgeschaltet, kein Parallelbetrieb. Projekteigene, selbstsignierte CA (`CN=avoc-mosquitto-ca`)
+  signiert das Mosquitto-Server-Zertifikat (`CN=mosquitto`). Alle 3 Go-Clients verbinden per
+  `tls://` mit echter Server-Zertifikatsprüfung (`SetTLSConfig`, `RootCAs` aus `MQTT_CA_CERT`,
+  kein `InsecureSkipVerify` — CLAUDE.MD §0), CA-Lade-Logik zentral in `pkg/mqtttls`. Kein mTLS
+  (Client-Zertifikate) — würde die bestehende Username/Passwort-Authentifizierung duplizieren,
+  ohne zusätzlichen Sicherheitsgewinn in diesem Vertrauensmodell.
 
 ### Safety Event Bus Layer (Safety Channel — ADR-002)
 

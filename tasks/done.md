@@ -32,13 +32,21 @@ siehe `tasks/backlog.md`).
 ## Sprint 41 — CI-Gates einführen (ADR-006-Bestandsaufnahme) ✅
 2026-07-20 → [tasks/sprints/41-ci-gates-einfuehren.md](sprints/41-ci-gates-einfuehren.md)
 (Branch `feature/fleet-service-foundation-cigates`, Basis `feature/fleet-service-foundation-sprint35`
-— Sprint 40 (TLS/MQTTS-Härtung) läuft parallel auf einem anderen Worktree/Branch und ist auf
-diesem Branch noch nicht gemergt, siehe Merge-Hinweis im Sprint-Dokument.)
+— zum Zeitpunkt dieses Sprints war Sprint 40 (TLS/MQTTS-Härtung, eigener Fokus direkt im
+`sprint35`-Worktree, kein separater Branch) noch nicht umgesetzt; inzwischen nachgeholt, siehe
+Sprint 40 unten.)
 - Schließt größten Befund einer ADR-006/CLAUDE.MD-§17-Bestandsaufnahme: `.github/workflows/` hatte nur non-blocking `lint.yml`, die dokumentierte Pipeline existierte nicht. 4 neue Workflow-Dateien: `test-go.yml` (3 blockierende Jobs: Unit/Safety/Integration), `test-frontend.yml` (blockierend, Vitest), `test-latency.yml` (bewusst non-blocking, Shared-Runner-Rauschen), `test-e2e.yml` (non-blocking Playwright-Informational-Job). Neuer `Makefile`-Target `test-unit`.
 - Zwei vorbestehende Bugs gefunden und behoben: `make test-k6` lief nie (fehlendes `-i` bei `docker run`, Skript kam nie im Container an), `frontend/src/gen/` (gitignored, build-time generiert) fehlte für CI-Vitest-Läufe — inkl. dem bekannten Root-owned-`node_modules`-Problem aus Docker-basierter Proto-Generierung (README.md-Troubleshooting-Muster wiederverwendet).
 - Zwei weitere Bugs gefunden, bewusst NICHT gefixt (Testverhalten statt CI-Wiring, siehe `DECISIONS.MD`): `BenchmarkControlACKRoundtrip` skipt immer (fehlender `session_id`-Parameter, ADR-025-Drift), `dashboard.spec.ts` erwartet Dashboard-Inhalt ohne Login-Pflicht.
 - Branch-Protection (Required Status Checks) vorbereitet/dokumentiert (`README.md`), bewusst nicht aktiviert — geteiltes Repo-Setting, braucht explizite Nutzerbestätigung.
 - Verifiziert: `go build`/`go vet` sauber, alle 3 `test-go.yml`-Jobs + `test-frontend.yml` je 2× frisch lokal grün (keine Flakiness). Alle 5 Workflow-Dateien `actionlint`-sauber. Echte GitHub-Actions-Läufe stehen aus (kein Push in diesem Sprint, siehe Sprint-Dokument).
+
+## Sprint 40 — TLS/MQTTS-Härtung für Mosquitto ✅
+2026-07-19 (geplant) / 2026-07-20 (umgesetzt) → [tasks/sprints/40-tls-mqtts-haertung.md](sprints/40-tls-mqtts-haertung.md)
+- Schließt den bei Sprint 38 (MQTT-Authentifizierung) bewusst ausgeklammerten Punkt Transportverschlüsselung: Mosquitto TLS-Listener Port 8883 (Port 1883 hart abgeschaltet, kein Parallelbetrieb), projekteigene selbstsignierte CA signiert das Mosquitto-Server-Zertifikat. Alle 3 Go-MQTT-Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`) verbinden per `tls://` mit echter Zertifikatsprüfung (kein `InsecureSkipVerify`), CA-Lade-Logik zentral in neuem `pkg/mqtttls` (GOSTYLE Rule 3.1). Kein mTLS, kein neues ADR (ADR-003 deckt Mosquitto bereits ab).
+- Fund während der Umsetzung: das ursprünglich geplante Zertifikat (`SAN DNS:mosquitto`) ließ host-seitige Go-Integrationstests an Go's Hostname-Verifikation scheitern (`localhost:18883` ≠ `mosquitto`) — SAN um `DNS:localhost,IP:127.0.0.1` erweitert (Dev+Test+Prod-Erzeugung in `scripts/deploy.sh`).
+- Neuer Gegenprobe-Test `TestMQTTGateway_ConnectionRejectedWithoutValidCA` (echte Dev-CA gegen Test-Broker, kein synthetischer Mismatch) — verifiziert manuell gegen einen laufenden Broker.
+- Verifiziert: `go build`/`go vet`/`gofmt` sauber, `go test ./... -race` grün, `make test-integration` (32/32 gegen echten TLS-Broker) grün, manuelle `openssl s_client`- und `mosquitto_pub`/`sub`-Roundtrip-Verifikation über TLS.
 
 ## Sprint 39 — Testabdeckung `safety-service`/`webrtc-sfu`/`internal/recording` ✅
 2026-07-19 → [tasks/sprints/39-testabdeckung-sicherheitsrelevanter-services.md](sprints/39-testabdeckung-sicherheitsrelevanter-services.md)

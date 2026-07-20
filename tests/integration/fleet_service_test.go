@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -321,15 +320,7 @@ func TestIntegration_FleetService_WSBroadcast_DeliversAlertCreatedAndAcknowledge
 	require.NoError(t, err)
 	defer conn.Close()
 
-	mqttClient := mqtt.NewClient(mqtt.NewClientOptions().
-		AddBroker(mqttTestBroker).
-		SetClientID("integration-test-fleet-alert-pub").
-		SetUsername(mqttTestUsername).
-		SetPassword(mqttTestPassword).
-		SetConnectTimeout(5 * time.Second))
-	connToken := mqttClient.Connect()
-	require.True(t, connToken.WaitTimeout(5*time.Second), "MQTT connect timed out")
-	require.NoError(t, connToken.Error(), "MQTT connect failed")
+	mqttClient := connectTestMQTTClient(t, "integration-test-fleet-alert-pub")
 	defer mqttClient.Disconnect(250)
 
 	const vehicleID = "itg-ws-alert-vehicle"
@@ -376,15 +367,7 @@ func TestIntegration_FleetService_AlertEngine_LowBatteryTriggersThresholdAlert(t
 	require.NoError(t, err)
 	defer conn.Close()
 
-	mqttClient := mqtt.NewClient(mqtt.NewClientOptions().
-		AddBroker(mqttTestBroker).
-		SetClientID("integration-test-fleet-alertengine-pub").
-		SetUsername(mqttTestUsername).
-		SetPassword(mqttTestPassword).
-		SetConnectTimeout(5 * time.Second))
-	connToken := mqttClient.Connect()
-	require.True(t, connToken.WaitTimeout(5*time.Second), "MQTT connect timed out")
-	require.NoError(t, connToken.Error(), "MQTT connect failed")
+	mqttClient := connectTestMQTTClient(t, "integration-test-fleet-alertengine-pub")
 	defer mqttClient.Disconnect(250)
 
 	publishBattery := func(pct float64) {

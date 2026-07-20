@@ -2,6 +2,8 @@ package telemetryservice
 
 import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+
+	"avoc/pkg/mqtttls"
 )
 
 // MQTTConnection is the narrow MQTT port for telemetry-service (ADR-031, HEXTELE-01) — lets
@@ -17,10 +19,11 @@ type MQTTConnection interface {
 
 // PahoConnectionConfig bundles PahoConnection's construction parameters (GOSTYLE Rule 2.3).
 type PahoConnectionConfig struct {
-	Broker   string
-	Username string
-	Password string
-	ClientID string
+	Broker     string
+	Username   string
+	Password   string
+	ClientID   string
+	CACertPath string
 }
 
 // PahoConnection is the production MQTTConnection, backed by paho.mqtt.golang.
@@ -30,12 +33,19 @@ type PahoConnection struct {
 
 var _ MQTTConnection = (*PahoConnection)(nil)
 
-// NewPahoConnection builds a paho MQTT client with automatic reconnect. onConnect fires after
-// every successful (re)connect, including reconnects after a drop — paho does not persist
-// subscriptions across a reconnect, so callers use onConnect to (re-)subscribe.
-func NewPahoConnection(cfg PahoConnectionConfig, onConnect func(), onConnectionLost func(error)) *PahoConnection {
+// NewPahoConnection builds a paho MQTT client with automatic reconnect over TLS (MQTTS-03,
+// Sprint 40 — verified against CACertPath, no InsecureSkipVerify). onConnect fires after every
+// successful (re)connect, including reconnects after a drop — paho does not persist subscriptions
+// across a reconnect, so callers use onConnect to (re-)subscribe.
+func NewPahoConnection(cfg PahoConnectionConfig, onConnect func(), onConnectionLost func(error)) (*PahoConnection, error) {
+	tlsConfig, err := mqtttls.LoadClientConfig(cfg.CACertPath)
+	if err != nil {
+		return nil, err
+	}
+
 	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://" + cfg.Broker).
+		AddBroker("tls://" + cfg.Broker).
+		SetTLSConfig(tlsConfig).
 		SetClientID(cfg.ClientID).
 		SetUsername(cfg.Username).
 		SetPassword(cfg.Password).
@@ -48,7 +58,7 @@ func NewPahoConnection(cfg PahoConnectionConfig, onConnect func(), onConnectionL
 			onConnectionLost(err)
 		})
 
-	return &PahoConnection{client: mqtt.NewClient(opts)}
+	return &PahoConnection{client: mqtt.NewClient(opts)}, nil
 }
 
 func (p *PahoConnection) Connect() error {

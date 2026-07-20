@@ -8,6 +8,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"avoc/pkg/mqtttls"
 	"avoc/pkg/ulid"
 )
 
@@ -24,11 +25,18 @@ type MQTTGateway struct {
 	alertSubs  []func(VehicleAlertEvent)
 }
 
-// NewMQTTGateway connects to broker (e.g. "tcp://mosquitto:1883") and subscribes to the fleet
+// NewMQTTGateway connects to broker (e.g. "tls://mosquitto:8883") and subscribes to the fleet
 // topic wildcards. Returns an error if the initial connection fails — callers should treat this
-// the same way pkg/db.WaitForReady is used elsewhere (retry at the call site if needed).
-func NewMQTTGateway(broker, username, password string) (*MQTTGateway, error) {
+// the same way pkg/db.WaitForReady is used elsewhere (retry at the call site if needed). caCertPath
+// points at the PEM-encoded CA Mosquitto's server certificate was signed with (MQTTS-03, Sprint 40)
+// — TLS is verified, never InsecureSkipVerify (CLAUDE.MD §0).
+func NewMQTTGateway(broker, username, password, caCertPath string) (*MQTTGateway, error) {
 	g := &MQTTGateway{}
+
+	tlsConfig, err := mqtttls.LoadClientConfig(caCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("fleetgateway: %w", err)
+	}
 
 	// A fixed ClientID would collide with every other MQTTGateway instance connected to the same
 	// broker (a second real fleet-service, another test run, ...) — MQTT brokers evict the
@@ -38,6 +46,7 @@ func NewMQTTGateway(broker, username, password string) (*MQTTGateway, error) {
 	// fleet-service container, FLEET-05).
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
+		SetTLSConfig(tlsConfig).
 		SetClientID("fleet-service-gateway-" + ulid.Generate()).
 		SetUsername(username).
 		SetPassword(password).

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+
+	"avoc/pkg/mqtttls"
 )
 
 // Compile-time check: MQTTGateway must satisfy the FleetGateway interface.
@@ -19,7 +21,7 @@ func mqttTestBroker(t *testing.T) string {
 	if broker == "" {
 		t.Skip("MQTT_BROKER not set — skipping Mosquitto integration test")
 	}
-	return "tcp://" + broker
+	return "tls://" + broker
 }
 
 // mqttTestCredentials reads MQTT_USERNAME/MQTT_PASSWORD — set alongside MQTT_BROKER when running
@@ -28,11 +30,23 @@ func mqttTestCredentials() (string, string) {
 	return os.Getenv("MQTT_USERNAME"), os.Getenv("MQTT_PASSWORD")
 }
 
+// mqttTestCACertPath reads MQTT_CA_CERT — set alongside MQTT_BROKER when running against a real
+// Mosquitto instance (MQTTS-05, Sprint 40: broker now requires TLS with a verified server cert).
+func mqttTestCACertPath(t *testing.T) string {
+	t.Helper()
+	path := os.Getenv("MQTT_CA_CERT")
+	if path == "" {
+		t.Skip("MQTT_CA_CERT not set — skipping Mosquitto integration test")
+	}
+	return path
+}
+
 func TestMQTTGateway_ReceivesStatusPublishedByExternalClient(t *testing.T) {
 	broker := mqttTestBroker(t)
 	username, password := mqttTestCredentials()
+	caCertPath := mqttTestCACertPath(t)
 
-	gw, err := NewMQTTGateway(broker, username, password)
+	gw, err := NewMQTTGateway(broker, username, password, caCertPath)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
@@ -48,7 +62,7 @@ func TestMQTTGateway_ReceivesStatusPublishedByExternalClient(t *testing.T) {
 		close(got)
 	})
 
-	pub := connectPublisher(t, broker, username, password)
+	pub := connectPublisher(t, broker, username, password, caCertPath)
 	defer pub.Disconnect(250)
 
 	battery := 42.5
@@ -71,8 +85,9 @@ func TestMQTTGateway_ReceivesStatusPublishedByExternalClient(t *testing.T) {
 func TestMQTTGateway_ReceivesAlertPublishedByExternalClient(t *testing.T) {
 	broker := mqttTestBroker(t)
 	username, password := mqttTestCredentials()
+	caCertPath := mqttTestCACertPath(t)
 
-	gw, err := NewMQTTGateway(broker, username, password)
+	gw, err := NewMQTTGateway(broker, username, password, caCertPath)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
@@ -88,7 +103,7 @@ func TestMQTTGateway_ReceivesAlertPublishedByExternalClient(t *testing.T) {
 		close(got)
 	})
 
-	pub := connectPublisher(t, broker, username, password)
+	pub := connectPublisher(t, broker, username, password, caCertPath)
 	defer pub.Disconnect(250)
 
 	event := VehicleAlertEvent{VehicleID: "mqtt-test-v2", Severity: "critical", Message: "Hindernis erkannt", Timestamp: time.Now()}
@@ -110,8 +125,9 @@ func TestMQTTGateway_ReceivesAlertPublishedByExternalClient(t *testing.T) {
 func TestMQTTGateway_MalformedPayload_DoesNotCrashSubscriber(t *testing.T) {
 	broker := mqttTestBroker(t)
 	username, password := mqttTestCredentials()
+	caCertPath := mqttTestCACertPath(t)
 
-	gw, err := NewMQTTGateway(broker, username, password)
+	gw, err := NewMQTTGateway(broker, username, password, caCertPath)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
@@ -125,7 +141,7 @@ func TestMQTTGateway_MalformedPayload_DoesNotCrashSubscriber(t *testing.T) {
 		mu.Unlock()
 	})
 
-	pub := connectPublisher(t, broker, username, password)
+	pub := connectPublisher(t, broker, username, password, caCertPath)
 	defer pub.Disconnect(250)
 
 	// Malformed JSON on the status topic — must be silently dropped, not panic the process.
@@ -157,14 +173,15 @@ func TestMQTTGateway_MalformedPayload_DoesNotCrashSubscriber(t *testing.T) {
 func TestMQTTGateway_DispatchTask_PublishesToTaskTopic(t *testing.T) {
 	broker := mqttTestBroker(t)
 	username, password := mqttTestCredentials()
+	caCertPath := mqttTestCACertPath(t)
 
-	gw, err := NewMQTTGateway(broker, username, password)
+	gw, err := NewMQTTGateway(broker, username, password, caCertPath)
 	if err != nil {
 		t.Fatalf("NewMQTTGateway: %v", err)
 	}
 	t.Cleanup(gw.Close)
 
-	sub := connectPublisher(t, broker, username, password) // reused as a plain subscriber client
+	sub := connectPublisher(t, broker, username, password, caCertPath) // reused as a plain subscriber client
 	defer sub.Disconnect(250)
 
 	got := make(chan []byte, 1)
@@ -193,10 +210,36 @@ func TestMQTTGateway_DispatchTask_PublishesToTaskTopic(t *testing.T) {
 	}
 }
 
-func connectPublisher(t *testing.T, broker, username, password string) mqtt.Client {
+// TestMQTTGateway_ConnectionRejectedWithoutValidCA is the TLS counterpart to Sprint 38's
+// "anonymous connection rejected" check (MQTTS-05): a CA that did not sign the broker's server
+// certificate must make the connection fail its TLS handshake, not silently fall back to an
+// unverified/cleartext connection (CLAUDE.MD §0). Uses the dev CA (infrastructure/mosquitto/
+// certs/ca.pem) against the test broker, which is signed by a different, independent CA
+// (tests/mosquitto-certs/ca.pem, see MQTTS-01) — a real mismatch, not a synthetic one.
+func TestMQTTGateway_ConnectionRejectedWithoutValidCA(t *testing.T) {
+	broker := mqttTestBroker(t)
+	username, password := mqttTestCredentials()
+
+	wrongCACertPath := "../../infrastructure/mosquitto/certs/ca.pem"
+	if _, err := os.Stat(wrongCACertPath); err != nil {
+		t.Fatalf("wrong CA fixture missing: %v", err)
+	}
+
+	_, err := NewMQTTGateway(broker, username, password, wrongCACertPath)
+	if err == nil {
+		t.Fatal("expected connection to fail against a CA that did not sign the broker's certificate, but it succeeded")
+	}
+}
+
+func connectPublisher(t *testing.T, broker, username, password, caCertPath string) mqtt.Client {
 	t.Helper()
+	tlsConfig, err := mqtttls.LoadClientConfig(caCertPath)
+	if err != nil {
+		t.Fatalf("LoadClientConfig: %v", err)
+	}
 	client := mqtt.NewClient(mqtt.NewClientOptions().
 		AddBroker(broker).
+		SetTLSConfig(tlsConfig).
 		SetClientID("fleetgateway-test-pub-" + t.Name()).
 		SetUsername(username).
 		SetPassword(password))

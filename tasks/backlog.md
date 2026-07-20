@@ -568,7 +568,7 @@ separat zu entscheidender ADR-031-Folgeschritt).
 
 ---
 
-## EPIC: TLS/MQTTS-Härtung für Mosquitto 🔄 Sprint 40
+## EPIC: TLS/MQTTS-Härtung für Mosquitto ✅ Sprint 40
 
 **Freigabe (2026-07-19):** Nutzerentscheidung gegenüber zwei Alternativen (Hexagonal-Migration
 Schritt 3 telemetry-service, Session-Recording-Storage-Entscheidung) — Begründung CLAUDE.MD §0
@@ -584,12 +584,12 @@ Go-MQTT-Verbindungsstellen, 3 Compose-Dateien, nginx-Zertifikats-Präzedenzfall 
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| MQTTS-01 | Zertifikatserzeugung: selbstsignierte CA + Mosquitto-Server-Zertifikat (Dev/Test committed, Prod via `scripts/deploy.sh` analog SSL-/Passwd-Muster) | S/M | 🔄 Sprint 40 | — |
-| MQTTS-02 | `mosquitto.conf`/`mosquitto-test.conf`/Prod-Konfiguration: `listener 1883` → `listener 8883` + `cafile`/`certfile`/`keyfile` | S | 🔄 Sprint 40 | MQTTS-01 |
-| MQTTS-03 | Go-Client-TLS an den 3 Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`): `tcp://`→`tls://`, `SetTLSConfig` mit `RootCAs`, neue `MQTT_CA_CERT`-Env-Var | M | 🔄 Sprint 40 | MQTTS-01 |
-| MQTTS-04 | Drei Compose-Dateien: Port 8883, CA/Cert/Key-Volume-Mounts, `MQTT_CA_CERT`-Env-Var an den 4 Consumer-Services | S/M | 🔄 Sprint 40 | MQTTS-01..03 |
-| MQTTS-05 | Testinfrastruktur: committetes Test-CA/Zertifikat-Paar, `mqtt_test.go`-Helper + 3 abhängige Testdateien auf TLS umstellen, Gegenprobe-Test „Verbindung ohne gültige CA abgelehnt" | S/M | 🔄 Sprint 40 | MQTTS-01..04 |
-| MQTTS-06 | Verifikation (`go build`/`go vet`/`go test ./...` + `make test-integration` gegen echten TLS-Broker) + Doku-Updates (`DECISIONS.MD`, `docs/architecture.md`, `tasks/backlog.md`) | S | 🔄 Sprint 40 | MQTTS-01..05 |
+| MQTTS-01 | Zertifikatserzeugung: selbstsignierte CA + Mosquitto-Server-Zertifikat (Dev/Test committed, Prod via `scripts/deploy.sh` analog SSL-/Passwd-Muster) | S/M | ✅ Sprint 40 | — |
+| MQTTS-02 | `mosquitto.conf`/`mosquitto-test.conf`/Prod-Konfiguration: `listener 1883` → `listener 8883` + `cafile`/`certfile`/`keyfile` | S | ✅ Sprint 40 | MQTTS-01 |
+| MQTTS-03 | Go-Client-TLS an den 3 Verbindungsstellen (`telemetryservice`, `fleetgateway`, `vehicle-mock`): `tcp://`→`tls://`, `SetTLSConfig` mit `RootCAs`, neue `MQTT_CA_CERT`-Env-Var | M | ✅ Sprint 40 | MQTTS-01 |
+| MQTTS-04 | Drei Compose-Dateien: Port 8883, CA/Cert/Key-Volume-Mounts, `MQTT_CA_CERT`-Env-Var an den 4 Consumer-Services | S/M | ✅ Sprint 40 | MQTTS-01..03 |
+| MQTTS-05 | Testinfrastruktur: committetes Test-CA/Zertifikat-Paar, `mqtt_test.go`-Helper + 3 abhängige Testdateien auf TLS umstellen, Gegenprobe-Test „Verbindung ohne gültige CA abgelehnt" | S/M | ✅ Sprint 40 | MQTTS-01..04 |
+| MQTTS-06 | Verifikation (`go build`/`go vet`/`go test ./...` + `make test-integration` gegen echten TLS-Broker) + Doku-Updates (`DECISIONS.MD`, `docs/architecture.md`, `tasks/backlog.md`) | S | ✅ Sprint 40 | MQTTS-01..05 |
 
 **Nicht Teil dieses Sprints:** mTLS/Client-Zertifikate (siehe Trust-Modell-Begründung oben),
 CA-Rotationsstrategie für Produktivbetrieb, SSM-Verteilung der CA (öffentliches Zertifikat, lokal
@@ -612,6 +612,11 @@ kein CI dafür. Nutzerentscheidung: dieser Befund wird priorisiert vor zwei klei
 falschen Typ — bleiben offene Folgepunkte unten). **Eingereiht nach Sprint 40 (TLS/MQTTS-Härtung)
 — wird erst zu Sprint 41, sobald Sprint 40 abgeschlossen ist**, `tasks/current-sprint.md` bleibt
 bis dahin unverändert Sprint 40.
+
+*Nachtrag:* Sprints 41-44 wurden in parallelen Worktrees geplant/umgesetzt, bevor Sprint 40s Code
+tatsächlich geschrieben wurde (Sprint 40 blieb als "Geplant, noch nicht begonnen" in
+`tasks/current-sprint.md` stehen, während 41-44 unabhängig liefen) — die ursprüngliche
+Reihenfolgen-Prämisse oben traf real nicht zu, alle fünf Sprints sind inzwischen ✅.
 
 **Architektur-Entscheidung (bei der Planung getroffen):**
 - **Latenz-Gate (`test-latency`/`test-k6`) bewusst non-blocking**, obwohl ADR-006 es als
