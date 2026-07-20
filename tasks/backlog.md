@@ -667,17 +667,40 @@ Reihenfolgen-Prämisse oben traf real nicht zu, alle fünf Sprints sind inzwisch
 | CIGATE-04 | `.github/workflows/test-latency.yml`: Go-Benchmark + k6, bewusst non-blocking (`continue-on-error: true`, begründeter Kommentar analog `lint.yml`) | S/M | ✅ Sprint 41 | CIGATE-01 |
 | CIGATE-05 | Bestehenden Playwright-Spec als non-blocking Informational-Job einbinden (kein Ausbau der Testtiefe) | S | ✅ Sprint 41 | — |
 | CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | ✅ Sprint 41 | CIGATE-02, CIGATE-03 |
-| CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | 🔶 Sprint 41 (siehe Hinweis unten) | CIGATE-01..06 |
+| CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | ✅ (Sprint 41 lokal + Nachtrag 2026-07-20 echte Actions-Läufe) | CIGATE-01..06 |
 
 **Hinweis zu CIGATE-07:** "2 aufeinanderfolgende grüne CI-Läufe" im Sinne von echten GitHub-Actions-
-Runs konnte in diesem Sprint nicht verifiziert werden, da kein Commit/Push erfolgte (Nutzervorgabe:
+Runs konnte in Sprint 41 selbst nicht verifiziert werden, da kein Commit/Push erfolgte (Nutzervorgabe:
 "nicht committen ohne ausdrückliche Aufforderung"). Ersatzweise wurden alle 3 blockierenden
 `test-go.yml`-Jobs sowie der `test-frontend.yml`-Job **lokal je 2× mit frischem Cache
 (`-count=1`)** gegen den jeweils echten Docker-Stack ausgeführt (siehe
 `tasks/sprints/41-ci-gates-einfuehren.md`, Abschnitt Ergebnisse) — durchgehend grün, keine
 Flakiness beobachtet. Alle 5 Workflow-Dateien wurden zusätzlich mit `actionlint` syntax-/
-semantik-geprüft (0 Findings). Die erste echte GitHub-Actions-Ausführung steht nach Push durch den
-Nutzer noch aus.
+semantik-geprüft (0 Findings).
+
+**Nachtrag (2026-07-20) — erste echte GitHub-Actions-Läufe:** Über einen dedizierten Test-PR
+(`test/ci-pipeline-verification` → `main`) zwei echte, aufeinanderfolgende Läufe beobachtet
+(Runs #3 und #4, `gh`-los über die öffentliche GitHub-REST-API ohne Auth abgefragt, da kein `gh`
+und kein Token in dieser Umgebung verfügbar waren — für ein öffentliches Repo reicht das für
+Run-/Job-Status, Logs/Artifacts brauchen dagegen Auth). Alle vier blockierenden Jobs (`unit`,
+`safety`, `integration` aus `test-go.yml`, `vitest` aus `test-frontend.yml`) liefen in beiden
+Runs auf echten `ubuntu-latest`-Runnern durch — echtes Grün, kein lokaler Ersatz mehr nötig.
+
+Dabei echten, vorher unbekannten Bug gefunden und behoben: der allererste echte Lauf von
+`test-e2e.yml` scheiterte mit `Cannot find module '@playwright/test'`, bevor überhaupt ein Test
+lief — `tests/e2e/dashboard.spec.ts` lag außerhalb von `frontend/`s `node_modules`-Baum, Node löst
+nackte Imports aber relativ zur eigenen Datei auf (Verzeichnis-Aufwärtssuche), nicht relativ zu
+`playwright.config.ts`. Nie zuvor aufgefallen, weil die Sprint-41-Verifikation nur die laufende App
+manuell prüfte (Chrome DevTools MCP), nie `npm run test:e2e` selbst ausführte. Fix: Spec nach
+`frontend/tests/e2e/dashboard.spec.ts` verschoben, `playwright.config.ts`
+(`testDir`/`reporter.outputFolder`) und der Artifact-Upload-Pfad in `test-e2e.yml` angepasst,
+lokal mit frischem `npm ci` verifiziert (Modul löst auf, alle 5 Tests werden jetzt gefunden und
+ausgeführt) und per zweitem echten Actions-Lauf bestätigt (Job läuft jetzt bis zum Ende, produziert
+einen echten `playwright-report`-Artefakt). Der Job zeigt danach weiterhin `failure` auf Job-Ebene
+(non-blocking, `continue-on-error: true` — der PR-Check selbst bleibt grün) — das deckt sich mit
+der bereits in Sprint 41 dokumentierten, bewusst nicht behobenen Lücke (App zeigt seit ADR-024
+zuerst ein Login-Formular, 4 von 5 Assertions erwarten Post-Login-Inhalt). Kein neuer Befund, nur
+jetzt erstmals real bestätigt statt nur vermutet.
 
 **Nicht Teil dieses Sprints:** Latenz-Gate als hartes Blocking-Gate (siehe Architektur-
 Entscheidung oben), Vertiefung der Playwright-E2E-Tests bzw. echte WebRTC-SDP/ICE-E2E-Automatisierung
