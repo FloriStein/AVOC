@@ -2,19 +2,16 @@ package fleetservice_test
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	_ "github.com/lib/pq"
 
 	"avoc/internal/fleetgateway"
 	"avoc/internal/fleetservice"
@@ -51,47 +48,17 @@ func mintToken(t *testing.T, secret string) string {
 	return s
 }
 
-// requirePostgresStore opens a real Postgres connection (skipped without DATABASE_URL, matching
-// the project's integration-test convention — see store_test.go) and seeds a base vehicle so
-// task/status CRUD tests have a valid FK target.
-func requirePostgresStore(t *testing.T) *fleetservice.PostgresFleetStore {
+// newFakeStore returns a fresh in-memory FleetStore (ADR-031, HEX-03/HEX-04) pre-seeded with
+// "handler-test-vehicle", the FK target task/status/alert CRUD tests need. Replaces the
+// DATABASE_URL-gated Postgres fixture these Handler-level HTTP tests used before the Hexagonal
+// pilot — real-Postgres coverage for the store layer itself continues in store_test.go/
+// integration_test.go/edgecases_test.go/lifecycle_test.go (CLAUDE.MD Abschnitt 17).
+func newFakeStore(t *testing.T) *fleetservice.FakeFleetStore {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set — skipping Postgres integration test")
+	store := fleetservice.NewFakeFleetStore()
+	if err := store.EnsureVehicleExists("handler-test-vehicle"); err != nil {
+		t.Fatalf("EnsureVehicleExists: %v", err)
 	}
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS vehicles (
-		id TEXT PRIMARY KEY, display_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
-		t.Fatalf("create base vehicles table: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO vehicles (id, display_name) VALUES ('handler-test-vehicle', 'Handler Test Vehicle')
-		ON CONFLICT (id) DO NOTHING`); err != nil {
-		t.Fatalf("seed vehicle: %v", err)
-	}
-
-	store, err := fleetservice.NewPostgresFleetStore(db)
-	if err != nil {
-		t.Fatalf("NewPostgresFleetStore: %v", err)
-	}
-
-	t.Cleanup(func() {
-		db.Exec(`DELETE FROM alerts WHERE vehicle_id = 'handler-test-vehicle'`)
-		db.Exec(`DELETE FROM vehicle_position_history WHERE vehicle_id = 'handler-test-vehicle'`)
-		db.Exec(`DELETE FROM vehicle_status WHERE vehicle_id = 'handler-test-vehicle'`)
-		db.Exec(`DELETE FROM tasks WHERE vehicle_id = 'handler-test-vehicle'`)
-		db.Exec(`DELETE FROM stations WHERE zone_id = 'handler-test-zone'`)
-		db.Exec(`DELETE FROM zones WHERE id = 'handler-test-zone'`)
-		db.Exec(`DELETE FROM vehicles WHERE id = 'handler-test-vehicle'`)
-	})
-
 	return store
 }
 
@@ -175,7 +142,7 @@ func TestRequireAuth_ValidToken_PassesThrough(t *testing.T) {
 // ─── Zones (Postgres required) ─────────────────────────────────────────────────
 
 func TestCreateZone_MissingFields_Returns400(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", map[string]string{"name": "Missing ID"})
@@ -186,7 +153,7 @@ func TestCreateZone_MissingFields_Returns400(t *testing.T) {
 }
 
 func TestCreateZone_InvalidEnvironment_Returns400(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", map[string]string{
@@ -199,7 +166,7 @@ func TestCreateZone_InvalidEnvironment_Returns400(t *testing.T) {
 }
 
 func TestCreateZone_Valid_Returns201AndListable(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateZone, http.MethodPost, "/fleet/zones", "", map[string]string{
@@ -242,7 +209,7 @@ func TestCreateZone_MalformedJSON_Returns400(t *testing.T) {
 // TestEdgeCases_PrimaryKeyDuplicates) as a 500 through the HTTP layer instead of panicking or
 // silently succeeding twice.
 func TestCreateZone_DuplicateID_Returns500(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	body := map[string]string{"id": "handler-test-zone", "name": "Test Zone", "environment": "indoor"}
@@ -260,7 +227,7 @@ func TestCreateZone_DuplicateID_Returns500(t *testing.T) {
 // ─── Stations (Postgres required) ──────────────────────────────────────────────
 
 func TestCreateStation_MissingFields_Returns400(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateStation, http.MethodPost, "/fleet/stations", "", map[string]string{"name": "Missing ID and zone"})
@@ -286,7 +253,7 @@ func TestCreateStation_MalformedJSON_Returns400(t *testing.T) {
 // the FK-violation case (edgecases_test.go's TestEdgeCases_ForeignKeyViolations proves this at
 // the store layer; this proves the HTTP handler surfaces it correctly too).
 func TestCreateStation_UnknownZoneID_Returns500(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateStation, http.MethodPost, "/fleet/stations", "", map[string]string{
@@ -299,7 +266,7 @@ func TestCreateStation_UnknownZoneID_Returns500(t *testing.T) {
 }
 
 func TestCreateStation_Valid_Returns201AndListable(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
 		t.Fatalf("AddZone: %v", err)
 	}
@@ -331,7 +298,7 @@ func TestCreateStation_Valid_Returns201AndListable(t *testing.T) {
 // ─── Tasks (Postgres required) — dispatch wiring ───────────────────────────────
 
 func TestCreateTask_MissingFields_Returns400(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]string{"vehicle_id": "handler-test-vehicle"})
@@ -342,7 +309,7 @@ func TestCreateTask_MissingFields_Returns400(t *testing.T) {
 }
 
 func TestCreateTask_Valid_PersistsAndDispatchesToGateway(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
 		t.Fatalf("AddZone: %v", err)
 	}
@@ -381,7 +348,7 @@ func TestCreateTask_Valid_PersistsAndDispatchesToGateway(t *testing.T) {
 }
 
 func TestCreateTask_DispatchFails_TaskStillPersistedAndReturns201(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
 		t.Fatalf("AddZone: %v", err)
 	}
@@ -427,7 +394,7 @@ func TestCreateTask_DispatchFails_TaskStillPersistedAndReturns201(t *testing.T) 
 // for CreateTask's vehicle_id FK — edgecases_test.go's TestEdgeCases_ForeignKeyViolations only
 // proved this at the store layer, never through the HTTP handler.
 func TestCreateTask_UnknownVehicleID_Returns500(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
 		t.Fatalf("AddZone: %v", err)
 	}
@@ -451,7 +418,7 @@ func TestCreateTask_UnknownVehicleID_Returns500(t *testing.T) {
 // TestCreateTask_UnknownStationID_Returns500 mirrors the above for from_station_id/to_station_id
 // — same store-level proof already exists (TestEdgeCases_ForeignKeyViolations), never through HTTP.
 func TestCreateTask_UnknownStationID_Returns500(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.CreateTask, http.MethodPost, "/fleet/tasks", "", map[string]any{
@@ -479,7 +446,7 @@ func TestCreateTask_MalformedJSON_Returns400(t *testing.T) {
 // store.ListTasks() was exercised (via TestCreateTask_DispatchFails...), never the HTTP handler
 // itself.
 func TestListTasks_IncludesCreatedTask(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	if err := store.AddZone(fleetservice.Zone{ID: "handler-test-zone", Name: "Zone", Environment: "indoor"}); err != nil {
 		t.Fatalf("AddZone: %v", err)
 	}
@@ -524,9 +491,9 @@ var taskStatusFixtureCounter atomic.Int64
 // newTaskStatusTestFixture creates a fresh zone/2 stations/task for one test's exclusive use —
 // unlike other Task tests in this file, UpdateTaskStatus tests mutate the task's status
 // repeatedly, so each fixture needs its own rows rather than sharing "handler-test-*" IDs with
-// concurrently-run sibling tests (Go runs tests in a package sequentially by default, but a
-// shared task row would still make failures in one test contaminate another's starting state).
-func newTaskStatusTestFixture(t *testing.T, store *fleetservice.PostgresFleetStore) fleetservice.Task {
+// concurrently-run sibling tests. Each caller passes its own newFakeStore(t) instance (in-memory,
+// dies with the test) — no cross-test cleanup needed, unlike the Postgres fixture this replaced.
+func newTaskStatusTestFixture(t *testing.T, store fleetservice.FleetStore) fleetservice.Task {
 	t.Helper()
 	suffix := t.Name() + "-" + strconv.FormatInt(taskStatusFixtureCounter.Add(1), 10)
 	zoneID := "handler-test-zone-status-" + suffix
@@ -547,25 +514,6 @@ func newTaskStatusTestFixture(t *testing.T, store *fleetservice.PostgresFleetSto
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-
-	// Own short-lived connection for cleanup only — PostgresFleetStore's db field is unexported
-	// (this file is package fleetservice_test), and this fixture's dynamically-named rows aren't
-	// covered by requirePostgresStore's own fixed-ID cleanup. Registered before
-	// requirePostgresStore's t.Cleanup runs (LIFO — this runs first) and must independently unblock
-	// the FK chain (vehicle_status.current_task_id -> tasks.id -> stations.id -> zones.id, all
-	// RESTRICT) for this fixture's own rows rather than relying on run order.
-	t.Cleanup(func() {
-		db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
-		if err != nil {
-			return
-		}
-		defer db.Close()
-		db.Exec(`UPDATE vehicle_status SET current_task_id = NULL WHERE vehicle_id = 'handler-test-vehicle' AND current_task_id = $1`, task.ID)
-		db.Exec(`DELETE FROM tasks WHERE id = $1`, task.ID)
-		db.Exec(`DELETE FROM stations WHERE zone_id = $1`, zoneID)
-		db.Exec(`DELETE FROM zones WHERE id = $1`, zoneID)
-	})
-
 	return task
 }
 
@@ -585,7 +533,7 @@ func patchTaskStatus(mux *http.ServeMux, taskID string, body any) *httptest.Resp
 }
 
 func TestUpdateTaskStatus_NotFound_Returns404(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := patchTaskStatus(newTaskStatusMux(h), "does-not-exist", map[string]string{"status": "in_progress", "changed_by": "operator-1"})
@@ -625,7 +573,7 @@ func TestUpdateTaskStatus_MissingFields_Returns400(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_UnknownTargetStatus_Returns409(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 
@@ -641,7 +589,7 @@ func TestUpdateTaskStatus_UnknownTargetStatus_Returns409(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_PendingToInProgress_Valid(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 
@@ -665,7 +613,7 @@ func TestUpdateTaskStatus_PendingToInProgress_Valid(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_InProgressToCompleted_SetsCompletedAt(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 	mux := newTaskStatusMux(h)
@@ -691,7 +639,7 @@ func TestUpdateTaskStatus_InProgressToCompleted_SetsCompletedAt(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_PendingToCancelled_Valid(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 
@@ -705,7 +653,7 @@ func TestUpdateTaskStatus_PendingToCancelled_Valid(t *testing.T) {
 // (completed, cancelled) reject every subsequent transition attempt, not just the "obvious"
 // reverse one — the full point of ADR-030's allowed-source-set model over a naive current!=target check.
 func TestUpdateTaskStatus_TerminalStates_RejectAnyFurtherTransition(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	mux := newTaskStatusMux(h)
 
@@ -740,7 +688,7 @@ func TestUpdateTaskStatus_TerminalStates_RejectAnyFurtherTransition(t *testing.T
 // the same PATCH after it already succeeded is itself an invalid transition — the task has already
 // left its previous source status — and must be rejected, not silently treated as a no-op success.
 func TestUpdateTaskStatus_Idempotency_RepeatingSameTransition_SecondCallReturns409(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 	mux := newTaskStatusMux(h)
@@ -758,7 +706,7 @@ func TestUpdateTaskStatus_Idempotency_RepeatingSameTransition_SecondCallReturns4
 // before this, nothing ever cleared vehicle_status.current_task_id when its referenced task
 // finished, leaving the Fleet Overview showing a "current task" that had actually ended.
 func TestUpdateTaskStatus_TerminalTransition_ClearsVehicleCurrentTaskID(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 
@@ -797,7 +745,7 @@ func newTaskHistoryMux(h *fleetservice.Handler) *http.ServeMux {
 }
 
 func TestGetTaskStatusHistory_NotFound_Returns404(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	req := httptest.NewRequest(http.MethodGet, "/fleet/tasks/does-not-exist/history", nil)
@@ -814,7 +762,7 @@ func TestGetTaskStatusHistory_NotFound_Returns404(t *testing.T) {
 // reflects that transition — proves the HTTP layer wiring, not just the store method in isolation
 // (store_test.go already covers the store method's own edge cases in more detail).
 func TestGetTaskStatusHistory_ReturnsRecordedTransitions(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	task := newTaskStatusTestFixture(t, store)
 
@@ -854,7 +802,7 @@ func newVehicleHistoryMux(h *fleetservice.Handler) *http.ServeMux {
 }
 
 func TestGetVehiclePositionHistory_NotFound_Returns404(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	req := httptest.NewRequest(http.MethodGet, "/fleet/vehicles/does-not-exist/history", nil)
@@ -871,7 +819,7 @@ func TestGetVehiclePositionHistory_NotFound_Returns404(t *testing.T) {
 // proves the HTTP layer wiring (store_test.go's positionhistory_test.go already covers the store
 // method's throttling/retention edge cases in more detail).
 func TestGetVehiclePositionHistory_ReturnsRecordedSamples(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 	lat, lon := 52.13, 11.64
 	if err := store.RecordPositionHistory("handler-test-vehicle", &lat, &lon); err != nil {
@@ -900,7 +848,7 @@ func TestGetVehiclePositionHistory_ReturnsRecordedSamples(t *testing.T) {
 // ─── Alerts (Postgres required) ────────────────────────────────────────────────
 
 func TestAcknowledgeAlert_NotFound_Returns404(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	mux := http.NewServeMux()
@@ -918,7 +866,7 @@ func TestAcknowledgeAlert_NotFound_Returns404(t *testing.T) {
 }
 
 func TestAcknowledgeAlert_MissingAcknowledgedBy_Returns400(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	mux := http.NewServeMux()
@@ -935,7 +883,7 @@ func TestAcknowledgeAlert_MissingAcknowledgedBy_Returns400(t *testing.T) {
 }
 
 func TestAcknowledgeAlert_Valid_Returns204(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	alert, err := store.CreateAlert(fleetservice.Alert{VehicleID: "handler-test-vehicle", Severity: "warning", Message: "Low battery"})
@@ -964,7 +912,7 @@ func TestAcknowledgeAlert_Valid_Returns204(t *testing.T) {
 // here (no idempotency-key/first-writer-wins requirement exists yet), but previously unverified
 // behaviour that a future change could silently alter.
 func TestAcknowledgeAlert_AlreadyAcknowledged_SecondCallSucceedsAndOverwrites(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	alert, err := store.CreateAlert(fleetservice.Alert{VehicleID: "handler-test-vehicle", Severity: "warning", Message: "Low battery"})
@@ -1027,7 +975,7 @@ func TestAcknowledgeAlert_MalformedJSON_Returns400(t *testing.T) {
 // TestListAlerts_IncludesCreatedAlert exercises Handler.ListAlerts directly — until now nothing
 // called it via HTTP; alerts were only ever read back through store.ListAlerts() in tests.
 func TestListAlerts_IncludesCreatedAlert(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	created, err := store.CreateAlert(fleetservice.Alert{VehicleID: "handler-test-vehicle", Severity: "critical", Message: "Obstacle detected"})
 	if err != nil {
 		t.Fatalf("CreateAlert: %v", err)
@@ -1056,7 +1004,7 @@ func TestListAlerts_IncludesCreatedAlert(t *testing.T) {
 // ─── Vehicles (Postgres required) ──────────────────────────────────────────────
 
 func TestListVehicles_IncludesSeededVehicleWithNilStatus(t *testing.T) {
-	store := requirePostgresStore(t)
+	store := newFakeStore(t)
 	h := fleetservice.NewHandler(testSecret, store, &stubDispatcher{}, fleetservice.NewHub())
 
 	rr := doRequest(h.ListVehicles, http.MethodGet, "/fleet/vehicles", "", nil)

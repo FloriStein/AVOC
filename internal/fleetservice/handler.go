@@ -30,12 +30,12 @@ type Dispatcher interface {
 // out to Dashboard clients connected via ServeWS (FLEET-06).
 type Handler struct {
 	secret []byte
-	store  *PostgresFleetStore
+	store  FleetStore
 	gw     Dispatcher
 	hub    *Hub
 }
 
-func NewHandler(secret string, store *PostgresFleetStore, gw Dispatcher, hub *Hub) *Handler {
+func NewHandler(secret string, store FleetStore, gw Dispatcher, hub *Hub) *Handler {
 	return &Handler{secret: []byte(secret), store: store, gw: gw, hub: hub}
 }
 

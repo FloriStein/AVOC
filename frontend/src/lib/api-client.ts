@@ -189,6 +189,13 @@ export interface FleetVehicle {
   position_lat?: number
   position_lon?: number
   position_zone_id?: string
+  // position_x/y (ADR-034): point position within position_zone_id's own coordinate system —
+  // same semantics as Station.position_x/y below. Meaningless without position_zone_id set to an
+  // indoor Zone. Nothing currently writes these two fields (no simulator/gateway integration
+  // yet, see ADR-034's Scope section) — present here so FleetIndoorMap can render them once a
+  // future task starts populating them.
+  position_x?: number
+  position_y?: number
   autonomy_mode?: 'autonomous' | 'teleoperated' | 'manual'
   current_task_id?: string
   status_updated_at?: string

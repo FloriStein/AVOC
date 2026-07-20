@@ -1,6 +1,6 @@
 # Meilenstein 2 — Web-Dashboard (AP2)
 
-Stand: 2026-07-18 (Sprint 32) | Referenz: Leistungsbeschreibung AP2, `ADR-029`/`030`/`032`/`033`
+Stand: 2026-07-18 (Sprint 33) | Referenz: Leistungsbeschreibung AP2, `ADR-029`/`030`/`032`/`033`/`034`
 
 Konsolidiertes Abnahme-Dokument für den Auftraggeber. Fasst die über mehrere Sprints (21–32)
 entstandenen Dashboard-Funktionen zusammen (`AP2-05` in `tasks/backlog.md`). Ersetzt nicht
@@ -20,14 +20,14 @@ Task Management, Alert System.
 |---|---|---|
 | **Flottenübersicht** | ✅ Fertig | Echtzeit-Fahrzeugstatus (Batterie, Geschwindigkeit, Autonomie-Modus), Live-Updates ohne Polling über WebSocket-Broadcast |
 | **Kartenansicht — Outdoor** | ✅ Fertig | SVG-Zonenkarte, geo-referenziert per Leaflet-Overlay; Stationen und Fahrzeuge als Marker, Fahrzeugauswahl per Klick |
-| **Kartenansicht — Indoor** | 🔲 Offen | Fahrzeuge haben aktuell keine Punktposition innerhalb einer Indoor-Zone (nur die Zonen-Zugehörigkeit selbst) — braucht eine eigene Datenmodell-Erweiterung, siehe Abschnitt 5 |
+| **Kartenansicht — Indoor** | ✅ Fertig (Sprint 33) | SVG-Grundriss im zoneneigenen Koordinatensystem (kein Leaflet/Geo-Referenzierung); Stationen und Fahrzeuge als Marker über `position_x/position_y`, siehe Abschnitt 6 |
 | **Routenübersicht (gefahrene Historie)** | ✅ Fertig (Sprint 32) | Durchgezogene Polylinie der zuletzt gefahrenen Route für das ausgewählte Fahrzeug, siehe Abschnitt 4 |
 | **Task Management** | ✅ Fertig | Aufgaben erstellen/zuweisen, Status-Workflow (pending → in_progress → completed/cancelled), Prioritätenmanagement (Sortierung + visuelle Hervorhebung), vollständige Status-Verlaufshistorie |
 | **Alert System — Basis** | ✅ Fertig | Echtzeit-Benachrichtigungen, Prioritätsklassen, Bestätigung (Acknowledge) pro Alert |
 | **Alert System — Audio** | ✅ Fertig | Akustische Benachrichtigung bei neuen Alerts, stummschaltbar |
 
-Sechs von sieben Anforderungsbereichen sind vollständig umgesetzt. Die Indoor-Kartenansicht ist
-der einzige noch offene Punkt (siehe Abschnitt 6).
+Alle sieben Anforderungsbereiche sind vollständig umgesetzt (siehe Abschnitt 6 für die
+Indoor-Kartenansicht, zuletzt offener Punkt).
 
 ## 3. Architekturprinzipien der Umsetzung
 
@@ -59,14 +59,22 @@ Sprint 31 jeden Status-Übergang eines Tasks vollständig nach — abrufbar für
 Task-Detailansicht, inklusive nachvollziehbarer Näherungswerte für Übergänge, die vor Einführung
 dieser Historie stattfanden.
 
-## 6. Offener Punkt: Indoor-Kartenrendering (`AP2-02`)
+## 6. Indoor-Kartenrendering (Sprint 33, `AP2-02`/`ADR-034`)
 
-Fahrzeuge tragen für Outdoor-Positionen `position_lat`/`position_lon`. Für eine Position
-*innerhalb* einer Indoor-Zone fehlt das Äquivalent (`position_x`/`position_y`, wie es Stationen
-bereits haben) — eine reine Zonen-Zugehörigkeit reicht nicht für eine Punktdarstellung auf der
-Karte. Diese Datenmodell-Erweiterung wurde bewusst noch nicht vorgenommen, um `ADR-029` nicht
-kommentarlos zu überschreiben — sie braucht eine eigene kurze Architekturentscheidung (Typ L nach
-CLAUDE.MD, vergleichbar mit `ADR-033` oben), aufgenommen als `AP2-02` in `tasks/backlog.md`.
+Fahrzeuge trugen für Outdoor-Positionen bereits `position_lat`/`position_lon`; für eine Position
+*innerhalb* einer Indoor-Zone fehlte das Äquivalent (`position_x`/`position_y`, wie es Stationen
+bereits hatten) — eine reine Zonen-Zugehörigkeit reicht nicht für eine Punktdarstellung auf der
+Karte. `ADR-034` ergänzt `vehicle_status` um genau diese beiden Spalten, analog zum bestehenden
+`stations`-Muster. Die Indoor-Karte selbst ist bewusst **kein** Leaflet-Overlay wie bei Outdoor —
+Indoor-Zonen sind nicht geo-referenziert, daher rendert `FleetIndoorMap.tsx` die Zonen-eigene
+`svg_geometry` direkt als Koordinatensystem, mit Stationen/Fahrzeugen als SVG-Markern darin.
+
+**Bewusst nicht Teil dieses Sprints:** wie `position_x/y` tatsächlich befüllt werden (Simulator-
+oder reale Gateway-Anbindung) — die Fahrzeugsimulation liefert bisher nur Outdoor-GPS-Positionen,
+sodass aktuell noch kein Fahrzeug-Marker auf der Indoor-Karte erscheint, nur die Zonen-Geometrie
+und Stationen. Datenmodell, Backend-API und Frontend-Rendering sind vollständig vorhanden und mit
+manuell gesetzten Testdaten verifiziert; die Befüllung ist als eigener Folge-Task vorgemerkt
+(`tasks/backlog.md`, `DECISIONS.MD`), um diesen Task klein und unabhängig verifizierbar zu halten.
 
 ## 7. Referenzen
 
@@ -78,4 +86,5 @@ CLAUDE.MD, vergleichbar mit `ADR-033` oben), aufgenommen als `AP2-02` in `tasks/
 | Task-Status-Lifecycle | `docs/adr/030-task-status-lifecycle.md` |
 | Task-Status-Audit-Historie | `docs/adr/032-task-status-history.md` |
 | Routenübersicht-Persistenz | `docs/adr/033-vehicle-position-history.md` |
+| Indoor-Fahrzeugposition | `docs/adr/034-indoor-vehicle-position.md` |
 | Aktueller Sprint-/Task-Stand | `tasks/current-sprint.md`, `tasks/backlog.md` |

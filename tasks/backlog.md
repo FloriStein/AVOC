@@ -288,7 +288,7 @@ recherchiert (mehrere parallele Worktrees arbeiteten laut `git worktree list` gl
 |---|---|---|
 | Flottenübersicht (Echtzeit-Status, Batterie, Alert-Anzeige) | ✅ fertig, gemergt | Sprint 22 (DASH-01..08) |
 | Kartenansicht — Outdoor | ✅ fertig, gemergt | Sprint 23 (MAP-01..11) |
-| Kartenansicht — Indoor | 🔲 offen, kein Task mit ID bisher | Fahrzeuge haben kein `position_x/y` (nur `position_zone_id`) — Backend-Erweiterung nötig, siehe CONTEXT.MD/DECISIONS.MD "Offene Fragen" |
+| Kartenansicht — Indoor | ✅ fertig, Sprint 33 | `AP2-02` — [ADR-034](../docs/adr/034-indoor-vehicle-position.md), `vehicle_status.position_x/y` + `FleetIndoorMap.tsx` |
 | Routenübersicht (gefahrene Historie) | ✅ fertig, Sprint 32 | `FLEET-02`/`AP2-03` — [ADR-033](../docs/adr/033-vehicle-position-history.md) |
 | Task Management (Erstellen/Zuweisen/Status/Historie) | ✅ fertig, gemergt | Sprint 24 (`TASK-01..14`, `ADR-030`) |
 | Alert System — Basis (Echtzeit, Priorität, Ack) | ✅ fertig, gemergt | Sprint 22 |
@@ -303,10 +303,14 @@ am selben Tag `docs/adr/030-task-status-lifecycle.md` unter derselben Nummer. Be
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
 | AP2-01 | Merge-Integration: Sprint 24 (`-taskui`) und Sprint 25 (`-audio`) in `feature/fleet-service-foundation` zusammenführen (Sprint 23 ist bereits gemergt) | L | ✅ erledigt | ADR-030-Nummernkollision gelöst (siehe oben); verbleibende Merge-Konflikte (doppelte Demo-Stationsanlage `TASKUI-01`, additive `FleetOverview.tsx`-Änderungen aus Sprint 23/24/25) beim Merge selbst aufgelöst |
-| AP2-02 | Indoor-Kartenrendering — Backend-Erweiterung für Fahrzeug-Punktposition innerhalb einer Indoor-Zone | L | 🔲 Backlog | Bisher nur als "Offene Frage" in CONTEXT.MD/DECISIONS.MD geführt, hier erstmals als konkreter Task erfasst. Braucht eigene Datenmodell-Entscheidung (`vehicle_status`-Erweiterung) — vermutlich eigenes ADR, da Datenmodell-Änderung (ADR-029 nicht überschreiben) |
+| AP2-02 | Indoor-Kartenrendering — Backend-Erweiterung für Fahrzeug-Punktposition innerhalb einer Indoor-Zone | L | ✅ Sprint 33 | Grill-Me 2026-07-18 + [ADR-034](../docs/adr/034-indoor-vehicle-position.md) — `vehicle_status.position_x/y`, analog `stations`. Zerlegt in 4 S/M-Teilaufgaben (siehe unten), Simulator-Befüllung bewusst ausgeklammert (Folge-Task) |
+| AP2-02-01 | `vehicle_status.position_x/y`-Migration (`internal/fleetservice/store.go`) | S | ✅ Sprint 33 | ADR-034 |
+| AP2-02-02 | `UpsertVehicleStatus`/`GET`-Endpunkte um `position_x/y` erweitern | S | ✅ Sprint 33 | AP2-02-01 |
+| AP2-02-03 | Indoor-Beispielzone + Stationen im Seed-Skript (`scripts/seed-fleet-demo.sh`) | S | ✅ Sprint 33 | — |
+| AP2-02-04 | Frontend Indoor-Kartendarstellung (SVG-Koordinatensystem, kein Leaflet) | M | ✅ Sprint 33 | AP2-02-02, AP2-02-03 |
 | AP2-03 | Persistenzform für "gefahrene Route" entscheiden + implementieren | M | ✅ Sprint 32 | Verweist auf `FLEET-02` — identisch umgesetzt, siehe dort und [ADR-033](../docs/adr/033-vehicle-position-history.md) |
 | AP2-04 | Prioritätenmanagement in der Task-UI über reine Zahlenanzeige hinaus ausbauen (Sortierung nach Priorität, visuelle Hervorhebung hoher Priorität) | M | ✅ Sprint 31 | `FleetTaskPanel.tsx`: `sortedTasks` (absteigend nach `priority`), Hervorhebung ab `priority >= 5` (fester Schwellenwert, Grill-Me 2026-07-18) |
-| AP2-05 | Klären, ob Meilenstein 2 ein eigenständiges Abnahme-Artefakt für den Auftraggeber braucht | S | ✅ Sprint 32 | Nutzerentscheidung 2026-07-18: eigenständiges Dokument gewünscht (analog `AP1-04`). [docs/milestones/meilenstein-2-dashboard.md](../docs/milestones/meilenstein-2-dashboard.md) — weist auf `AP2-02` (Indoor-Kartenrendering) als einzigen noch offenen Punkt hin |
+| AP2-05 | Klären, ob Meilenstein 2 ein eigenständiges Abnahme-Artefakt für den Auftraggeber braucht | S | ✅ Sprint 32 | Nutzerentscheidung 2026-07-18: eigenständiges Dokument gewünscht (analog `AP1-04`). [docs/milestones/meilenstein-2-dashboard.md](../docs/milestones/meilenstein-2-dashboard.md) — wies zum Sprint-32-Stand auf `AP2-02` (Indoor-Kartenrendering) als einzigen noch offenen Punkt hin; `AP2-02` inzwischen Sprint 33 ✅, Dokument nachgezogen |
 
 **Nicht dupliziert, sondern nur referenziert (bereits auf den jeweiligen Branches dokumentiert,
 kommen beim Merge mit):** `TASKUI-01..05` (`taskui`-Branch-`backlog.md`: doppelte Demo-Stationen,
@@ -327,11 +331,18 @@ AP2-02, AP2-03, AP2-05 unabhängig von AP2-01
 
 Strategie und vollständige Risikobewertung: [ADR-031](../docs/adr/031-hexagonal-architecture-migration.md).
 Grill-Me 2026-07-16: Auslöser ist allgemeine Wartbarkeit/Onboarding (nicht ADR-027/ROS2), Scope nur
-Go-Backend, Pilot bestätigt `fleet-service`, Start **nachgelagert nach AP2/AP3** — kein fixes Datum,
-daher hier in `backlog.md` statt in `current-sprint.md` (analog zum früheren Vorgehen bei "EPIC:
-Fleet Dashboard Planung"). Umfang: ausschließlich der fehlende `FleetStore`-Repository-Port
-(`internal/fleetservice/handler.go:32,37` → Interface, analog zu `fleetgateway.FleetGateway`),
-keine Use-Case-Schicht-Extraktion in diesem Schritt (siehe HEX-06).
+Go-Backend, Pilot bestätigt `fleet-service`, Start ursprünglich **nachgelagert nach AP2/AP3**. Umfang:
+ausschließlich der fehlende `FleetStore`-Repository-Port (`internal/fleetservice/handler.go:32,37` →
+Interface, analog zu `fleetgateway.FleetGateway`), keine Use-Case-Schicht-Extraktion in diesem
+Schritt (siehe HEX-06).
+
+**Start-Entscheidung (Sprint-33-Kickoff, 2026-07-18):** AP2 ist zu diesem Zeitpunkt zu 6 von 7
+Anforderungsbereichen fertig (nur `AP2-02` noch offen, jetzt selbst Teil von Sprint 33), AP3 ist im
+Repo weiterhin nicht als eigenes EPIC angelegt. Nutzerentscheidung: HEX-01..05 trotzdem jetzt
+starten — die Tasks sind bereits einzeln klein geschnitten (S/M) und laut ADR-031 unabhängig von
+AP3-Inhalten (reiner Repository-Port für `fleet-service`). HEX-01..05 daher nach
+`tasks/current-sprint.md` (Sprint 33) verschoben, siehe dort für Ergebnisse. HEX-06 (optional)
+bleibt hier als expliziter Entscheidungspunkt nach HEX-05.
 
 **Arbeitsweise (bewusst kleinteilig geschnitten):** Jeder Task ist einzeln abschließbar und endet
 mit einem Update dieses Eintrags (Status ✅ + Kurzergebnis) **bevor** die Session beendet/geclear't
@@ -340,17 +351,23 @@ für eine neue Session pro Task ein Verweis auf die Task-ID hier, keine lange Ü
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| HEX-01 | `FleetStore`-Interface definieren (deckt alle Methoden von `*PostgresFleetStore` ab) + Compile-Time-Check `var _ FleetStore = (*PostgresFleetStore)(nil)`. Kein Verhaltens-, kein Signatur-Wechsel an `Handler` in diesem Schritt. | S | 🔲 Backlog | — |
-| HEX-02 | `Handler.store` von `*PostgresFleetStore` auf `FleetStore`-Interface umstellen (`internal/fleetservice/handler.go:32,37`). Reine Typ-Änderung, HTTP-Verhalten unverändert — bestehende Postgres-gebundene Tests bleiben vorerst grün (noch kein Fake). | S | 🔲 Backlog | HEX-01 |
-| HEX-03 | `FakeFleetStore` (In-Memory) implementieren, das `FleetStore` erfüllt — Test-Doppel für Handler-Tests ohne Postgres. | M | 🔲 Backlog | HEX-01 |
-| HEX-04 | Bestehende Handler-Tests (~20 der 24, aktuell `DATABASE_URL`-gebunden) schrittweise auf `FakeFleetStore` migrieren. | M | 🔲 Backlog | HEX-02, HEX-03 |
-| HEX-05 | Verifikation: `go test ./internal/fleetservice/...` läuft grün **ohne** gesetzte `DATABASE_URL`. ADR-031-Status-Update (Pilot abgeschlossen) + Status-Update in diesem Eintrag + `DECISIONS.MD`. | S | 🔲 Backlog | HEX-04 |
+| HEX-01 | `FleetStore`-Interface definieren (deckt alle Methoden von `*PostgresFleetStore` ab) + Compile-Time-Check `var _ FleetStore = (*PostgresFleetStore)(nil)`. Kein Verhaltens-, kein Signatur-Wechsel an `Handler` in diesem Schritt. | S | ✅ Sprint 33 | — |
+| HEX-02 | `Handler.store` von `*PostgresFleetStore` auf `FleetStore`-Interface umstellen (`internal/fleetservice/handler.go:32,37`). Reine Typ-Änderung, HTTP-Verhalten unverändert — bestehende Postgres-gebundene Tests bleiben vorerst grün (noch kein Fake). | S | ✅ Sprint 33 | HEX-01 |
+| HEX-03 | `FakeFleetStore` (In-Memory) implementieren, das `FleetStore` erfüllt — Test-Doppel für Handler-Tests ohne Postgres. | M | ✅ Sprint 33 | HEX-01 |
+| HEX-04 | Bestehende Handler-Tests (ursprünglich auf ~20 der 24 geschätzt, tatsächlich 30 `DATABASE_URL`-gebundene Tests) auf `FakeFleetStore` migriert. | M | ✅ Sprint 33 | HEX-02, HEX-03 |
+| HEX-05 | Verifikation: `go test ./internal/fleetservice/...` läuft grün **ohne** gesetzte `DATABASE_URL`. ADR-031-Status-Update (Pilot abgeschlossen) + Status-Update in diesem Eintrag + `DECISIONS.MD`. | S | ✅ Sprint 33 | HEX-04 |
 | HEX-06 | *(Optional, eigener Entscheid nach HEX-05)* Use-Case-Schicht aus `Handler` extrahieren (Anwendungsfälle als eigene Funktionen zwischen HTTP-Layer und `FleetStore`/`AlertEngine`) — nur falls nach dem Pilot als lohnend bewertet, kein Bestandteil des Piloten selbst. | M | 🔲 Backlog (optional) | HEX-05 |
 
 **Entscheidungspunkt nach HEX-05 (nicht Teil dieses Sprint-Plans):** ob und in welcher
 Reihenfolge auth-service (JWT-Port) bzw. telemetry-service (kleinster Fall) folgen — siehe
 Risikobewertung in ADR-031. `control-server` bleibt bis auf Weiteres ausdrücklich ausgeklammert
 (eigenes ADR nötig, siehe ADR-031 "Offene Punkte").
+
+**Sprint-34-Kickoff (2026-07-18):** beide offenen Entscheidungspunkte (HEX-06, Fortsetzung auf
+auth-/telemetry-service) explizit dem Nutzer vorgelegt — Nutzerentscheidung: beide weiterhin
+zurückstellen (kein neuer Anlass, passt zum Ziel kleinerer, token-budgetierter Sprints). Zusätzlich
+inhaltlich relevant: `auth-service` ist ohnehin Ziel von `SEC-01` (JWT-Sicherheitslücke) in Sprint
+34 — eine Hexagonal-Migration desselben Codes im selben Sprint hätte unnötig Overhead erzeugt.
 
 ---
 
@@ -431,17 +448,24 @@ Methodenzahl/Konsumenten-Zuschnitt projektweit).
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| GOSTYLE-IF-01 | `recording.SessionRecorder` (6 Methoden, aktuell nirgends als Interface-Typ konsumiert): klären, ob Interface tatsächlich verwendet werden soll (`*MemoryRecorder` → `SessionRecorder` in `cmd/control-server/main.go:102`) oder aufgelöst wird, solange nur eine Implementierung existiert (Rule 1.2 — Abstraktion ohne Konsument ist unbegründet) | S | 🔲 Backlog | HEX-05 |
-| GOSTYLE-IF-02 | `fleetgateway.FleetGateway` (3 Methoden, ungenutzt als Typ): gleiche Frage wie IF-01. `fleetservice.Dispatcher` (1 Methode) ist bereits der korrekte konsumentenseitige Schnitt und bleibt unverändert | S | 🔲 Backlog | HEX-05 |
-| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | 🔲 Backlog | HEX-05 |
-| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | 🔲 Backlog | HEX-05 |
-| GOSTYLE-IF-05 | `vehicleregistry.VehicleStore` (5 Methoden): `SeedDefault` (Bootstrap) aus Interface lösen, analog IF-04 | S | 🔲 Backlog | HEX-05 |
-| GOSTYLE-IF-06 | `controlserver/safety.Publisher` (2 Methoden) in `PublishEvent`-only Interface für `Engine`/Watchdogs aufteilen; `TriggerEmergencyStop` bleibt eigener Zugriffspfad, analog zum bereits vorbildlichen `vehicleconnection.safetyPublisher`-Muster | S | 🔲 Backlog | HEX-05 |
+| GOSTYLE-IF-01 | `recording.SessionRecorder` (6 Methoden, aktuell nirgends als Interface-Typ konsumiert): klären, ob Interface tatsächlich verwendet werden soll (`*MemoryRecorder` → `SessionRecorder` in `cmd/control-server/main.go:102`) oder aufgelöst wird, solange nur eine Implementierung existiert (Rule 1.2 — Abstraktion ohne Konsument ist unbegründet) | S | ✅ Sprint 34 | Interface komplett entfernt (`internal/recording/recorder.go`) — Details/Ergebnisse in `tasks/current-sprint.md` |
+| GOSTYLE-IF-02 | `fleetgateway.FleetGateway` (3 Methoden, ungenutzt als Typ): gleiche Frage wie IF-01. `fleetservice.Dispatcher` (1 Methode) ist bereits der korrekte konsumentenseitige Schnitt und bleibt unverändert | S | ✅ Sprint 34 | **Nicht** wie IF-01 gelöscht (aktives ADR-027 schreibt die Abstraktion bewusst vor) — stattdessen tatsächlich nutzbar gemacht: `subscribeVehicleStatus`/`subscribeVehicleAlerts` in `cmd/fleet-service/main.go` nehmen jetzt `fleetgateway.FleetGateway` statt `*MQTTGateway` entgegen. Details in `tasks/current-sprint.md` |
+| GOSTYLE-IF-03 | `pkg/audit.AuditWriter` (3 Methoden) in schlankes `WriteSync`-only Interface für die 5 Safety-/Command-Consumer aufspalten; `Close`/`QueryBySession` bleiben am konkreten Typ bzw. eigenem kleineren Interface für `main.go` | M | 🔄 Sprint 35 | HEX-05 |
+| GOSTYLE-IF-04 | `authservice.UserStore` (7 Methoden): `SeedAdmin` (reine Bootstrap-Methode, bereits am konkreten Typ genutzt) aus dem Interface entfernen; verbleibende 6 Methoden gegen tatsächlichen `Handler`-Bedarf prüfen | M | 🔄 Sprint 35 | HEX-05 |
+| GOSTYLE-IF-05 | `vehicleregistry.VehicleStore` (5 Methoden): `SeedDefault` (Bootstrap) aus Interface lösen, analog IF-04 | S | ✅ Sprint 34 | `SeedDefault` aus `VehicleStore` entfernt, dadurch `NoopVehicleStore.SeedDefault` tot geworden und mit gelöscht. Details in `tasks/current-sprint.md` |
+| GOSTYLE-IF-06 | `controlserver/safety.Publisher` (2 Methoden) in `PublishEvent`-only Interface für `Engine`/Watchdogs aufteilen; `TriggerEmergencyStop` bleibt eigener Zugriffspfad, analog zum bereits vorbildlichen `vehicleconnection.safetyPublisher`-Muster | S | ✅ Sprint 34 | `TriggerEmergencyStop` aus `Publisher` entfernt (nur je über den konkreten `*HTTPPublisher` aufgerufen, nie interface-typisiert). Details in `tasks/current-sprint.md` |
 
 **Nebenbefund, nicht Teil dieses Style-Guide-Scopes (Sicherheitsauffälligkeit):** beim
-Duplikat-Scan (Rule 3.1) fiel auf, dass der JWT-Alg-Confusion-Check in 2 von 4 JWT-Parse-Stellen
-(`authservice`, `fleetservice`, `vehicleconnection`, `control-server`) fehlt. Kein Style-Guide-
-Thema — separat über `/security-review` oder einen eigenen Sicherheits-Task nachverfolgen.
+Duplikat-Scan (Rule 3.1) fiel auf, dass der JWT-Alg-Confusion-Check in mehreren JWT-Parse-Stellen
+fehlt. Kein Style-Guide-Thema — als `SEC-01` aufgenommen, siehe EPIC "Security Findings" unten.
+
+---
+
+## EPIC: Security Findings
+
+| ID | Task | Typ | Status | Notizen |
+|----|------|-----|--------|---------|
+| SEC-01 | JWT-Alg-Confusion-Check fehlt an 3 von 5 `jwt.Parse*`-Stellen | S/M | ✅ Sprint 34 | Alle drei Stellen gefixt (`authservice.parseToken`, `transport.validateJWT`, `vehicleconnection.validateJWT`) — `t.Method.(*jwt.SigningMethodHMAC)`-Check ergänzt, analog zu den bereits korrekten Stellen. Regressionstests mit gefälschtem `alg:none`-Token an allen drei Stellen (2x gegen Flakiness geprüft, CLAUDE.MD Abschnitt 17). Details/Ergebnisse in `tasks/current-sprint.md`. |
 
 ---
 

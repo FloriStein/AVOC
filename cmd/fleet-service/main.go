@@ -66,8 +66,11 @@ func main() {
 }
 
 // subscribeVehicleStatus persists vehicle-reported status (FLEET-06), broadcasts it to connected
-// Dashboard clients, and raises a threshold alert via alertEngine if warranted (FLEET-07).
-func subscribeVehicleStatus(gw *fleetgateway.MQTTGateway, store *fleetservice.PostgresFleetStore, hub *fleetservice.Hub, alertEngine *fleetservice.AlertEngine) {
+// Dashboard clients, and raises a threshold alert via alertEngine if warranted (FLEET-07). Takes
+// the fleetgateway.FleetGateway interface (ADR-027), not the concrete MQTTGateway — it only needs
+// SubscribeVehicleStatus, so it stays agnostic to which gateway implementation main() wires up
+// (GOSTYLE-IF-02).
+func subscribeVehicleStatus(gw fleetgateway.FleetGateway, store *fleetservice.PostgresFleetStore, hub *fleetservice.Hub, alertEngine *fleetservice.AlertEngine) {
 	gw.SubscribeVehicleStatus(func(e fleetgateway.VehicleStatusEvent) {
 		// Fleet vehicles never establish a WS connection to control-server, so they never hit
 		// its "Auto-Register bei erstem WS-Connect" path (ADR-029) — without this, every status
@@ -111,8 +114,9 @@ func subscribeVehicleStatus(gw *fleetgateway.MQTTGateway, store *fleetservice.Po
 }
 
 // subscribeVehicleAlerts persists vehicle-initiated alerts — the second alert source from
-// ADR-028, distinct from the threshold alerts subscribeVehicleStatus raises.
-func subscribeVehicleAlerts(gw *fleetgateway.MQTTGateway, store *fleetservice.PostgresFleetStore, hub *fleetservice.Hub) {
+// ADR-028, distinct from the threshold alerts subscribeVehicleStatus raises. Takes the
+// fleetgateway.FleetGateway interface, same reasoning as subscribeVehicleStatus (GOSTYLE-IF-02).
+func subscribeVehicleAlerts(gw fleetgateway.FleetGateway, store *fleetservice.PostgresFleetStore, hub *fleetservice.Hub) {
 	gw.SubscribeVehicleAlerts(func(e fleetgateway.VehicleAlertEvent) {
 		// Same FK gap as subscribeVehicleStatus above — a vehicle-initiated alert can in
 		// principle arrive before that vehicle's first status event.

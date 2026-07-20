@@ -1,6 +1,6 @@
-// Package recording implements the Session Recording interface (BE-07, ADR-005/016).
-// All recording is done against the SessionRecorder interface — the storage backend
-// is replaceable via a future ADR (ADR-005 Folge: DB/Files/Object Storage).
+// Package recording implements Session Recording (BE-07, ADR-005/016).
+// Storage backend is MemoryRecorder for now, replaceable via a future ADR
+// (ADR-005 Folge: DB/Files/Object Storage) once a second implementation exists (GOSTYLE-IF-01).
 package recording
 
 import "time"
@@ -49,15 +49,4 @@ type SafetyEventParams struct {
 	OperatorID string
 	EventType  string
 	Reason     string
-}
-
-// SessionRecorder is the recording interface (ADR-005).
-// Implementations: MemoryRecorder (Sprint 4), future storage adapters.
-type SessionRecorder interface {
-	StartSession(sessionID, vehicleID, operatorID string)
-	EndSession(sessionID string)
-	RecordControlEvent(p ControlEventParams)
-	RecordStateSnapshot(p StateSnapshotParams)
-	RecordSafetyEvent(p SafetyEventParams)
-	GetEntries(sessionID string) []Entry
 }

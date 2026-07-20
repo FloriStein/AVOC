@@ -1,6 +1,6 @@
 # ADR-031: Migration zu hexagonaler Architektur (Ports & Adapters) — Strangler-Fig, Pilot fleet-service
 
-Status: Accepted (Strategie) — nur `fleet-service` als Pilot beauftragt; Fortsetzung auf weitere Services ist ein bewusster Entscheidungspunkt nach Pilot-Abschluss, kein Automatismus
+Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)** — Fortsetzung auf weitere Services ist ein bewusster Entscheidungspunkt nach Pilot-Abschluss, kein Automatismus (siehe "Offene Punkte")
 
 ## Kontext
 
@@ -86,6 +86,34 @@ var _ FleetStore = (*PostgresFleetStore)(nil) // Compile-Time-Check, wie in gate
 Ein `FakeFleetStore` (In-Memory) implementiert dasselbe Interface für Tests — Handler-Tests laufen
 danach ohne Postgres. Das ist der komplette Umfang der Handler-seitigen Migration; keine
 Business-Logik ändert sich, nur die Abhängigkeitsrichtung.
+
+> **Update (2026-07-18, Sprint 33 — Start-Entscheidung):** entgegen der ursprünglichen
+> "nachgelagert nach AP2/AP3"-Planung oben hat der Nutzer den Pilotstart bereits nach Sprint 32
+> freigegeben — AP2 war zu diesem Zeitpunkt zu 6 von 7 Anforderungsbereichen fertig (nur `AP2-02`
+> noch offen, selbst Teil von Sprint 33), AP3 existiert im Repo weiterhin nicht als eigenes EPIC.
+> Begründung: HEX-01..05 sind bereits einzeln klein geschnitten (S/M) und laut Scope-Entscheidung
+> oben unabhängig von AP3-Inhalten. Kein Widerspruch zur Meilenstein-Kopplungs-Begründung —
+> lediglich eine bewusste Vorziehung, keine Aufweichung der ursprünglichen Argumentation.
+>
+> **Umsetzung, eine Abweichung vom Code-Beispiel oben:** das "Nachher"-Beispiel zeigte
+> `ctx context.Context`-Parameter — rein illustrativ, keine verbindliche Signaturvorgabe.
+> `*PostgresFleetStore`s tatsächliche Methoden (`internal/fleetservice/store.go`) verwenden
+> projektweit kein `context.Context` (keine der bestehenden Store-Interfaces im Repo tut das,
+> z. B. `vehicleregistry.VehicleStore`), daher übernimmt `FleetStore` exakt die bestehenden
+> Signaturen ohne `ctx` — Konsistenz mit dem Rest der Codebasis hat Vorrang vor dem Beispiel in
+> diesem ADR.
+>
+> **Ergebnis:** `FleetStore`-Interface (19 Methoden, deckt `*PostgresFleetStore` vollständig ab,
+> nicht nur `Handler`s tatsächlichen Bedarf — Interface-Segregation ist bewusst GOSTYLE-IF-*-Scope,
+> siehe `tasks/backlog.md`), `Handler.store`/`NewHandler` auf das Interface umgestellt,
+> `FakeFleetStore` (In-Memory, wiederverwendet interne Sentinel-Fehler/Transitionstabelle aus
+> `store.go` für identisches Verhalten) implementiert. Alle 30 zuvor `DATABASE_URL`-gebundenen
+> Handler-Tests migriert und liefen anschließend tatsächlich (nicht nur "übersprungen ohne
+> Fehler") ohne `DATABASE_URL` durch. Store-Layer-Integrationstests (`store_test.go`,
+> `integration_test.go`, `edgecases_test.go`, `lifecycle_test.go`, `positionhistory_test.go`)
+> bleiben bewusst Postgres-gebunden — sie testen `PostgresFleetStore` selbst, nicht `Handler`,
+> und bleiben die CLAUDE.MD-Abschnitt-17-Pflichtabdeckung "mindestens ein Test über die echte
+> Prozessgrenze" für dieses Paket.
 
 ## Risikobewertung & Strangler-Fig-Ansatz
 

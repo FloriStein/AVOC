@@ -10,6 +10,7 @@ import { FleetVehicleList } from '@/components/FleetVehicleList'
 import { FleetVehicleDetail } from '@/components/FleetVehicleDetail'
 import { FleetAlertsPanel } from '@/components/FleetAlertsPanel'
 import { FleetMap } from '@/components/FleetMap'
+import { FleetIndoorMap } from '@/components/FleetIndoorMap'
 import { FleetTaskPanel } from '@/components/FleetTaskPanel'
 
 interface Props {
@@ -72,6 +73,13 @@ export function FleetOverview({ session }: Props) {
             onSelectVehicle={setSelectedVehicleId}
             positionHistory={positionHistory}
             className="h-[45vh] min-h-80 shrink-0"
+          />
+          <FleetIndoorMap
+            zones={zones}
+            stations={stations}
+            vehicles={vehicles}
+            selectedVehicleId={selectedVehicleId}
+            onSelectVehicle={setSelectedVehicleId}
           />
           <div className="grid grid-cols-3 gap-4 flex-1 min-h-0">
             <FleetVehicleList
