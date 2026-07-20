@@ -1,0 +1,39 @@
+---
+# roles/firewall/defaults — 1:1 aus der Port-Tabelle in docs/deployment/hetzner-setup.md
+# Schritt 2 (dort: Hetzner Cloud Firewall / ufw) übernommen (LOCALVM-04).
+#
+# Bewusst NICHT enthalten: Port 8085 (Fleet Service) — laut hetzner-setup.md Schritt 2 ist
+# fleet-service zwar Teil des Dev-Stacks, aber (Stand jetzt) nicht in docker-compose.prod.yml
+# eingetragen und läuft daher auf keinem per dieser Anleitung aufgesetzten Server. Dieselbe
+# Lücke gilt unverändert für die Hetzner-Variante (kein neuer Befund dieses Sprints).
+
+firewall_allowed_ports:
+  - { port: 22, proto: tcp, comment: "SSH" }
+  - { port: 80, proto: tcp, comment: "HTTP (Let's Encrypt Challenge, optional)" }
+  - { port: 443, proto: tcp, comment: "HTTPS" }
+  - { port: 3000, proto: tcp, comment: "Operator UI (Frontend)" }
+  - { port: 8080, proto: tcp, comment: "Control Server API" }
+  - { port: 8081, proto: tcp, comment: "Auth Service" }
+  - { port: 8082, proto: tcp, comment: "Safety Service" }
+  - { port: 8083, proto: tcp, comment: "Telemetry Service" }
+  - { port: 8084, proto: tcp, comment: "WebRTC SFU" }
+  - { port: 8889, proto: tcp, comment: "MediaMTX WHIP/WHEP Signaling" }
+  - { port: 9997, proto: tcp, comment: "MediaMTX Management API (optional, intern)" }
+  # Hinweis (nicht in diesem Sprint behoben, s. Sprint-Ergebnisse): hetzner-setup.md nennt hier
+  # Port 1883 (Klartext-MQTT). Der tatsächliche Compose-Stand (infrastructure/compose/
+  # docker-compose.prod.yml, seit MQTTS-01) betreibt Mosquitto TLS-only auf Port 8883 — die
+  # Doku-Tabelle ist an dieser Stelle veraltet. Portregel folgt hier bewusst 1:1 der Doku
+  # (Auftrag dieses Sprints), der tatsächlich benötigte Port 8883 ist zusätzlich ergänzt, damit
+  # die Firewall den echten Compose-Stand nicht blockiert.
+  - { port: 1883, proto: tcp, comment: "MQTT Broker (Klartext, laut hetzner-setup.md Schritt 2 — Doku-Stand vor MQTTS-01)" }
+  - { port: 8883, proto: tcp, comment: "MQTT Broker TLS (tatsächlicher Compose-Stand seit MQTTS-01, s. Kommentar oben)" }
+  - { port: 3001, proto: tcp, comment: "Grafana" }
+  - { port: 3100, proto: tcp, comment: "Loki (optional, intern)" }
+  - { port: 3478, proto: tcp, comment: "STUN/TURN (coturn)" }
+  - { port: 3478, proto: udp, comment: "STUN/TURN (coturn)" }
+  - { port: 5349, proto: tcp, comment: "TURN-TLS (coturn)" }
+  - { port: 5349, proto: udp, comment: "TURN-TLS (coturn)" }
+  - { port: 8189, proto: udp, comment: "MediaMTX ICE-Mux (WebRTC Media)" }
+
+firewall_relay_port_range: "49152:65535"
+firewall_relay_port_proto: udp

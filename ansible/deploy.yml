@@ -1,0 +1,209 @@
+---
+# ansible/deploy.yml — AVOC-Deployment auf die lokale Test-VM (LOCALVM-07).
+#
+# Voraussetzung: ansible/site.yml wurde bereits erfolgreich gegen den Host gefahren (Docker,
+# avoc-User, Firewall, .env + SSL-Zertifikat vorhanden — s. roles/bootstrap, roles/firewall,
+# roles/secrets).
+#
+# Voraussetzung für den Image-Transfer: die in docker-compose.hetzner.yml referenzierten
+# avoc-*-Images sind auf dem Dev-Rechner bereits lokal gebaut (z. B. 'make build-prod' +
+# Retag ohne Registry-Präfix, oder ein künftiges eigenes Build-Target — siehe
+# tasks/backlog.md EPIC, Notiz zu LOCALVM-07). Dieses Playbook baut NICHT selbst, sondern
+# transferiert nur — Trennung Build/Deploy, analog zum 'push: build-prod'-Aufbau im Makefile.
+#
+# Kein Docker-Hub-Roundtrip (Architektur-Entscheidung, s. EPIC "Lokale Ansible-VM..."):
+# docker save (lokal) -> copy -> docker load (VM) — dasselbe etablierte Muster wie
+# scripts/deploy.sh (EC2, "Übergabe-Abweichung von ADR-019", s. docker-compose.prod.yml-Kommentar
+# am Dateianfang). scripts/deploy-hetzner.sh selbst bleibt bis auf einen klar markierten,
+# optionalen SKIP_REGISTRY_PULL-Zweig 1:1 aus docs/deployment/hetzner-setup.md Schritt 7
+# übernommen — s. Kommentar dort.
+#
+# Aufruf: ansible-playbook deploy.yml   (aus dem Verzeichnis ansible/)
+# Syntax-Check ohne Zielmaschine: ansible-playbook deploy.yml --syntax-check
+
+- name: AVOC lokale VM — Deployment (Configs + Images + Stack-Start)
+  hosts: local_vm
+  become: true
+  gather_facts: true
+  vars:
+    repo_root: "{{ playbook_dir }}/.."
+    deploy_version: "{{ lookup('env', 'VERSION') | default('latest', true) }}"
+
+  tasks:
+    # ─── Compose-Datei + Deploy-Script ─────────────────────────────────────
+    - name: docker-compose.hetzner.yml übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/compose/docker-compose.hetzner.yml"
+        dest: "{{ app_dir }}/docker-compose.hetzner.yml"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0644"
+
+    - name: deploy-hetzner.sh übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/scripts/deploy-hetzner.sh"
+        dest: "{{ app_dir }}/deploy-hetzner.sh"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0755"
+
+    # ─── Config-Dateien: Mosquitto/MediaMTX/Loki/Promtail/Grafana ──────────
+    # Hinweis: hetzner-setup.md Schritt 6 listet für Mosquitto nur mosquitto.conf (Doku-Stand vor
+    # MQTTS-01/TLS). Diese Ergänzung (passwd + TLS-Zertifikate) schließt die Lücke zum
+    # tatsächlichen Compose-Stand, ohne die Doku in diesem Sprint (Teil A) anzufassen — s.
+    # Sprint-Ergebnisse und LOCALVM-09 (Doku-Update, Sprint B).
+    - name: Mosquitto-Config + TLS-Assets übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/mosquitto/{{ item.src }}"
+        dest: "{{ app_dir }}/mosquitto/{{ item.dest }}"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "mosquitto.conf", dest: "mosquitto.conf", mode: "0644" }
+        - { src: "passwd", dest: "passwd", mode: "0600" }
+        - { src: "certs/ca.pem", dest: "ca.pem", mode: "0644" }
+        - { src: "certs/cert.pem", dest: "cert.pem", mode: "0644" }
+        - { src: "certs/key.pem", dest: "key.pem", mode: "0600" }
+      loop_control:
+        label: "{{ item.src }}"
+
+    - name: MediaMTX-Config übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/mediamtx/mediamtx.yml"
+        dest: "{{ app_dir }}/mediamtx/mediamtx.yml"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0644"
+
+    - name: Loki-Config übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/loki/loki.yml"
+        dest: "{{ app_base_dir }}/loki/loki.yml"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0644"
+
+    - name: Promtail-Config übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/promtail/promtail.yml"
+        dest: "{{ app_base_dir }}/promtail/promtail.yml"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0644"
+
+    - name: Grafana-Datasource-Provisioning übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/grafana/provisioning/datasources/loki.yml"
+        dest: "{{ app_base_dir }}/grafana/provisioning/datasources/loki.yml"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0644"
+
+    - name: Grafana-Dashboard-Provisioning übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infrastructure/grafana/provisioning/dashboards/{{ item }}"
+        dest: "{{ app_base_dir }}/grafana/provisioning/dashboards/{{ item }}"
+        owner: "{{ avoc_user }}"
+        group: "{{ avoc_user }}"
+        mode: "0644"
+      loop:
+        - dashboards.yml
+        - avoc.json
+
+    # ─── Images: lokal gebaut, ohne Docker-Hub-Roundtrip übertragen ────────
+    - name: Benötigte Images aus docker-compose.hetzner.yml ermitteln (lokal)
+      ansible.builtin.command:
+        cmd: docker compose -f {{ repo_root }}/infrastructure/compose/docker-compose.hetzner.yml config --images
+      delegate_to: localhost
+      become: false
+      register: avoc_required_images
+      changed_when: false
+      environment:
+        VERSION: "{{ deploy_version }}"
+        DB_PASSWORD: "unused-for-image-listing"
+        JWT_SECRET: "unused-for-image-listing"
+        WHIP_STREAM_KEY: "unused-for-image-listing"
+        TURN_EXTERNAL_IP: "unused-for-image-listing"
+        TURN_REALM: "unused-for-image-listing"
+        TURN_USER: "unused-for-image-listing"
+        TURN_PASSWORD: "unused-for-image-listing"
+        GRAFANA_ADMIN_USER: "unused-for-image-listing"
+        GRAFANA_ADMIN_PASSWORD: "unused-for-image-listing"
+        MQTT_USERNAME: "unused-for-image-listing"
+        MQTT_PASSWORD: "unused-for-image-listing"
+
+    - name: avoc-*-Images herausfiltern (nur selbst gebaute, keine Basisimages wie postgres/coturn/grafana)
+      ansible.builtin.set_fact:
+        avoc_local_images: "{{ avoc_required_images.stdout_lines | select('match', '^avoc-') | list }}"
+
+    - name: Prüfen, welche Images lokal tatsächlich vorhanden sind
+      ansible.builtin.command:
+        cmd: "docker image inspect {{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ avoc_local_images }}"
+      register: avoc_image_check
+      changed_when: false
+      failed_when: false
+
+    - name: Warnen, falls Images lokal fehlen (vor erneutem Lauf lokal bauen, s. Playbook-Kopfkommentar)
+      ansible.builtin.debug:
+        msg: "WARNUNG: Image fehlt lokal: {{ item.item }} — vor erneutem Playbook-Lauf lokal bauen."
+      loop: "{{ avoc_image_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.rc != 0
+
+    - name: Images lokal als Tar-Archiv sichern (docker save)
+      ansible.builtin.command:
+        cmd: "docker save -o {{ repo_root }}/.avoc-images-transfer.tar {{ avoc_local_images | join(' ') }}"
+      delegate_to: localhost
+      become: false
+      when: avoc_local_images | length > 0
+      changed_when: true
+
+    - name: Image-Tar auf die VM übertragen
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/.avoc-images-transfer.tar"
+        dest: "/tmp/avoc-images-transfer.tar"
+        mode: "0644"
+      when: avoc_local_images | length > 0
+
+    - name: Images auf der VM per docker load einspielen
+      ansible.builtin.command:
+        cmd: "docker load -i /tmp/avoc-images-transfer.tar"
+      when: avoc_local_images | length > 0
+      changed_when: true
+
+    - name: Temporäre Image-Datei auf der VM aufräumen
+      ansible.builtin.file:
+        path: /tmp/avoc-images-transfer.tar
+        state: absent
+      when: avoc_local_images | length > 0
+
+    - name: Temporäre Image-Datei lokal aufräumen
+      ansible.builtin.file:
+        path: "{{ repo_root }}/.avoc-images-transfer.tar"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: avoc_local_images | length > 0
+
+    # ─── deploy-hetzner.sh ausführen ────────────────────────────────────────
+    # SKIP_REGISTRY_PULL=true: Bilder liegen bereits lokal geladen vor (s. oben) — kein
+    # Docker-Hub-Login/-Pull nötig oder gewünscht (Architektur-Entscheidung, s. Kopfkommentar
+    # dieser Datei + scripts/deploy-hetzner.sh-Kommentar).
+    - name: deploy-hetzner.sh auf der VM ausführen
+      ansible.builtin.command:
+        cmd: "bash {{ app_dir }}/deploy-hetzner.sh"
+      become_user: "{{ avoc_user }}"
+      environment:
+        VERSION: "{{ deploy_version }}"
+        SKIP_REGISTRY_PULL: "true"
+      register: avoc_deploy_result
+      changed_when: true
+
+    - name: Deploy-Ausgabe anzeigen
+      ansible.builtin.debug:
+        var: avoc_deploy_result.stdout_lines

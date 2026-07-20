@@ -7,6 +7,35 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 48 — Lokale Ansible-VM als Hetzner-Nachbildung, Teil A: Autorierung (LOCALVM-01..07) ✅
+2026-07-20 → [tasks/sprints/48-lokale-ansible-vm-teil-a.md](sprints/48-lokale-ansible-vm-teil-a.md)
+- Nutzerfreigabe 2026-07-20: AWS als lokale Test-/Referenzumgebung durch eine lokale,
+  per Ansible provisionierte VM ersetzen, die den zukünftigen Hetzner-Server nachbildet
+  (libvirt/KVM + `virt-install` + cloud-init, kein Vagrant/VirtualBox). Teil A deckt reine
+  Autorierung ab (kein Zugriff auf eine echte laufende VM nötig) — Teil B (Verifikation gegen die
+  echte VM, LOCALVM-08/09) folgt als eigener Sprint.
+- Neues `ansible/`-Grundgerüst (Rollen `bootstrap`/`firewall`/`secrets`, Playbooks
+  `site.yml`/`deploy.yml`), `scripts/local-vm-create.sh` (virt-install + cloud-init NoCloud-ISO),
+  sowie erstmalige Materialisierung der drei bisher nur in `docs/deployment/hetzner-setup.md`
+  dokumentierten Dateien als echten Code: `infrastructure/compose/docker-compose.hetzner.yml`,
+  `scripts/deploy-hetzner.sh`, `scripts/secrets-setup-hetzner.sh`.
+- Eine dokumentierte, minimale Abweichung vom 1:1-Materialisierungsauftrag: `deploy-hetzner.sh`
+  bekam einen optionalen `SKIP_REGISTRY_PULL`-Zweig, ohne den die bereits freigegebene
+  "kein-Docker-Hub-Roundtrip"-Architektur-Entscheidung für die lokale VM nicht hätte funktionieren
+  können (Default-Verhalten für den echten Hetzner-Server bleibt unverändert).
+- `ansible`/`ansible-playbook` konnten in dieser Agenten-Session nicht per `sudo apt-get install`
+  systemweit installiert werden (kein TTY für interaktive `sudo`-Passwortabfrage) — als Ersatz
+  lokal aus denselben Ubuntu-Paketen (`apt-get download` + `dpkg-deb -x`, kein Root nötig)
+  verifiziert. Für den Nutzer offen: `sudo apt-get install -y ansible` einmalig manuell
+  ausführen.
+- Verifiziert: `ansible-playbook site.yml/deploy.yml --syntax-check` + `--list-tasks` (beide
+  grün), alle YAML-Dateien einzeln per `yaml.safe_load` geprüft, `bash -n` für alle 3 neuen/
+  geänderten Shell-Skripte, `docker compose -f docker-compose.hetzner.yml config` gegen
+  Dummy-`.env` (Exit 0, alle 5 dokumentierten Hetzner-Änderungen im aufgelösten YAML bestätigt).
+  Kein echter Playbook-Lauf/keine echte VM-Erzeugung (explizit Sprint B). Details, erkannte
+  Doku-Lücken (`hetzner-setup.md` teils veraltet seit MQTTS-01) und vollständige Testliste im
+  Sprint-Dokument.
+
 ## Sprint 46 — control-server: Hexagonal-Migration Vorbereitung (neues ADR-035 + Testaufbau) ✅
 2026-07-20 → [tasks/sprints/46-control-server-hexagonal-migration-prep.md](sprints/46-control-server-hexagonal-migration-prep.md)
 - Schließt den seit ADR-031 offenen Punkt "control-server bräuchte eigenes ADR + Testabdeckung-Aufbau zuerst". Nutzerentscheidung 2026-07-20 gegenüber 2 Alternativen (Hexagonal-Migration safety-service/webrtc-sfu/recording — verworfen, keine vergleichbare Infrastruktur-Abhängigkeit dort; `newSafetyMux` exportieren — zu klein).

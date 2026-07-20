@@ -1,0 +1,14 @@
+---
+# roles/bootstrap/defaults — Ablösung des Bash-Blocks aus docs/deployment/hetzner-setup.md
+# Schritt 3 durch idempotente Ansible-Tasks (LOCALVM-03). avoc_user/app_dir/app_base_dir kommen
+# aus ansible/group_vars/local_vm.yml (rollenübergreifend gültig).
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Ziel-OS: Ubuntu 24.04 LTS ("noble") — siehe hetzner-setup.md Schritt 1 / EPIC-Vorrecherche.
+docker_apt_release_codename: noble
