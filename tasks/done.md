@@ -9,6 +9,13 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 42 — Testing-Debt aus ADR-006-Bestandsaufnahme schließen ✅
+2026-07-19 → [tasks/sprints/42-testing-debt-adr-006.md](sprints/42-testing-debt-adr-006.md)
+- Schließt die zwei kleineren Funde aus der ADR-006/CLAUDE.MD-§17-Bestandsaufnahme (2026-07-19), die hinter den priorisierten CI-Gates (Sprint 41, separater Worktree) zurückgestellt wurden. Ausgeführt in eigenem Worktree (`feature/fleet-service-foundation-testdebt`), keine Code-Überschneidung mit Sprint 41.
+- SFUCONC-01: `TestSFU_ConcurrentSessionEventsAndPeerOps` in `internal/webrtcsfu/sfu_test.go` — Concurrency-Test für `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer`, analog `bus_test.go`s `TestBus_ConcurrentPublishAndRead`. `n` von anfänglich 50 auf 20 reduziert, nachdem 50 echte `webrtc.PeerConnection`-Instanzen unter `-race` einen seltenen Flake in einem unveränderten Nachbarpaket (`fleetgateway`) ausgelöst hatten.
+- SAFETYBUS-01/02: neue `tests/unit/safety_bus_integration_test.go` verdrahtet einen echten `HTTPPublisher` gegen einen echten `safetyservice.NewBus()` über einen lokalen `httptest.Server` (dupliziert `newSafetyMux`s zwei Zeilen, kein Produktivcode-Umbau) — Dead-man-Timeout und ACK-Timeout jetzt gegen den echten Bus statt nur gegen `MockSafetyPublisher` verifiziert. `safety_test.go`-Header und ADR-006 Teil 3 präzisiert.
+- Verifiziert: `go build`/`go vet` sauber, `go test ./... -race` **3 aufeinanderfolgende volle Läufe grün** (vorbestehende `tests/integration`-Fehlschläge unverändert, Docker-Test-Stack nicht gestartet — per Vergleichslauf auf dem Basis-Commit bestätigt).
+
 ## Sprint 41 — CI-Gates einführen (ADR-006-Bestandsaufnahme) ✅
 2026-07-20 → [tasks/sprints/41-ci-gates-einfuehren.md](sprints/41-ci-gates-einfuehren.md)
 (Branch `feature/fleet-service-foundation-cigates`, Basis `feature/fleet-service-foundation-sprint35`

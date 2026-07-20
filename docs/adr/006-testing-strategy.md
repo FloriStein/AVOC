@@ -77,6 +77,14 @@ Das Teleoperation-System ist ein verteiltes Echtzeit-System mit Safety-kritische
 #### Verworfene Alternative:
 - Normale Unit Tests gegen Safety Event Bus Interface: keine explizite Szenario-Struktur
 
+#### Ergänzung (SAFETYBUS-02, Sprint 42):
+`safety_test.go` deckt die Trigger-Logik ab (State Machine → `Publisher`-Interface), verifiziert
+gegen `mocks.MockSafetyPublisher` — nicht den echten Safety Event Bus
+(`internal/safetyservice.Bus`), an den `HTTPPublisher` in Produktion per HTTP sendet. Diese Lücke
+schließt seit Sprint 42 `tests/unit/safety_bus_integration_test.go`: echter `HTTPPublisher` gegen
+einen lokalen `httptest.Server` gegen einen echten `safetyservice.NewBus()`, für die Trigger
+Dead-man-Timeout und ACK-Timeout, verifiziert über `bus.GetSafetyState()`.
+
 ---
 
 ### Teil 4 — Frontend Testing: Hybrid-Strategie

@@ -1,7 +1,10 @@
 package webrtcsfu
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/stretchr/testify/assert"
@@ -132,4 +135,67 @@ func TestRemovePeer_UnknownPeerID_NoPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		s.removePeer("does-not-exist")
 	})
+}
+
+// TestSFU_ConcurrentSessionEventsAndPeerOps drives HandleSessionEvent, registerOperatorSubscription
+// and removePeer from many goroutines at once (analog internal/safetyservice/bus_test.go's
+// TestBus_ConcurrentPublishAndRead) to exercise s.mu under concurrent map access — run with
+// `go test -race`.
+func TestSFU_ConcurrentSessionEventsAndPeerOps(t *testing.T) {
+	s := New()
+
+	const n = 20
+	type peerCall struct {
+		operatorID string
+		pc         *webrtc.PeerConnection
+		track      *webrtc.TrackLocalStaticRTP
+	}
+	calls := make([]peerCall, n)
+	for i := 0; i < n; i++ {
+		track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "test")
+		require.NoError(t, err)
+		calls[i] = peerCall{
+			operatorID: fmt.Sprintf("operator-%d", i),
+			pc:         newTestPeerConnection(t),
+			track:      track,
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, c := range calls {
+		c := c
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			s.HandleSessionEvent(SessionEvent{Type: EventOperatorAssigned, SessionID: "session-1", OperatorID: "operator-1"})
+		}()
+		go func() {
+			defer wg.Done()
+			s.registerOperatorSubscription("session-1", c.operatorID, c.pc, c.track)
+		}()
+		go func() {
+			defer wg.Done()
+			s.removePeer(c.operatorID)
+		}()
+	}
+	waitOrTimeout(t, &wg, 5*time.Second)
+
+	// All HandleSessionEvent calls publish the same event type, so the outcome is deterministic
+	// regardless of goroutine interleaving — unlike peers/routing, whose exact contents legitimately
+	// depend on the race between concurrent registerOperatorSubscription/removePeer calls.
+	assert.Equal(t, EventOperatorAssigned, s.state["session-1"])
+}
+
+func waitOrTimeout(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for concurrent SFU operations to finish")
+	}
 }
