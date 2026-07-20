@@ -80,6 +80,27 @@ fi
 
 mkdir -p "$WORK_DIR" "$CLOUDINIT_DIR"
 
+# ─── Traversal-Recht für 'libvirt-qemu' sicherstellen ─────────────────────────
+# HINWEIS (Sprint 49, LOCALVM-08a, Erkenntnis aus dem ersten echten Lauf): 'virt-install' nutzt
+# per Default 'qemu:///system' — der QEMU-Prozess läuft als Systemnutzer 'libvirt-qemu', nicht
+# als der aufrufende Nutzer. Liegt WORK_DIR (Standard: $HOME/.local/share/avoc-local-vm) unter
+# einem Home-Verzeichnis ohne Traversal-Recht für "andere" (Ubuntu-Default z. B. 750 auf $HOME,
+# 700 auf ~/.local), scheitert 'virt-install' mit "Cannot access storage file ... Keine
+# Berechtigung". Fix: nur das Traversal-Bit (o+x, bewusst KEIN o+r) auf den Verzeichnissen
+# zwischen $HOME und WORK_DIR setzen — erlaubt gezielten Zugriff auf bekannte Dateipfade, ohne
+# Verzeichnislisting für andere Nutzer freizugeben. Idempotent, nur relevant falls WORK_DIR unter
+# $HOME liegt (Standardfall).
+if [[ "$WORK_DIR" == "$HOME"/* ]]; then
+  chmod o+x "$HOME" 2>/dev/null || true
+  _walk="$HOME"
+  _rel="${WORK_DIR#"$HOME"/}"
+  IFS='/' read -ra _parts <<< "$_rel"
+  for _part in "${_parts[@]}"; do
+    _walk="${_walk}/${_part}"
+    [ -d "$_walk" ] && { chmod o+x "$_walk" 2>/dev/null || true; }
+  done
+fi
+
 # ─── Ubuntu-24.04-Cloud-Image herunterladen (einmalig, danach wiederverwendet) ─
 
 if [ ! -f "$BASE_IMG" ]; then
@@ -89,10 +110,22 @@ else
   echo "[1/6] Ubuntu-Cloud-Image bereits vorhanden: $BASE_IMG"
 fi
 
-# ─── VM-Disk als Overlay auf dem Basis-Image anlegen ──────────────────────────
-
-echo "[2/6] Erzeuge VM-Disk (${VM_DISK_GB}G, Backing File: Basis-Image)..."
-qemu-img create -f qcow2 -F qcow2 -b "$BASE_IMG" "$VM_DISK" "${VM_DISK_GB}G"
+# ─── VM-Disk als eigenständige Kopie des Basis-Images anlegen ─────────────────
+# HINWEIS (Sprint 49, LOCALVM-08a, Erkenntnis aus dem ersten echten Lauf): Ursprünglich war hier
+# ein Backing-File-Overlay vorgesehen (qemu-img create -b), das ist aber gegen die
+# System-AppArmor-Konfiguration von libvirtd auf diesem Host NICHT lauffähig — virt-aa-helper
+# generiert das Pro-Domain-AppArmor-Profil nur aus den in der Domain-XML direkt referenzierten
+# Disk-Pfaden (Overlay-Datei + Seed-ISO), läuft die qcow2-Backing-Chain aber NICHT ab, um das
+# Basis-Image mit aufzunehmen. Ergebnis: QEMU (läuft konfiniert unter dem
+# 'libvirt-qemu'-AppArmor-Profil) bekommt beim Öffnen des Basis-Images "Permission denied", obwohl
+# die regulären Unix-Dateirechte passen. Eine Korrektur der System-AppArmor-Policy bräuchte
+# Root-Rechte (hier nicht verfügbar, s. EPIC-Kontext). Deshalb: eigenständige Kopie statt Overlay
+# — dadurch referenziert die Domain-XML nur noch die eine Datei, für die virt-aa-helper das Profil
+# ohnehin korrekt setzt. Kostet mehr Plattenplatz als ein dünnes Overlay (volle Kopie statt
+# Differenz), ist aber die einzige praktikable Lösung ohne Root-Zugriff auf die AppArmor-Config.
+echo "[2/6] Erzeuge VM-Disk (${VM_DISK_GB}G, eigenständige Kopie des Basis-Images)..."
+qemu-img convert -f qcow2 -O qcow2 "$BASE_IMG" "$VM_DISK"
+qemu-img resize "$VM_DISK" "${VM_DISK_GB}G"
 
 # ─── cloud-init NoCloud-Datenquelle erzeugen ───────────────────────────────────
 # Analog zu Hetzner Cloud selbst: SSH-Key-Injection, Hostname, dedizierter User (hier direkt
@@ -161,11 +194,25 @@ virt-install \
   --noautoconsole
 
 echo "[5/6] Warte auf Boot + IP-Vergabe (bis zu 120s)..."
+# HINWEIS (Sprint 49, LOCALVM-08a, Erkenntnis aus dem ersten echten Lauf): Die ursprüngliche
+# Fassung dieser Schleife nutzte 'cmd1 && cmd2'/'cmd1 || cmd2' als alleinstehende Anweisungen.
+# Unter 'set -euo pipefail' (Skript-Kopf) beendet das die gesamte Domäne bereits beim ersten
+# Schleifendurchlauf STILL (ohne Fehlermeldung!): '--source agent' schlägt praktisch immer fehl
+# (kein qemu-guest-agent in einem frischen Cloud-Image installiert), und diese Fehlschläge
+# propagieren durch 'pipefail' in die Zuweisung; ebenso ist '[ -n "$VM_IP" ] && break' als
+# alleinstehende Anweisung ein Fehlschlag (Exit 1), solange die IP noch nicht gefunden wurde —
+# 'errexit' beendet das Skript dann sofort. Deshalb: 'if'-Blöcke statt bare '&&'/'||' als
+# Anweisung, plus '|| true' an den Pipelines selbst, damit ein Fehlschlag von 'virsh domifaddr'
+# nicht die Zuweisung selbst zum Scheitern bringt.
 VM_IP=""
 for _ in $(seq 1 24); do
-  VM_IP=$(virsh domifaddr "$VM_NAME" --source agent 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -n1)
-  [ -z "$VM_IP" ] && VM_IP=$(virsh domifaddr "$VM_NAME" 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -n1)
-  [ -n "$VM_IP" ] && break
+  VM_IP=$(virsh domifaddr "$VM_NAME" --source agent 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -n1 || true)
+  if [ -z "$VM_IP" ]; then
+    VM_IP=$(virsh domifaddr "$VM_NAME" 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -n1 || true)
+  fi
+  if [ -n "$VM_IP" ]; then
+    break
+  fi
   sleep 5
 done
 
