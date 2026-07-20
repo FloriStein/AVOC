@@ -189,6 +189,7 @@ zu `docker-compose.prod.yml`, das in `~/app/` liegt):
 ~/app/
 ├── docker-compose.prod.yml
 ├── deploy.sh
+├── backup-audit-store.sh             # AUDITBACKUP-02 — deploy.sh registriert den täglichen Cronjob
 ├── .env                              # Schritt 5 — DB_PASSWORD, ADMIN_PASSWORD
 ├── mediamtx/mediamtx.yml
 └── mosquitto/mosquitto.conf
@@ -216,6 +217,7 @@ ssh -i "$KEY" ${REMOTE_USER}@${ELASTIC_IP} \
   "mkdir -p ~/app/mediamtx ~/app/mosquitto ~/loki ~/promtail ~/grafana/provisioning/datasources ~/grafana/provisioning/dashboards"
 
 scp -i "$KEY" scripts/deploy.sh                                        ${REMOTE_USER}@${ELASTIC_IP}:~/app/
+scp -i "$KEY" scripts/backup-audit-store.sh                            ${REMOTE_USER}@${ELASTIC_IP}:~/app/
 scp -i "$KEY" infrastructure/compose/docker-compose.prod.yml           ${REMOTE_USER}@${ELASTIC_IP}:~/app/
 scp -i "$KEY" infrastructure/mediamtx/mediamtx.yml                     ${REMOTE_USER}@${ELASTIC_IP}:~/app/mediamtx/
 scp -i "$KEY" infrastructure/mosquitto/mosquitto.conf                  ${REMOTE_USER}@${ELASTIC_IP}:~/app/mosquitto/
