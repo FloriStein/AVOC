@@ -797,6 +797,40 @@ Testabdeckung, ein separater Entscheidungspunkt).
 
 ---
 
+## EPIC: control-server Hexagonal-Migration — Vorbereitung (ADR-035) ✅ Sprint 46
+
+**Freigabe (2026-07-20):** Nutzerentscheidung gegenüber zwei Alternativen (Hexagonal-Migration
+safety-service/webrtc-sfu/recording — verworfen, keine vergleichbare Infrastruktur-Abhängigkeit
+dort; `newSafetyMux` exportieren — zu klein für einen eigenen Sprint). Schließt den seit ADR-031
+offenen Punkt "control-server bräuchte eigenes ADR + Testabdeckung-Aufbau zuerst".
+
+Vorrecherche korrigierte die ursprüngliche "geringste Testabdeckung"-Annahme: `go test
+./tests/unit/... -coverpkg=./internal/controlserver/...` zeigt ~84% Coverage für die
+`internal/controlserver`-Subpakete (State Machine, alle 5 Watchdogs, Session-/Handover-Manager —
+bereits solide über `tests/unit/*.go` getestet). Die echte Lücke ist `cmd/control-server/main.go`
+selbst (919 Zeilen, `package main`, 0% Coverage auf jeder Funktion) sowie `authcheck.Checker` und
+`transport/websocket.go`. Details siehe `docs/adr/035-control-server-hexagonal-migration-prep.md`
+und `tasks/sprints/46-control-server-hexagonal-migration-prep.md`.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| CTRL-01 | Neues ADR `docs/adr/035-control-server-hexagonal-migration-prep.md` — korrigierte Risikoanalyse + Scope-Vorschlag/empfohlene Reihenfolge für eine spätere echte Migration. | S | ✅ Sprint 46 | — |
+| CTRL-02 | `requireJWT`-Tabellentest (`cmd/control-server/main_test.go`, neu). | S | ✅ Sprint 46 | — |
+| CTRL-03 | Test-Fixture `newTestControlServer(t)` + `handleHealth`-Test. | M | ✅ Sprint 46 | — |
+| CTRL-04 | `handleSessionStart`/`advanceVehicleToActiveOperator`-Tests. | M | ✅ Sprint 46 | CTRL-03 |
+| CTRL-05 | `handleSessionEnd`-Tests. | M | ✅ Sprint 46 | CTRL-03 |
+| CTRL-06 | `handleEmergencyStop`-Tests — inkl. Fund: `IDLE→SAFE_MODE` kein gültiger State-Transition, Emergency-Stop auf Fahrzeug ohne aktive Session wird lautlos ignoriert (dokumentiert, nicht behoben). | M | ✅ Sprint 46 | CTRL-03 |
+| CTRL-07 | `internal/controlserver/authcheck/checker_test.go` — `DATABASE_URL`-gated gegen echte `users`-Tabelle. | S | ✅ Sprint 46 | — |
+| CTRL-08 | Verifikation + Doku-Updates (ADR-031-Cross-Reference, `DECISIONS.MD`, dieser Eintrag). | S | ✅ Sprint 46 | CTRL-01..07 |
+
+**Nicht Teil dieses Sprints:** `internal/controlserver/transport/websocket.go`, die restlichen
+~20 HTTP-Handler in `main.go`, die DB-touchende Bootstrap-Logik (`loadConfig`/`newAuditWriter`/
+`newVehicleStore`/`newControlServer`/`main()`), der Fix für den `IDLE→SAFE_MODE`-Fund, die
+eigentliche Hexagonal-Migration (Handler-Struct-Extraktion) selbst — alle eigene, noch offene
+Folge-Entscheidungspunkte (siehe ADR-035 "Nächste Schritte").
+
+---
+
 ## EPIC: Backup-Strategie Audit Store (ADR-018/023 Folge) ✅ Sprint 44
 
 **Freigabe (2026-07-19):** Nutzer wählt dieses Thema für Sprint 44 gegenüber zwei Alternativen

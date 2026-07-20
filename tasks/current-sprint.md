@@ -9,5 +9,5 @@
 Kein aktiver Sprint. Nächster Sprint noch nicht geplant — siehe `tasks/backlog.md` für offene
 EPICs/Tasks.
 
-Vorgänger: Sprint 45 ✅ (Hexagonale Architektur: Use-Case-Extraktion fleet-service/auth-service
-(HEX-06/HEXAUTH-04), siehe `tasks/sprints/45-hexagonal-usecase-extraktion.md`)
+Vorgänger: Sprint 46 ✅ (control-server: Hexagonal-Migration Vorbereitung — neues ADR-035 +
+Testaufbau, siehe `tasks/sprints/46-control-server-hexagonal-migration-prep.md`)

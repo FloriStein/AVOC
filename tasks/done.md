@@ -7,6 +7,14 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 46 — control-server: Hexagonal-Migration Vorbereitung (neues ADR-035 + Testaufbau) ✅
+2026-07-20 → [tasks/sprints/46-control-server-hexagonal-migration-prep.md](sprints/46-control-server-hexagonal-migration-prep.md)
+- Schließt den seit ADR-031 offenen Punkt "control-server bräuchte eigenes ADR + Testabdeckung-Aufbau zuerst". Nutzerentscheidung 2026-07-20 gegenüber 2 Alternativen (Hexagonal-Migration safety-service/webrtc-sfu/recording — verworfen, keine vergleichbare Infrastruktur-Abhängigkeit dort; `newSafetyMux` exportieren — zu klein).
+- Vorrecherche korrigierte die ursprüngliche "geringste Testabdeckung"-Annahme: `internal/controlserver`-Subpakete sind über die bestehende `tests/unit`-Suite bereits ~84% getestet (nur mit `-coverpkg` sichtbar). Die echte Lücke ist `cmd/control-server/main.go` selbst (919 Zeilen, 0% Coverage auf jeder Funktion).
+- Neues ADR `docs/adr/035-control-server-hexagonal-migration-prep.md` (36 ADRs gesamt). Testaufbau (kein Produktivcode-Refactor) für den sicherheitskritischsten Teil: `requireJWT`, `handleSessionStart`/`advanceVehicleToActiveOperator`, `handleSessionEnd`, `handleEmergencyStop` (neue `cmd/control-server/main_test.go`, 20 Tests) sowie `authcheck.Checker` (neue, `DATABASE_URL`-gated `checker_test.go`, 3 Tests).
+- Echter Fund dabei: ein Fahrzeug ohne aktive Session steht in SYSTEM=IDLE, und `IDLE→SAFE_MODE` ist kein gültiger State-Transition — Emergency-Stop auf so ein Fahrzeug wird lautlos ignoriert (nur Warn-Log). Dokumentiert als offener Entscheidungspunkt im ADR, nicht behoben (Scope: Vorbereitung, kein Fix).
+- Verifiziert: `go build`/`go vet ./...` sauber, `go test ./cmd/control-server/... ./internal/controlserver/authcheck/... -race -count=2` zweimal grün; `authcheck`-Tests zusätzlich gegen einen ephemeren `postgres:16-alpine`-Container real verifiziert; `go test ./... -race` gesamt geprüft (nur erwartbare `tests/integration`-Fehlschläge ohne Docker-Teststack).
+
 ## Sprint 45 — Hexagonale Architektur: Use-Case-Extraktion fleet-service/auth-service (HEX-06/HEXAUTH-04) ✅
 2026-07-20 → [tasks/sprints/45-hexagonal-usecase-extraktion.md](sprints/45-hexagonal-usecase-extraktion.md)
 - Schließt die beiden seit Sprint 33/37 offenen optionalen ADR-031-Entscheidungspunkte (HEX-06 fleet-service, HEXAUTH-04 auth-service). Nutzerentscheidung 2026-07-20 gegenüber 2 Alternativen (Hexagonal-Migration safety-service/webrtc-sfu/recording; control-server-Vorbereitung per neuem ADR + Testaufbau).

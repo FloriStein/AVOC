@@ -319,6 +319,16 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 > (eigener, noch offener Entscheidungspunkt) und `control-server` (bewusst ausgeklammert, braucht
 > eigenes ADR + Testaufbau zuerst) bleiben die einzigen noch nicht migrierten Services.
 
+> **Update (2026-07-20, Sprint 46 abgeschlossen):** control-server-Vorbereitung: neues
+> [ADR-035](035-control-server-hexagonal-migration-prep.md) korrigiert die ursprüngliche
+> "geringste Testabdeckung"-Einschätzung (die `internal/controlserver`-Subpakete sind über
+> `tests/unit` tatsächlich bereits ~84% getestet — die echte Lücke ist `cmd/control-server/main.go`
+> selbst, 919 Zeilen, 0% Coverage) und baut Testabdeckung für den sicherheitskritischsten Teil davon
+> auf (`requireJWT`, `handleSessionStart`/`handleSessionEnd`/`handleEmergencyStop`,
+> `authcheck.Checker`). Kein Produktivcode-Refactor — die eigentliche Handler-Struct-Extraktion
+> bleibt ein separater, noch offener Entscheidungspunkt, siehe ADR-035 "Nächste Schritte". Details:
+> `tasks/sprints/46-control-server-hexagonal-migration-prep.md`.
+
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe
   Risikobewertung oben
