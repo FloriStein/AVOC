@@ -244,6 +244,21 @@ export async function listFleetZones(token: string): Promise<Zone[]> {
   return (await res.json()) ?? []
 }
 
+// GET /fleet/vehicles/{id}/history (ADR-033) — "gefahrene Route" for the map's historie-linie,
+// chronologically ordered.
+export interface VehiclePositionHistoryPoint {
+  vehicle_id: string
+  position_lat: number
+  position_lon: number
+  recorded_at: string
+}
+
+export async function listVehiclePositionHistory(token: string, vehicleId: string): Promise<VehiclePositionHistoryPoint[]> {
+  const res = await fetch(`/fleet/vehicles/${vehicleId}/history`, { headers: { 'Authorization': `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`listVehiclePositionHistory failed: ${res.status}`)
+  return res.json()
+}
+
 export async function listFleetStations(token: string): Promise<Station[]> {
   const res = await fetch('/fleet/stations', { headers: { 'Authorization': `Bearer ${token}` } })
   if (!res.ok) throw new Error(`listFleetStations failed: ${res.status}`)

@@ -215,7 +215,7 @@ LOG-10 → LOG-11 (nach LOG-02)
 
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
-| WEBRTC-10 | SDP `a=setup:active`-Workaround (`useWebRTC.ts`, `useWHIPSender.ts`) inkompatibel mit aktuellem Chromium (`setRemoteDescription` wirft „Offerer must use actpass") | M/L | 🔲 Backlog | Entdeckt Sprint 19 (LOCAL-04) beim ersten Mal, dass WHIP tatsächlich bis zum SDP-Austausch kam. Ursprünglich dokumentierter Fix für Pion-v1.19.0-DTLS-Bug (`docs/webrtc.md`). Vor jeder Änderung prüfen: (1) hat `mediamtx:latest` den Pion-Bug noch (Version pinnen/prüfen), (2) betrifft `useWebRTC.ts` auch den Produktiv-Video-Empfang auf AWS — kein reines Lokal-Problem. Ggf. Grill-Me + eigenes ADR nötig, da Video-Hub-Architektur (ADR-014/020) berührt |
+| WEBRTC-10 | SDP `a=setup:active`-Workaround (`useWebRTC.ts`, `useWHIPSender.ts`) inkompatibel mit aktuellem Chromium (`setRemoteDescription` wirft „Offerer must use actpass") | M/L | ✅ Sprint 32 | Technische Prüfung: `mediamtx:latest` (`v1.18.1`) baut gegen `pion/webrtc v4.2.12`, komplett andere Codebasis als das referenzierte `v1.19.0`. Workaround entfernt, Offer bleibt Standard-`actpass`. Lokal gegen echten `mediamtx:latest`-Container verifiziert (isolierter Pion-WHIP-Client, `docs/webrtc.md`) — DTLS/ICE-Handshake erreicht zuverlässig `Connected`. Kein eigenes ADR nötig (reiner Implementierungs-Hack, keine Architekturentscheidung berührt). Produktiv-Verifikation mit echtem Chromium auf AWS bleibt offen (`CONTEXT.MD`) |
 | DOC-01 | `frontend/README.md` seit MediaMTX-WHIP/WHEP-Migration (Sprint 9/10) nicht mehr gepflegt | S | ✅ Sprint 30 | Proxy-Tabelle, `useWebRTC`-Beschreibung (WHEP statt SFU), Komponenten-/Hooks-/Lib-Liste und Funktionsumfang (Nutzerverwaltung, Fleet Dashboard) auf aktuellen Stand gebracht |
 | DOC-02 | Kompilierte `control-server`-Binärdatei (~12 MB) liegt seit dem allerersten Commit im Repo-Root und ist versioniert — nicht durch `.gitignore` erfasst (nur `bin/` ist ausgeschlossen) | S | ✅ Sprint 30 | Keine Referenz im Repo gefunden. Per `git rm --cached` aus dem Tracking entfernt (lokale Datei bleibt), `.gitignore` ergänzt. Bewusst **keine** History-Rewrite |
 
@@ -233,8 +233,8 @@ sobald die Architektur final abgestimmt ist.
 
 | ID | Task | Typ | Status | Notizen |
 |----|------|-----|--------|---------|
-| FLEET-01 | Handshake-basierte Autonomie-Rückgabe (statt einfachem `endSession()`) | M | 🔲 Backlog | `ADR-028` — bewusst zurückgestellt; Risiko: Fahrzeug könnte Kontrolle zurückerhalten, bevor es sicher verarbeitet ist. `endSession()` reicht für den Anfang |
-| FLEET-02 | Persistenzform für gefahrene Route (Historie) — Zeitreihen-DB vs. einfache Tabelle | M | 🔲 Backlog | `ADR-029` — noch nicht entschieden, betrifft Karten-Route-Darstellung (Historie-Linie) |
+| FLEET-01 | Handshake-basierte Autonomie-Rückgabe (statt einfachem `endSession()`) | M | 🔲 Backlog | `ADR-028` — Sprint-32-Triage 2026-07-18: kein neuer Anlass zur Revision bekannt, bewusst weiter zurückgestellt; Risiko: Fahrzeug könnte Kontrolle zurückerhalten, bevor es sicher verarbeitet ist. `endSession()` reicht für den Anfang |
+| FLEET-02 | Persistenzform für gefahrene Route (Historie) — Zeitreihen-DB vs. einfache Tabelle | M | ✅ Sprint 32 | [ADR-033](../docs/adr/033-vehicle-position-history.md) — einfache `vehicle_position_history`-Tabelle (kein Zeitreihen-DB-Dienst), gedrosselter Schreibpfad (min. 10s), 30-Tage-Retention; identisch mit `AP2-03` umgesetzt |
 | FLEET-03 | Bestehende `POST /vehicles`/`DELETE /vehicles/{id}` in `control-server` vs. neue `fleet-service`-Admin-API — Ablösung oder Koexistenz | S | ✅ Sprint 31 | Reine Bestätigungsaufgabe, kein Code: `ADR-029` beantwortet die Frage bereits abschließend (Koexistenz, kein Bruch), Endpoints unverändert verifiziert |
 | FLEET-04 | `vehicle-mock`s Fleet-Simulation nutzt hartcodierte Demo-Stationskoordinaten (`cmd/vehicle-mock/fleet_simulator.go`) statt echter Zonen/Stationen | S | ✅ Sprint 31 | Neue `cmd/vehicle-mock/fleet_stations.go`: `resolveSimulationStations()` ruft `GET /fleet/stations` ab, fällt bei Fehler/<2 geo-verorteten Stationen auf `fallbackDemoStations` zurück |
 | TASKUI-01 | Doppelte Demo-Stationsanlage bereinigen (`demo-zone-taskui`/`demo-station-*-taskui` aus Sprint 24 vs. `zone-betriebshof-nord`/echte Stationen aus der parallelen Sprint-23-Session) | S | ✅ Sprint 30 | `demoStationSeed` (INSERT) durch `taskuiDemoSeedCleanup` (DELETE, FK-sicher via `NOT EXISTS`-Guard) ersetzt |
@@ -268,7 +268,7 @@ ist deshalb als zu klärender Punkt markiert, nicht als sicher notwendige Aufgab
 | AP1-01 | Workshop-Termin mit der Professur Logistik vereinbaren + durchführen — Klärung der konkreten ROS2-Topics, Nachrichtenformate, DDS-vs-ROSbridge-Frage, sowie der vorhandenen Programmierschnittstellen der ausgewählten Fahrzeuge (Lastenrad/Lastenzug) | L | 🔲 Backlog | Externe Abhängigkeit (Termin mit AG), kein Code-Task; vertraglich Teil von AP1 (`ADR-027`); blockiert AP1-02/AP1-03 sowie die "Konkrete ROS2/DDS-Schnittstelle"-Zeile in `DECISIONS.MD`/`CONTEXT.MD` |
 | AP1-02 | `FleetGateway`-Interface (`ADR-027`) gegen die im Workshop geklärte reale Schnittstelle abgleichen; bei signifikanter Abweichung eigenes neues ADR (ADR-027 nicht überschreiben) | M | 🔲 Backlog | Abhängigkeit: AP1-01 |
 | AP1-03 | Konkreten Adapter für die reale ROS2/DDS-Schnittstelle implementieren (`MockGateway` bleibt zusätzlich als Test-Doppel erhalten, wird nicht ersetzt) | L | 🔲 Backlog | Abhängigkeit: AP1-02; betrifft ausschließlich `internal/fleetgateway`, keine Kopplung zu `control-server`/Safety-Domäne laut ADR-029 |
-| AP1-04 | Klären, ob Meilenstein 1 ein eigenständiges Architektur-Liefer-Dokument für den Auftraggeber erfordert; falls ja, bestehende Docs (`docs/vision.md`, `docs/requirements.md`, `CONTEXT.MD`, `docs/architecture.md`, `ADR-027/028/029`) zu einem auftraggebertauglichen Dokument konsolidieren | S/M | 🔲 Zu klären | Kein Beleg im Repo für die genaue Abnahme-Form — vor Bearbeitung mit Auftraggeber/Nutzer klären, keine Annahme treffen |
+| AP1-04 | Klären, ob Meilenstein 1 ein eigenständiges Architektur-Liefer-Dokument für den Auftraggeber erfordert; falls ja, bestehende Docs (`docs/vision.md`, `docs/requirements.md`, `CONTEXT.MD`, `docs/architecture.md`, `ADR-027/028/029`) zu einem auftraggebertauglichen Dokument konsolidieren | S/M | ✅ Sprint 32 | Nutzerentscheidung 2026-07-18: eigenständiges Dokument gewünscht. [docs/milestones/meilenstein-1-architektur.md](../docs/milestones/meilenstein-1-architektur.md) — weist explizit darauf hin, dass Meilenstein 1 wegen des noch ausstehenden Workshops (`AP1-01`) nicht vollständig abnahmefähig ist |
 
 **Abhängigkeitspfad:**
 ```
@@ -289,7 +289,7 @@ recherchiert (mehrere parallele Worktrees arbeiteten laut `git worktree list` gl
 | Flottenübersicht (Echtzeit-Status, Batterie, Alert-Anzeige) | ✅ fertig, gemergt | Sprint 22 (DASH-01..08) |
 | Kartenansicht — Outdoor | ✅ fertig, gemergt | Sprint 23 (MAP-01..11) |
 | Kartenansicht — Indoor | 🔲 offen, kein Task mit ID bisher | Fahrzeuge haben kein `position_x/y` (nur `position_zone_id`) — Backend-Erweiterung nötig, siehe CONTEXT.MD/DECISIONS.MD "Offene Fragen" |
-| Routenübersicht (gefahrene Historie) | 🔲 offen | `FLEET-02` (oben) — Persistenzform (Zeitreihen-DB vs. Tabelle) unentschieden |
+| Routenübersicht (gefahrene Historie) | ✅ fertig, Sprint 32 | `FLEET-02`/`AP2-03` — [ADR-033](../docs/adr/033-vehicle-position-history.md) |
 | Task Management (Erstellen/Zuweisen/Status/Historie) | ✅ fertig, gemergt | Sprint 24 (`TASK-01..14`, `ADR-030`) |
 | Alert System — Basis (Echtzeit, Priorität, Ack) | ✅ fertig, gemergt | Sprint 22 |
 | Alert System — Audio-Benachrichtigung | ✅ fertig, gemergt | Sprint 25 (`AUDIO-01..06`) |
@@ -304,9 +304,9 @@ am selben Tag `docs/adr/030-task-status-lifecycle.md` unter derselben Nummer. Be
 |----|------|-----|--------|---------|
 | AP2-01 | Merge-Integration: Sprint 24 (`-taskui`) und Sprint 25 (`-audio`) in `feature/fleet-service-foundation` zusammenführen (Sprint 23 ist bereits gemergt) | L | ✅ erledigt | ADR-030-Nummernkollision gelöst (siehe oben); verbleibende Merge-Konflikte (doppelte Demo-Stationsanlage `TASKUI-01`, additive `FleetOverview.tsx`-Änderungen aus Sprint 23/24/25) beim Merge selbst aufgelöst |
 | AP2-02 | Indoor-Kartenrendering — Backend-Erweiterung für Fahrzeug-Punktposition innerhalb einer Indoor-Zone | L | 🔲 Backlog | Bisher nur als "Offene Frage" in CONTEXT.MD/DECISIONS.MD geführt, hier erstmals als konkreter Task erfasst. Braucht eigene Datenmodell-Entscheidung (`vehicle_status`-Erweiterung) — vermutlich eigenes ADR, da Datenmodell-Änderung (ADR-029 nicht überschreiben) |
-| AP2-03 | Persistenzform für "gefahrene Route" entscheiden + implementieren | M | 🔲 Backlog | Verweist auf bestehenden `FLEET-02` — hier nur referenziert, nicht dupliziert |
+| AP2-03 | Persistenzform für "gefahrene Route" entscheiden + implementieren | M | ✅ Sprint 32 | Verweist auf `FLEET-02` — identisch umgesetzt, siehe dort und [ADR-033](../docs/adr/033-vehicle-position-history.md) |
 | AP2-04 | Prioritätenmanagement in der Task-UI über reine Zahlenanzeige hinaus ausbauen (Sortierung nach Priorität, visuelle Hervorhebung hoher Priorität) | M | ✅ Sprint 31 | `FleetTaskPanel.tsx`: `sortedTasks` (absteigend nach `priority`), Hervorhebung ab `priority >= 5` (fester Schwellenwert, Grill-Me 2026-07-18) |
-| AP2-05 | Klären, ob Meilenstein 2 ein eigenständiges Abnahme-Artefakt für den Auftraggeber braucht | S | 🔲 Zu klären | Analog `AP1-04` — kein Beleg im Repo für die genaue Abnahme-Form |
+| AP2-05 | Klären, ob Meilenstein 2 ein eigenständiges Abnahme-Artefakt für den Auftraggeber braucht | S | ✅ Sprint 32 | Nutzerentscheidung 2026-07-18: eigenständiges Dokument gewünscht (analog `AP1-04`). [docs/milestones/meilenstein-2-dashboard.md](../docs/milestones/meilenstein-2-dashboard.md) — weist auf `AP2-02` (Indoor-Kartenrendering) als einzigen noch offenen Punkt hin |
 
 **Nicht dupliziert, sondern nur referenziert (bereits auf den jeweiligen Branches dokumentiert,
 kommen beim Merge mit):** `TASKUI-01..05` (`taskui`-Branch-`backlog.md`: doppelte Demo-Stationen,
@@ -456,7 +456,7 @@ Thema — separat über `/security-review` oder einen eigenen Sicherheits-Task n
 | MQTT-Authentifizierung (Mosquitto Passwort-File) | offen | Port 1883 aktuell ohne Auth offen |
 | Multi-Vehicle / vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + SQLite-Registry; `~^vehicle-.*`-Regex aktiv |
 | E2E Smoke Test mit aktiver WHIP-Quelle | offen | WEBRTC-09 Rest — Browser WiFi + 5G ICE-Pair verifizieren |
-| OBS-01 Vehicle Heartbeat | offen | Sprint-14-Bonus — AckBadge "zuletzt gesehen" Timestamp |
+| ~~OBS-01 Vehicle Heartbeat~~ | ✅ Sprint 31 | AckBadge zeigt "Zuletzt gesehen vor Xs" aus `useTelemetry.ts`s `ageSinceUpdateMs`, unabhängig vom ACK-Kommandofluss |
 | Multi-Vehicle Safety-Isolation (globale `sm`/Watchdog-Singletons) | ✅ ADR-026 | `VehicleContextRegistry` — Implementierung Sprint 17 |
 
 ---
@@ -488,6 +488,6 @@ Phase 12 — Vehicle Registry ✅ (abgeschlossen 2026-06-12)
 Phase 13 — Dev-Stack Stabilisierung & Log-Korrelation ✅ (abgeschlossen 2026-06-13)
   DEV-01..03 ✅ — nginx.dev.conf HTTP-only; vehicle-mock im Build; session_id in TelemetryEvent
 
-Phase 14 — Security & Observability 🔄 (Sprint 14, in Bearbeitung)
-  AUTH-01 ✅  ROB-01 ✅  UI-01 ✅  OBS-01 🔲 (Bonus offen)
+Phase 14 — Security & Observability ✅ (Bonus OBS-01 abgeschlossen Sprint 31)
+  AUTH-01 ✅  ROB-01 ✅  UI-01 ✅  OBS-01 ✅
 ```

@@ -280,6 +280,24 @@ func (h *Handler) GetTaskStatusHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, entries)
 }
 
+// GetVehiclePositionHistory handles GET /fleet/vehicles/{id}/history (ADR-033) — the recorded
+// "gefahrene Route" position samples for one vehicle, chronologically ordered. 404 if the vehicle
+// itself doesn't exist (distinguishes that from "exists but never reported a position yet",
+// which is `[]`).
+func (h *Handler) GetVehiclePositionHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	points, err := h.store.GetVehiclePositionHistory(id)
+	switch {
+	case errors.Is(err, ErrVehicleNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, points)
+}
+
 // ─── Alerts ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListAlerts(w http.ResponseWriter, _ *http.Request) {

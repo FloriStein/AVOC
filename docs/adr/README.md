@@ -6,7 +6,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 
 ---
 
-## ADR-Index (29 ADRs)
+## ADR-Index (31 ADRs)
 
 | ADR | Titel | Kernentscheidung |
 |-----|-------|-----------------|
@@ -42,6 +42,8 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | [ADR-029](029-fleet-vehicle-data-model.md) | Fleet Vehicle Data Model | Neuer Service `fleet-service`; bestehende `vehicles`-Tabelle bleibt Identitäts-Quelle (erweitert um `vehicle_type`), neue Tabellen (vehicle_status/zones/stations/tasks/alerts) per FK verknüpft; Frontend führt beide Services clientseitig zusammen; Indoor+Outdoor beide SVG-basiert, Outdoor geo-referenziert (Leaflet Overlay) |
 | [ADR-030](030-task-status-lifecycle.md) | Task-Status-Lifecycle & manueller Status-Übergangs-Endpoint | Zustandsmaschine `pending→in_progress→completed`/`cancelled` (beide terminal, sonst 409); `PATCH /fleet/tasks/{id}/status` per atomarem herkunftsbeschränktem UPDATE (race-safe statt read-then-write); `status_changed_by`-Spalte statt volle Audit-Tabelle (bewusste Scope-Entscheidung); Fix des zuvor unbemerkten `vehicle_status.current_task_id`-Staleness-Bugs bei Terminal-Status; Demo-Seed für `zones`/`stations` mit `-taskui`-Namensraum als akzeptiertes Merge-Risiko zur parallelen Sprint-23-Session |
 | [ADR-031](031-hexagonal-architecture-migration.md) | Hexagonale Architektur-Migration | Strangler-Fig statt Big-Bang; Pilot ausschließlich `fleet-service` (`FleetStore`-Repository-Port); Scope nur Go-Backend; Start nachgelagert nach AP2/AP3; `control-server` explizit ausgeklammert |
+| [ADR-032](032-task-status-history.md) | Task-Status-Audit-Historie | Additive `task_status_history`-Tabelle (`ADR-030` unverändert gültig); `GET /fleet/tasks/{id}/history`; Backfill bestehender Tasks mit dokumentierten Näherungen |
+| [ADR-033](033-vehicle-position-history.md) | Vehicle Position History (gefahrene Route) | Einfache `vehicle_position_history`-Tabelle statt Zeitreihen-DB (Flottengröße rechtfertigt keine neue Infrastrukturkomponente); gedrosselter Schreibpfad (min. 10s); 30-Tage-Retention |
 
 ---
 
@@ -57,7 +59,7 @@ Vollständige Live-Übersicht: [DECISIONS.MD](../../DECISIONS.MD)
 | Multi-Vehicle vehicleId-Routing in MediaMTX | ✅ ADR-022 | VehicleSelector + SQLite-Registry; `~^vehicle-.*`-Regex in MediaMTX aktiv |
 | JWT-Schutz REST-Endpoints | ✅ Sprint 14 | `requireJWT` Middleware, 9 Endpoints geschützt |
 | E2E Smoke Test 5G TURN-Relay | offen | WEBRTC-09 Rest |
-| OBS-01 Vehicle Heartbeat | offen | Sprint-14-Bonus — AckBadge "zuletzt gesehen" Timestamp |
+| ~~OBS-01 Vehicle Heartbeat~~ | ✅ Sprint 31 | AckBadge "zuletzt gesehen" Timestamp aus `useTelemetry.ts` |
 | Multi-Vehicle Safety-Isolation (globale `sm`/Watchdog-Singletons) | ✅ ADR-026 | `vehiclecontext.Registry` pro Fahrzeug — implementiert + deployed Sprint 17 |
 | E-Stop ohne vehicle_id (fleet-weiter Notaus) | ✅ ADR-026 | Implementiert + getestet (Sprint 17) |
 | Vehicle-Dropdown Live-State-Badge pro Fahrzeug | offen | ADR-026 Folge (MV-09) — bewusst ausgeklammert (Grill-Me 2026-06-14) |

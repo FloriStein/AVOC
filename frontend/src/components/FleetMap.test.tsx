@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { FleetMap } from './FleetMap'
-import type { Zone, Station, FleetVehicle } from '@/lib/api-client'
+import type { Zone, Station, FleetVehicle, VehiclePositionHistoryPoint } from '@/lib/api-client'
 
 // MAP-09 jsdom/Leaflet spike outcome: MapContainer mounts cleanly under the existing jsdom setup
 // (no ResizeObserver polyfill needed, no console warnings) — spiked separately before writing
@@ -146,5 +146,48 @@ describe('FleetMap', () => {
     render(<FleetMap zones={[zone()]} stations={[]} vehicles={vehicles} selectedVehicleId="v1" onSelectVehicle={vi.fn()} />)
     expect(screen.getByTitle('V1').className).toMatch(/ring-2/)
     expect(screen.getByTitle('V2').className).not.toMatch(/ring-2/)
+  })
+
+  // ADR-033 — "gefahrene Route" historie-linie.
+  const point = (lat: number, lon: number): VehiclePositionHistoryPoint => ({
+    vehicle_id: 'v1',
+    position_lat: lat,
+    position_lon: lon,
+    recorded_at: '2026-07-18T00:00:00Z',
+  })
+
+  it('rendert keine Polylinie ohne positionHistory-Prop', () => {
+    const { container } = render(
+      <FleetMap zones={[zone()]} stations={[]} vehicles={[]} selectedVehicleId={null} onSelectVehicle={vi.fn()} />,
+    )
+    expect(container.querySelector('path.leaflet-interactive')).not.toBeInTheDocument()
+  })
+
+  it('rendert keine Polylinie bei weniger als 2 Punkten (ein einzelner Punkt ergibt keine Linie)', () => {
+    const { container } = render(
+      <FleetMap
+        zones={[zone()]}
+        stations={[]}
+        vehicles={[]}
+        selectedVehicleId="v1"
+        onSelectVehicle={vi.fn()}
+        positionHistory={[point(52.13, 11.64)]}
+      />,
+    )
+    expect(container.querySelector('path.leaflet-interactive')).not.toBeInTheDocument()
+  })
+
+  it('rendert eine Polylinie bei mindestens 2 aufgezeichneten Punkten', () => {
+    const { container } = render(
+      <FleetMap
+        zones={[zone()]}
+        stations={[]}
+        vehicles={[]}
+        selectedVehicleId="v1"
+        onSelectVehicle={vi.fn()}
+        positionHistory={[point(52.13, 11.64), point(52.131, 11.641)]}
+      />,
+    )
+    expect(container.querySelector('path.leaflet-interactive')).toBeInTheDocument()
   })
 })

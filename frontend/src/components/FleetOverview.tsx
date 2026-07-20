@@ -4,6 +4,7 @@ import { useFleetOverview } from '@/hooks/useFleetOverview'
 import { useActiveSessions } from '@/hooks/useActiveSessions'
 import { useFleetZones } from '@/hooks/useFleetZones'
 import { useFleetAlertSound } from '@/hooks/useFleetAlertSound'
+import { useVehiclePositionHistory } from '@/hooks/useVehiclePositionHistory'
 import { parseTokenRole } from '@/lib/api-client'
 import { FleetVehicleList } from '@/components/FleetVehicleList'
 import { FleetVehicleDetail } from '@/components/FleetVehicleDetail'
@@ -29,6 +30,7 @@ export function FleetOverview({ session }: Props) {
   const { zones, stations } = useFleetZones(session.token)
   const { muted, toggleMuted } = useFleetAlertSound(alerts, loading)
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
+  const { points: positionHistory } = useVehiclePositionHistory(session.token, selectedVehicleId)
 
   const isObserverRole = parseTokenRole(session.token!) === 'OBSERVER'
 
@@ -68,6 +70,7 @@ export function FleetOverview({ session }: Props) {
             vehicles={vehicles}
             selectedVehicleId={selectedVehicleId}
             onSelectVehicle={setSelectedVehicleId}
+            positionHistory={positionHistory}
             className="h-[45vh] min-h-80 shrink-0"
           />
           <div className="grid grid-cols-3 gap-4 flex-1 min-h-0">

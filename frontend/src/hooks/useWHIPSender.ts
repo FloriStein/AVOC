@@ -86,9 +86,9 @@ export function useWHIPSender(previewRef: React.RefObject<HTMLVideoElement | nul
       stream.getTracks().forEach(track => pc.addTrack(track, stream))
 
       const offer = await pc.createOffer()
-      // Pion DTLS-Client-Bug-Fix: Browser wird DTLS-Client (active), MediaMTX DTLS-Server (passive)
-      const sdp = offer.sdp!.replace(/a=setup:actpass/g, 'a=setup:active')
-      await pc.setLocalDescription({ type: 'offer', sdp })
+      // WEBRTC-10 (Sprint 32) — actpass→active-Zwang entfernt, siehe useWebRTC.ts für die
+      // ausführliche Begründung (identischer Fix, gleiche Ursache: WHIP statt WHEP hier).
+      await pc.setLocalDescription(offer)
 
       // ICE-Gathering abwarten (max 5s) — MediaMTX erwartet alle Candidates im initialen WHIP-POST
       await new Promise<void>(resolve => {

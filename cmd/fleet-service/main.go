@@ -54,6 +54,7 @@ func main() {
 
 	subscribeVehicleStatus(gw, store, hub, alertEngine)
 	subscribeVehicleAlerts(gw, store, hub)
+	startPositionHistoryRetentionLoop(store)
 
 	handler := fleetservice.NewHandler(jwtSecret, store, gw, hub)
 	mux := newFleetMux(handler)
@@ -88,6 +89,12 @@ func subscribeVehicleStatus(gw *fleetgateway.MQTTGateway, store *fleetservice.Po
 		if err := store.UpsertVehicleStatus(status); err != nil {
 			log.Warn("failed to persist vehicle status", "vehicle_id", e.VehicleID, "error", err)
 			return
+		}
+		// ADR-033 "gefahrene Route" — throttled inside RecordPositionHistory itself, not here; a
+		// failure here must not block the (already-persisted) live status update above, so it's
+		// only logged.
+		if err := store.RecordPositionHistory(e.VehicleID, e.PositionLat, e.PositionLon); err != nil {
+			log.Warn("failed to record position history", "vehicle_id", e.VehicleID, "error", err)
 		}
 		status.UpdatedAt = time.Now()
 		hub.Broadcast("vehicle_status", status)
@@ -126,6 +133,26 @@ func subscribeVehicleAlerts(gw *fleetgateway.MQTTGateway, store *fleetservice.Po
 	})
 }
 
+// positionHistoryPruneInterval is how often startPositionHistoryRetentionLoop re-runs the
+// ADR-033 retention cleanup while the process keeps running, on top of the one-shot prune
+// NewPostgresFleetStore already does at startup.
+const positionHistoryPruneInterval = 24 * time.Hour
+
+// startPositionHistoryRetentionLoop periodically prunes vehicle_position_history (ADR-033) so a
+// long-running fleet-service instance doesn't rely on a restart to shed rows past the retention
+// window — NewPostgresFleetStore's startup prune alone only covers the moment of process start.
+func startPositionHistoryRetentionLoop(store *fleetservice.PostgresFleetStore) {
+	go func() {
+		ticker := time.NewTicker(positionHistoryPruneInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := store.PruneVehiclePositionHistory(); err != nil {
+				log.Warn("failed to prune vehicle_position_history", "error", err)
+			}
+		}
+	}()
+}
+
 func newFleetMux(handler *fleetservice.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health)
@@ -138,6 +165,7 @@ func newFleetMux(handler *fleetservice.Handler) *http.ServeMux {
 	mux.HandleFunc("POST /fleet/tasks", handler.RequireAuth(handler.CreateTask))
 	mux.HandleFunc("PATCH /fleet/tasks/{id}/status", handler.RequireAuth(handler.UpdateTaskStatus))
 	mux.HandleFunc("GET /fleet/tasks/{id}/history", handler.RequireAuth(handler.GetTaskStatusHistory))
+	mux.HandleFunc("GET /fleet/vehicles/{id}/history", handler.RequireAuth(handler.GetVehiclePositionHistory))
 	mux.HandleFunc("GET /fleet/alerts", handler.RequireAuth(handler.ListAlerts))
 	mux.HandleFunc("POST /fleet/alerts/{id}/acknowledge", handler.RequireAuth(handler.AcknowledgeAlert))
 	mux.HandleFunc("GET /fleet/ws", handler.ServeWS)
