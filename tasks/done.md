@@ -7,6 +7,14 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 45 — Hexagonale Architektur: Use-Case-Extraktion fleet-service/auth-service (HEX-06/HEXAUTH-04) ✅
+2026-07-20 → [tasks/sprints/45-hexagonal-usecase-extraktion.md](sprints/45-hexagonal-usecase-extraktion.md)
+- Schließt die beiden seit Sprint 33/37 offenen optionalen ADR-031-Entscheidungspunkte (HEX-06 fleet-service, HEXAUTH-04 auth-service). Nutzerentscheidung 2026-07-20 gegenüber 2 Alternativen (Hexagonal-Migration safety-service/webrtc-sfu/recording; control-server-Vorbereitung per neuem ADR + Testaufbau).
+- Vorrecherche ergab: die meisten Endpunkte beider Handler sind reine 1:1-Store-Pass-Throughs ohne Entscheidungslogik — dafür bewusst keine Use-Case-Schicht (Rule of Three / "keine Abstraktion ohne Konsument"). Extrahiert wurden nur Endpunkte mit echter Orchestrierung: `internal/fleetservice/usecase.go` (`createAndDispatchTask`, `transitionTaskStatus`/`acknowledgeAlert` — Store-Aufruf + Dashboard-Broadcast als eine Einheit) und `internal/authservice/usecase.go` (`login`/`refreshToken`/`handoverToken` mit Sentinel-Fehlern für die HTTP-Statuscode-Zuordnung, plus `canModifyUser` löst eine echte Code-Duplizierung zwischen `DeleteUser`/`UpdateUserRole` auf).
+- `Handler`-Methoden unverändert in Signatur/HTTP-Verhalten, nur noch dünne Wrapper. 17 neue Unit-Tests (7 fleet-service, 10 auth-service) direkt gegen die reinen Funktionen ohne `httptest`; Broadcast-Verifikation nutzt bestehende `broadcast_test.go`-WebSocket-Helper.
+- Damit ist die Hexagonal-Migration für fleet-service/auth-service/telemetry-service inkl. beider optionaler Folgeschritte vollständig abgeschlossen — `safety-service`/`webrtc-sfu`/`internal/recording` und `control-server` bleiben die einzigen noch nicht migrierten Services (beide eigene, noch offene Entscheidungspunkte).
+- Verifiziert: `go build`/`go vet ./...` sauber, `go test ./internal/fleetservice/... ./internal/authservice/... -race -count=2` zweimal grün, keine Flakiness.
+
 ## Sprint 44 — Backup-Strategie Audit Store (ADR-018/023 Folge) ✅
 2026-07-19 → [tasks/sprints/44-backup-strategie-audit-store.md](sprints/44-backup-strategie-audit-store.md)
 - Schließt seit ADR-019 offenen Punkt "Audit Store Backup-Strategie" — Backlog-Text war veraltet ("SQLite Volume"), korrigiert auf PostgreSQL (`postgres-data`-Volume, seit ADR-023). Nutzerentscheidung 2026-07-19 gegenüber 2 Alternativen (Migration zu AWS ECR, Session-Recording-Storage-Entscheidung).

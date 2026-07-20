@@ -2,6 +2,7 @@ package authservice
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -56,14 +57,12 @@ func (h *Handler) OperatorLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.userStore.Authenticate(r.Context(), req.Username, req.Password)
-	if err != nil {
+	token, err := login(r.Context(), h.userStore, h.tokens, req.Username, req.Password)
+	switch {
+	case errors.Is(err, ErrInvalidCredentials):
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
-	}
-
-	token, err := h.tokens.IssueToken(user.Username, user.Role, 24*time.Hour)
-	if err != nil {
+	case err != nil:
 		http.Error(w, "token issuance failed", http.StatusInternalServerError)
 		return
 	}
@@ -111,14 +110,12 @@ func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := h.tokens.ParseToken(req.Token)
-	if err != nil {
+	token, err := refreshToken(h.tokens, req.Token)
+	switch {
+	case errors.Is(err, ErrInvalidToken):
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
-	}
-
-	token, err := h.tokens.IssueToken(claims.Subject, claims.Role, 24*time.Hour)
-	if err != nil {
+	case err != nil:
 		http.Error(w, "token refresh failed", http.StatusInternalServerError)
 		return
 	}
@@ -135,20 +132,15 @@ func (h *Handler) HandoverToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.CurrentToken != "" {
-		if _, err := h.tokens.ParseToken(req.CurrentToken); err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-	}
-
-	if req.TargetID == "" {
+	token, err := handoverToken(h.tokens, req.CurrentToken, req.TargetID)
+	switch {
+	case errors.Is(err, ErrHandoverUnauthorized):
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	case errors.Is(err, ErrTargetIDRequired):
 		http.Error(w, "target_id required", http.StatusBadRequest)
 		return
-	}
-
-	token, err := h.tokens.IssueToken(req.TargetID, RoleActiveOperator, 1*time.Hour)
-	if err != nil {
+	case err != nil:
 		http.Error(w, "handover token issuance failed", http.StatusInternalServerError)
 		return
 	}
@@ -225,7 +217,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	if h.callerID(r) == target.Username {
+	if !canModifyUser(h.callerID(r), *target) {
 		http.Error(w, "cannot delete own account", http.StatusForbidden)
 		return
 	}
@@ -258,7 +250,7 @@ func (h *Handler) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	if h.callerID(r) == target.Username {
+	if !canModifyUser(h.callerID(r), *target) {
 		http.Error(w, "cannot change own role", http.StatusForbidden)
 		return
 	}

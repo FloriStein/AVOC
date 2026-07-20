@@ -9,5 +9,5 @@
 Kein aktiver Sprint. Nächster Sprint noch nicht geplant — siehe `tasks/backlog.md` für offene
 EPICs/Tasks.
 
-Vorgänger: Sprint 40 ✅ (TLS/MQTTS-Härtung für Mosquitto, siehe
-`tasks/sprints/40-tls-mqtts-haertung.md`)
+Vorgänger: Sprint 45 ✅ (Hexagonale Architektur: Use-Case-Extraktion fleet-service/auth-service
+(HEX-06/HEXAUTH-04), siehe `tasks/sprints/45-hexagonal-usecase-extraktion.md`)
