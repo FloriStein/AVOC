@@ -274,6 +274,24 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 > (`HEXTELE-01..04`), Details/Vorrecherche in Sprint 43, sobald `tasks/current-sprint.md` frei ist
 > (eingereiht nach Sprint 40/41/42).
 
+> **Update (2026-07-19, Sprint 43 abgeschlossen):** Schritt 3 (telemetry-service) fertig. Neuer
+> Port `MQTTConnection` (`internal/telemetryservice/mqttconnection.go`: `Connect`/`Subscribe`/
+> `Disconnect`/`IsConnected`, 4 Methoden statt paho.mqtt.golangs 14) mit Adapter `PahoConnection` —
+> kapselt `mqtt.Token`/`mqtt.Message` intern, die `Subscribe`-Callback-Signatur der Domain-Seite
+> ist bereits `func(topic string, payload []byte)`. `Client.client mqtt.Client` →
+> `Client.client MQTTConnection`; `Connect()` konstruiert `PahoConnection` intern,
+> `NewClient(broker, username, password string)` unverändert (`cmd/telemetry-service/main.go`
+> unangetastet, wie erwartet). `client.go` importiert `github.com/eclipse/paho.mqtt.golang`
+> danach nicht mehr. Testabdeckung war direkter Bestandteil dieses Schritts (nicht separater
+> Folge-Task, siehe Vorrecherche oben): 16 neue Unit-Tests (`FakeMQTTConnection`-Testdoppel,
+> `internal/telemetryservice/client_test.go` 13 Tests inkl. eines `-race`-Nebenläufigkeitstests,
+> `cmd/telemetry-service/main_test.go` 3 Tests analog Sprint-39-Muster) — zuvor 0 Tests in beiden
+> Paketen. `go build ./...`/`go vet ./...` (gesamtes Repo) sauber, `go test
+> ./internal/telemetryservice/... ./cmd/telemetry-service/... -race -count=1` zweimal grün, keine
+> Flakiness. Details: `tasks/sprints/43-hexagonal-migration-telemetry-service.md`. Use-Case-
+> Extraktion war hier von vornherein kein Thema (siehe Vorrecherche — `handleMessage`/`GetLatest`
+> bereits reine Funktionen). `control-server` bleibt wie geplant außerhalb dieses Schritts.
+
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe
   Risikobewertung oben

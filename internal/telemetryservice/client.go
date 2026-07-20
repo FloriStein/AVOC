@@ -10,7 +10,6 @@ import (
 	telemetryv1 "avoc/gen/go/telemetry/v1"
 	"avoc/pkg/logger"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -26,7 +25,7 @@ type Client struct {
 	broker   string
 	username string
 	password string
-	client   mqtt.Client
+	client   MQTTConnection
 	mu       sync.RWMutex
 	latest   map[string]*telemetryv1.TelemetryEvent
 }
@@ -42,41 +41,36 @@ func NewClient(broker, username, password string) *Client {
 
 // Connect establishes the MQTT connection with automatic reconnect.
 func (c *Client) Connect() error {
-	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://" + c.broker).
-		SetClientID("avoc-telemetry-service").
-		SetUsername(c.username).
-		SetPassword(c.password).
-		SetAutoReconnect(true).
-		SetConnectRetryInterval(reconnectDelay).
-		SetOnConnectHandler(func(_ mqtt.Client) {
+	c.client = NewPahoConnection(
+		PahoConnectionConfig{
+			Broker:   c.broker,
+			Username: c.username,
+			Password: c.password,
+			ClientID: "avoc-telemetry-service",
+		},
+		func() {
 			svcLog.Info("MQTT connected", "broker", c.broker)
 			c.subscribe()
-		}).
-		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		},
+		func(err error) {
 			svcLog.Warn("MQTT connection lost", "error", err)
-		})
-
-	c.client = mqtt.NewClient(opts)
-	token := c.client.Connect()
-	token.Wait()
-	return token.Error()
+		},
+	)
+	return c.client.Connect()
 }
 
 func (c *Client) subscribe() {
-	token := c.client.Subscribe(topicVehicleTelemetry, 1, c.handleMessage)
-	token.Wait()
-	if err := token.Error(); err != nil {
+	if err := c.client.Subscribe(topicVehicleTelemetry, 1, c.handleMessage); err != nil {
 		svcLog.Error("MQTT subscribe error", "error", err)
 		return
 	}
 	svcLog.Info("MQTT subscribed", "topic", topicVehicleTelemetry)
 }
 
-func (c *Client) handleMessage(_ mqtt.Client, msg mqtt.Message) {
+func (c *Client) handleMessage(topic string, payload []byte) {
 	event := &telemetryv1.TelemetryEvent{}
-	if err := proto.Unmarshal(msg.Payload(), event); err != nil {
-		svcLog.Warn("MQTT parse error", "topic", msg.Topic(), "error", err)
+	if err := proto.Unmarshal(payload, event); err != nil {
+		svcLog.Warn("MQTT parse error", "topic", topic, "error", err)
 		return
 	}
 

@@ -9,6 +9,12 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 43 — Hexagonale Architektur-Migration Schritt 3: telemetry-service (ADR-031) ✅
+2026-07-19 → [tasks/sprints/43-hexagonal-migration-telemetry-service.md](sprints/43-hexagonal-migration-telemetry-service.md)
+- Fortsetzung nach Pilot (fleet-service, Sprint 33) und Schritt 2 (auth-service, Sprint 37) — Nutzerfreigabe 2026-07-19 für Schritt 3 (telemetry-service).
+- Neuer `MQTTConnection`-Port (`internal/telemetryservice/mqttconnection.go`, 4 Methoden) statt direkter Kopplung an `paho.mqtt.golang`s 14-Methoden-`mqtt.Client`; `PahoConnection`-Adapter kapselt `mqtt.Token`/`mqtt.Message` intern. `Client` importiert paho danach nicht mehr direkt. `NewClient`-Signatur unverändert.
+- Erste Testabdeckung für beide Pakete (zuvor 0 Tests): 16 neue Unit-Tests (`FakeMQTTConnection`-Testdoppel, `client_test.go`, `cmd/telemetry-service/main_test.go`), `-race`-sauber, 2x gegen Flakiness verifiziert.
+
 ## Sprint 39 — Testabdeckung `safety-service`/`webrtc-sfu`/`internal/recording` ✅
 2026-07-19 → [tasks/sprints/39-testabdeckung-sicherheitsrelevanter-services.md](sprints/39-testabdeckung-sicherheitsrelevanter-services.md)
 - Schließt seit der ADR-031-Bestandsaufnahme (2026-07-16) offene Lücke: drei Services mit 0 automatisierten Tests, darunter der Safety Event Bus (`safety-service`). Nutzerentscheidung 2026-07-19 gegenüber 3 Alternativen (Hexagonal-Migration Schritt 3, TLS/MQTTS-Härtung, Session-Recording-Storage), Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles").
