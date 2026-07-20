@@ -905,6 +905,113 @@ diesem Scope).
 
 ---
 
+## EPIC: Lokale Ansible-VM als Hetzner-Nachbildung (AWS-Ersatz für die Testumgebung)
+
+**Freigabe (2026-07-20):** Nutzer möchte AWS nicht länger als lokale Test-/Referenzumgebung
+nutzen, sondern stattdessen eine **lokale VM per Ansible** provisionieren, die den **zukünftigen
+Hetzner-Server** nachbildet (`docs/deployment/hetzner-setup.md`) — das wird die neue
+Testumgebung für Deployment-Änderungen, bevor echtes Geld für einen echten Hetzner-Server
+ausgegeben wird. Nutzer hat die Umsetzung per Sprints + spawnbaren Agenten angefordert (kein
+manuelles Schritt-für-Schritt mehr).
+
+**Wichtiger Vorrecherche-Befund — der "zukünftige Hetzner-Server" existiert bisher nur als
+Dokumentation, nicht als Code:** `docs/deployment/hetzner-setup.md` (659 Zeilen) beschreibt den
+kompletten Hetzner-Weg, aber `scripts/deploy-hetzner.sh`, `scripts/secrets-setup-hetzner.sh` und
+`infrastructure/compose/docker-compose.hetzner.yml` existieren **nicht** als committete Dateien —
+sie sind bisher nur Copy-Paste-Codeblöcke innerhalb des Markdown-Dokuments (`grep -r
+"deploy-hetzner\|hetzner.yml" scripts/ infrastructure/` liefert 0 Treffer außerhalb der
+Doku). Dieses EPIC materialisiert diese Dateien erstmals als echten, versionierten Code — und
+verifiziert sie zum ersten Mal überhaupt gegen eine echte laufende Instanz (die lokale VM),
+bevor sie je gegen einen echten, kostenpflichtigen Hetzner-Server laufen.
+
+**Architektur-Entscheidung (bei der Planung getroffen):**
+- **libvirt/KVM + `virt-install` + cloud-init statt Vagrant/VirtualBox** — auf diesem
+  Linux-Entwicklungsrechner ist `libvirtd` bereits aktiv, `virsh`/`virt-install`/
+  `qemu-system-x86_64` sind installiert, der Nutzer ist bereits Mitglied der Gruppen
+  `libvirt`/`kvm` (`lsmod | grep kvm` zeigt `kvm_amd` geladen, `/dev/kvm` vorhanden). Kein
+  zusätzliches Hypervisor-Tooling nötig. Zusätzlicher Vorteil gegenüber Vagrant: **cloud-init
+  (NoCloud-Datenquelle) ist exakt der Mechanismus, den Hetzner Cloud selbst für neu angelegte
+  Server verwendet** (SSH-Key-Injection, Hostname, User-Setup) — die lokale VM startet damit
+  authentisch wie ein echter frisch angelegter Hetzner-Server, nicht wie eine Vagrant-Box mit
+  eigenen Abweichungen.
+- **Ansible statt weiterer Bash-Copy-Paste-Blöcke** — `hetzner-setup.md` Schritt 3 (Bootstrap:
+  Docker, `avoc`-User, Verzeichnisse) ist aktuell ein einziger, nicht idempotenter Bash-Block,
+  der manuell in eine SSH-Session eingefügt wird. Als Ansible-Rolle wird er wiederholbar,
+  versioniert, diff-fähig — und exakt derselbe Playbook-Lauf funktioniert später 1:1 gegen den
+  echten Hetzner-Server (nur das Inventory ändert sich, IP statt VM).
+- **`docker-compose.hetzner.yml`/`deploy-hetzner.sh`/`secrets-setup-hetzner.sh` werden als echte
+  Dateien aus der Doku extrahiert, nicht neu erfunden** — die Doku hat die Logik bereits
+  vollständig durchdacht (coturn-Unterschied zu EC2, Loki/Promtail-Pfade, `.env`-Handling); dieses
+  EPIC übernimmt sie 1:1 in echten Code und lässt Ansible sie ausrollen/ausführen, statt sie
+  manuell per `scp`/SSH zu kopieren.
+- **Lokale Test-Dummy-Secrets statt interaktivem `secrets-setup-hetzner.sh`-Prompt** — für die
+  lokale VM (kein echtes Internet-exponiertes System, keine echten Nutzerdaten) generiert Ansible
+  die `.env` aus fest hinterlegten, eindeutig als Test gekennzeichneten Werten (analog zum
+  bestehenden Muster committeter Test-Credentials, z. B. `tests/mosquitto-passwd-test`) —
+  spart die interaktive Eingabe bei jedem VM-Neuaufbau. Das echte, interaktive
+  `secrets-setup-hetzner.sh` bleibt unverändert für den späteren echten Hetzner-Server nutzbar.
+- **Kein automatischer Docker-Hub-Roundtrip für die lokale Verifikation** — `hetzner-setup.md`
+  Schritt 5 baut Images und pusht sie nach Docker Hub, damit der Server sie pullen kann. Für die
+  rein lokale VM auf demselben Host ist das ein unnötiger Netzwerk-Umweg; stattdessen werden
+  Images lokal gebaut und direkt in die VM übertragen (`docker save`/`virsh`-Dateitransfer bzw.
+  gemeinsames Netzwerk + `docker load`), analog zum bereits etablierten EC2-Muster
+  ("Übergabe-Abweichung von ADR-019", `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`). Der reguläre
+  Docker-Hub-Weg bleibt für den echten Hetzner-Server unverändert.
+
+**Vorrecherche (2026-07-20):**
+- `docs/deployment/hetzner-setup.md` — vollständige Referenz für alle 9 Schritte (Server anlegen,
+  Firewall, Bootstrap, Secrets, Images, Config-Kopie, Deploy-Script, Compose-Unterschiede zu EC2,
+  erster Deploy). Ziel-OS: Ubuntu 24.04 LTS, empfohlene Größe CPX21 (3 vCPU/4 GB) — für die lokale
+  VM als Näherung übernommen, ggf. an verfügbare Host-Ressourcen angepasst.
+- `docs/deployment/ec2-bootstrap.md` — Vergleichsmuster für die bereits bestehende, dokumentierte
+  Verzeichnisstruktur/`scp`-Liste (AWS-Pfad); dieses EPIC folgt für Hetzner demselben Aufbau, nur
+  Ansible statt `scp`+manuellem SSH.
+- `infrastructure/compose/docker-compose.prod.yml` — Ausgangsbasis für
+  `docker-compose.hetzner.yml` (laut Doku: kopieren + 5 gezielte Änderungen, siehe
+  hetzner-setup.md Schritt 8 Tabelle: coturn `--relay-ip` entfällt, `--external-ip` ohne
+  NAT-Mapping, Loki/Promtail/Grafana-Volume-Pfade auf `/home/avoc/...` statt `../...`).
+  Fleet-Service ist (Stand jetzt, wie in EC2-Doku vermerkt) nicht in `docker-compose.prod.yml`
+  enthalten — dieselbe Lücke gilt für die Hetzner-Variante, kein neuer Befund.
+- Lokale Virtualisierungsumgebung bereits verifiziert vorhanden: `libvirtd` aktiv,
+  `/dev/kvm` vorhanden, `virt-install`/`virsh`/`qemu-system-x86_64` installiert, Nutzer in Gruppen
+  `libvirt`+`kvm`. Kein `ansible`/`ansible-playbook` installiert — wird Teil von Sprint A.
+- `scripts/deploy.sh` (EC2) und die darin etablierten Muster ("get"-SSM-Helfer, "einmalig
+  generieren/registrieren, dann wiederverwenden" für SSL-Zertifikat) sind für Hetzner nicht 1:1
+  übertragbar (kein SSM auf Hetzner) — `hetzner-setup.md` Schritt 4/7 hat dafür bereits eigene,
+  SSM-freie Skript-Entwürfe (`.env`-Datei statt SSM, siehe Architektur-Entscheidung oben).
+
+**Umsetzung als zwei Sprints** (Größe/Token-Budget, analog bestehender Sprint-Segmentierungs-Praxis
+in diesem Projekt):
+- **Sprint A — Autorierung** (kein Live-VM-Zugriff nötig, gut parallelisierbar): Ansible-Grundgerüst,
+  alle Rollen/Playbooks, VM-Erzeugungsskript, Materialisierung der drei bisher nur dokumentierten
+  Hetzner-Dateien.
+- **Sprint B — Verifikation** (braucht die echte lokale VM, sequenziell): VM tatsächlich anlegen,
+  kompletten Ansible-Lauf + Stack-Deploy gegen sie fahren, Smoke-Test, Doku aktualisieren
+  (`hetzner-setup.md` verweist danach auf den Ansible-Workflow statt auf Copy-Paste-Blöcke).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| LOCALVM-01 | Ansible-Grundgerüst: neues Verzeichnis `ansible/` (`ansible.cfg`, `inventory/`, `requirements.yml`, `roles/`-Skeleton), `ansible`/`ansible-playbook` lokal installieren/dokumentieren (z. B. `pipx`/venv, kein System-weites `pip install` als root) | S | 🔲 Sprint A | — |
+| LOCALVM-02 | Neues Skript `scripts/local-vm-create.sh`: `virt-install` + cloud-init (NoCloud-ISO: SSH-Key, Hostname, User) für eine Ubuntu-24.04-Cloud-Image-VM, Netzwerk/IP-Ermittlung für das Ansible-Inventory | M | 🔲 Sprint A | LOCALVM-01 |
+| LOCALVM-03 | Ansible-Rolle `bootstrap`: Docker-Installation, `avoc`-User, Verzeichnisstruktur — Ablösung von `hetzner-setup.md` Schritt 3 (Bash-Block) durch idempotente Tasks | M | 🔲 Sprint A | LOCALVM-01 |
+| LOCALVM-04 | Ansible-Rolle `firewall`: `ufw`-Regeln analog der Port-Tabelle aus `hetzner-setup.md` Schritt 2 | S | 🔲 Sprint A | LOCALVM-01 |
+| LOCALVM-05 | Ansible-Rolle `secrets`: `.env` aus fest hinterlegten Test-Dummy-Werten templaten (siehe Architektur-Entscheidung), SSL-Selfsigned-Zertifikat wie in `secrets-setup-hetzner.sh` beschrieben | S/M | 🔲 Sprint A | LOCALVM-01 |
+| LOCALVM-06 | Materialisierung als echte Dateien: `infrastructure/compose/docker-compose.hetzner.yml` (aus `docker-compose.prod.yml` + den 5 dokumentierten Änderungen), `scripts/deploy-hetzner.sh`, `scripts/secrets-setup-hetzner.sh` (1:1 aus `hetzner-setup.md`-Codeblöcken übernommen) | M | 🔲 Sprint A | — |
+| LOCALVM-07 | Ansible-Playbook `deploy.yml`: Config-Dateien (Mosquitto/MediaMTX/Loki/Promtail/Grafana) auf die VM bringen, lokal gebaute Images übertragen (kein Docker-Hub-Roundtrip, siehe Architektur-Entscheidung), `deploy-hetzner.sh` ausführen | M | 🔲 Sprint A | LOCALVM-03..06 |
+| LOCALVM-08 | Verifikation Sprint B: echte lokale VM per `local-vm-create.sh` anlegen, kompletten Ansible-Lauf (`bootstrap`+`firewall`+`secrets`+`deploy.yml`) gegen sie fahren, Smoke-Test (Frontend/Control-Server erreichbar, `docker compose ps` healthy, analog Sprint-41-CI-Verifikationsmuster) | M | 🔲 Sprint B | LOCALVM-01..07 |
+| LOCALVM-09 | Doku: `docs/deployment/hetzner-setup.md` auf den Ansible-Workflow umstellen (Schritt 1/3/4/6/7 durch Verweis auf `local-vm-create.sh`+Ansible-Rollen ersetzen, Rest bleibt für den echten Server gültig), `DECISIONS.MD`, `tasks/backlog.md`-Status-Update | S | 🔲 Sprint B | LOCALVM-08 |
+
+**Nicht Teil dieses Vorhabens:** ein echter, kostenpflichtiger Hetzner-Cloud-Server (bleibt
+Doku/manueller Schritt, keine automatisierte Bestellung — reale Cloud-Kosten sind keine
+Agenten-Entscheidung); vollständige Stilllegung des bestehenden AWS-CDK/EC2-Pfads (Sprint 44 hat
+ihn gerade erst erweitert — Koexistenz, kein Rückbau); CI-Integration der lokalen VM (die
+Sprint-41-Pipeline bleibt GitHub-hosted-Runner-basiert, ein lokales libvirt-Ziel ist ohne
+Self-Hosted-Runner nicht CI-fähig — eigener, größerer Folge-Task falls gewünscht); Let's-Encrypt/
+Domain-Anbindung (ergibt für eine rein lokale VM ohne öffentliche IP keinen Sinn, bleibt für den
+echten Server in `hetzner-setup.md` dokumentiert).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
