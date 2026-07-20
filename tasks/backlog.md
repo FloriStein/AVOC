@@ -672,14 +672,14 @@ Test Suite inhaltlich auf den echten `safetyservice.Bus` ausrichten (separater F
 
 ---
 
-## EPIC: Testing-Debt aus ADR-006-Bestandsaufnahme schließen 🔲 Sprint 42 vorgemerkt
+## EPIC: Testing-Debt aus ADR-006-Bestandsaufnahme schließen ✅ Sprint 42
 
 **Freigabe (2026-07-19):** Nutzer priorisiert bei der Testing-Strategie-Bestandsaufnahme
 (siehe EPIC "CI-Gates einführen") CI-Gates zuerst (Sprint 41), lässt aber zwei kleinere Funde als
 offene Folgepunkte in `DECISIONS.MD` stehen (Zeilen 82/83). Sprint 42 schließt genau diese zwei
-Funde. **Eingereiht nach Sprint 41 (CI-Gates)** — wird erst zu Sprint 42, sobald Sprint 41
-abgeschlossen ist, `tasks/current-sprint.md` bleibt bis dahin unverändert Sprint 40 bzw. danach
-Sprint 41.
+Funde. Ausgeführt in separatem Worktree (`feature/fleet-service-foundation-testdebt`), parallel zu
+Sprint 41 (separater Worktree/Strang, CI-Gates) — keine Code-Überschneidung, siehe
+`tasks/sprints/42-testing-debt-adr-006.md` für das vollständige Ergebnis.
 
 **Vorrecherche (2026-07-19):**
 - **Fund 1 — Concurrency-Test-Lücke `internal/webrtcsfu/sfu_test.go`:** `SFU` (`internal/webrtcsfu/
@@ -715,10 +715,10 @@ Sprint 41.
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| SFUCONC-01 | `internal/webrtcsfu/sfu_test.go`: neuer Concurrency-Test (mehrere Goroutinen rufen `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer` gleichzeitig auf), lokaler `waitOrTimeout`-Helfer analog `bus_test.go`, `go test -race` grün. | S | 🔲 Sprint 42 | — |
-| SAFETYBUS-01 | Neue Testdatei `tests/unit/safety_bus_integration_test.go`: minimaler lokaler `httptest.Server`-Handler für `POST /safety/event` (dupliziert `newSafetyMux`s zwei Zeilen, kein Produktivcode-Umbau), `HTTPPublisher` gegen echten `safetyservice.NewBus()` verdrahtet, mind. 2 ADR-006-CRITICAL-Szenarien (Dead-man-Timeout, ACK-Timeout) verifiziert über `bus.GetSafetyState()`. | S/M | 🔲 Sprint 42 | — |
-| SAFETYBUS-02 | Datei-Header-Kommentar in `tests/unit/safety_test.go` präzisieren: bestehende 20 Tests decken Trigger-Logik (State-Machine → `Publisher`) ab, nicht den Bus selbst; Verweis auf die neuen Bus-Integrationstests aus `SAFETYBUS-01`. `docs/adr/006-testing-strategy.md` falls dort die Suite beschrieben wird, ebenfalls präzisieren. | S | 🔲 Sprint 42 | SAFETYBUS-01 |
-| TESTDEBT-VERIFY-01 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./... -race` (mind. 2x gegen Flakiness, CLAUDE.MD §17), `DECISIONS.MD`-Zeilen 82/83 auf ✅, `tasks/backlog.md`-Status-Update. | S | 🔲 Sprint 42 | SFUCONC-01, SAFETYBUS-01, SAFETYBUS-02 |
+| SFUCONC-01 | `internal/webrtcsfu/sfu_test.go`: neuer Concurrency-Test (mehrere Goroutinen rufen `HandleSessionEvent`/`registerOperatorSubscription`/`removePeer` gleichzeitig auf), lokaler `waitOrTimeout`-Helfer analog `bus_test.go`, `go test -race` grün. | S | ✅ Sprint 42 | — |
+| SAFETYBUS-01 | Neue Testdatei `tests/unit/safety_bus_integration_test.go`: minimaler lokaler `httptest.Server`-Handler für `POST /safety/event` (dupliziert `newSafetyMux`s zwei Zeilen, kein Produktivcode-Umbau), `HTTPPublisher` gegen echten `safetyservice.NewBus()` verdrahtet, mind. 2 ADR-006-CRITICAL-Szenarien (Dead-man-Timeout, ACK-Timeout) verifiziert über `bus.GetSafetyState()`. | S/M | ✅ Sprint 42 | — |
+| SAFETYBUS-02 | Datei-Header-Kommentar in `tests/unit/safety_test.go` präzisieren: bestehende 20 Tests decken Trigger-Logik (State-Machine → `Publisher`) ab, nicht den Bus selbst; Verweis auf die neuen Bus-Integrationstests aus `SAFETYBUS-01`. `docs/adr/006-testing-strategy.md` falls dort die Suite beschrieben wird, ebenfalls präzisieren. | S | ✅ Sprint 42 | SAFETYBUS-01 |
+| TESTDEBT-VERIFY-01 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./... -race` (mind. 2x gegen Flakiness, CLAUDE.MD §17), `DECISIONS.MD`-Zeilen 82/83 auf ✅, `tasks/backlog.md`-Status-Update. | S | ✅ Sprint 42 | SFUCONC-01, SAFETYBUS-01, SAFETYBUS-02 |
 
 **Nicht Teil dieses Sprints:** Umbau von `cmd/safety-service/main.go`s `newSafetyMux` in ein
 exportiertes/testbares Konstrukt (Hexagonal-artiger Schritt, eigener Entscheidungspunkt falls
