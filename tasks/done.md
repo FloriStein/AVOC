@@ -9,6 +9,17 @@ siehe `tasks/backlog.md`).
 
 ---
 
+## Sprint 41 — CI-Gates einführen (ADR-006-Bestandsaufnahme) ✅
+2026-07-20 → [tasks/sprints/41-ci-gates-einfuehren.md](sprints/41-ci-gates-einfuehren.md)
+(Branch `feature/fleet-service-foundation-cigates`, Basis `feature/fleet-service-foundation-sprint35`
+— Sprint 40 (TLS/MQTTS-Härtung) läuft parallel auf einem anderen Worktree/Branch und ist auf
+diesem Branch noch nicht gemergt, siehe Merge-Hinweis im Sprint-Dokument.)
+- Schließt größten Befund einer ADR-006/CLAUDE.MD-§17-Bestandsaufnahme: `.github/workflows/` hatte nur non-blocking `lint.yml`, die dokumentierte Pipeline existierte nicht. 4 neue Workflow-Dateien: `test-go.yml` (3 blockierende Jobs: Unit/Safety/Integration), `test-frontend.yml` (blockierend, Vitest), `test-latency.yml` (bewusst non-blocking, Shared-Runner-Rauschen), `test-e2e.yml` (non-blocking Playwright-Informational-Job). Neuer `Makefile`-Target `test-unit`.
+- Zwei vorbestehende Bugs gefunden und behoben: `make test-k6` lief nie (fehlendes `-i` bei `docker run`, Skript kam nie im Container an), `frontend/src/gen/` (gitignored, build-time generiert) fehlte für CI-Vitest-Läufe — inkl. dem bekannten Root-owned-`node_modules`-Problem aus Docker-basierter Proto-Generierung (README.md-Troubleshooting-Muster wiederverwendet).
+- Zwei weitere Bugs gefunden, bewusst NICHT gefixt (Testverhalten statt CI-Wiring, siehe `DECISIONS.MD`): `BenchmarkControlACKRoundtrip` skipt immer (fehlender `session_id`-Parameter, ADR-025-Drift), `dashboard.spec.ts` erwartet Dashboard-Inhalt ohne Login-Pflicht.
+- Branch-Protection (Required Status Checks) vorbereitet/dokumentiert (`README.md`), bewusst nicht aktiviert — geteiltes Repo-Setting, braucht explizite Nutzerbestätigung.
+- Verifiziert: `go build`/`go vet` sauber, alle 3 `test-go.yml`-Jobs + `test-frontend.yml` je 2× frisch lokal grün (keine Flakiness). Alle 5 Workflow-Dateien `actionlint`-sauber. Echte GitHub-Actions-Läufe stehen aus (kein Push in diesem Sprint, siehe Sprint-Dokument).
+
 ## Sprint 39 — Testabdeckung `safety-service`/`webrtc-sfu`/`internal/recording` ✅
 2026-07-19 → [tasks/sprints/39-testabdeckung-sicherheitsrelevanter-services.md](sprints/39-testabdeckung-sicherheitsrelevanter-services.md)
 - Schließt seit der ADR-031-Bestandsaufnahme (2026-07-16) offene Lücke: drei Services mit 0 automatisierten Tests, darunter der Safety Event Bus (`safety-service`). Nutzerentscheidung 2026-07-19 gegenüber 3 Alternativen (Hexagonal-Migration Schritt 3, TLS/MQTTS-Härtung, Session-Recording-Storage), Begründung CLAUDE.MD §0 Priorität 1 ("Sicherheit schlägt alles").

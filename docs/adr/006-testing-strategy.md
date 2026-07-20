@@ -203,3 +203,26 @@ Testergebnisse konkret zu dokumentieren statt pauschal "getestet" zu behaupten. 
 zu den hier getroffenen Entscheidungen (Framework-Wahl, Docker-Integrationstests, Safety Suite,
 Latenz-Gates) — reine Ergänzung auf Ebene "was pro Aufgabe mindestens getestet werden muss",
 nicht "mit welchem Tool".
+
+## Update (2026-07-20, Sprint 41 — CI-Automatisierung)
+
+Bis Sprint 41 existierte die oben beschriebene Pipeline nur auf dem Papier: `.github/workflows/`
+enthielt ausschließlich `lint.yml` (non-blocking), alle anderen Gates liefen ausschließlich
+manuell über `Makefile`-Targets. Sprint 41 (`tasks/backlog.md` EPIC "CI-Gates einführen",
+`tasks/sprints/41-ci-gates-einfuehren.md`) zieht das nach: `test-go.yml` (Unit/Safety/Integration,
+alle 3 blockierend), `test-frontend.yml` (Vitest, blockierend), `test-latency.yml`,
+`test-e2e.yml`.
+
+**Abweichung von der oben dokumentierten Pipeline-Skizze:** Das Latenz-Gate ist entgegen der
+Kennzeichnung "[BLOCKING]" oben bewusst **non-blocking** umgesetzt. Grund: GitHub-gehostete
+Runner haben stark schwankende CPU-Zuteilung (Shared-Tenancy) — eine harte `<100ms`-Assertion
+würde auf einem verrauschten Runner Merges blockieren, ohne dass sich der Code geändert hat.
+Gleiches Argumentationsmuster wie die WebRTC-Non-Determinism-Policy oben (non-blocking +
+sichtbar statt hartes Gate, das an Infrastruktur-Rauschen statt Code-Regressionen scheitert).
+Verschärfung auf blocking ist ein möglicher Folge-Task, sobald genug CI-Läufe eine
+Rausch-Baseline zeigen. Frontend-Framework bleibt trotz der Bezeichnung "Jest" oben faktisch
+Vitest (seit Projektstart, funktional äquivalent) — keine Änderung nötig.
+
+Branch-Protection (Required Status Checks für die 4 blockierenden Jobs) ist vorbereitet und in
+README.md dokumentiert, aber bewusst nicht aktiviert — geteilte Repo-Einstellung, die alle
+künftigen PRs betrifft, Aktivierung erfordert explizite Nutzerbestätigung.

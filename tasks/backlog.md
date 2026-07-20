@@ -597,7 +597,7 @@ auf dem EC2-Host generiert, kein Cross-Host-Bedarf).
 
 ---
 
-## EPIC: CI-Gates einführen (ADR-006-Bestandsaufnahme) 🔲 Sprint 41 vorgemerkt
+## EPIC: CI-Gates einführen (ADR-006-Bestandsaufnahme) ✅ Sprint 41
 
 **Freigabe (2026-07-19):** Nutzer hat am 2026-07-19 eine Testing-Strategie-Bestandsaufnahme gegen
 ADR-006 (Testing Strategy) + CLAUDE.MD Abschnitt 17 angefordert. Größter gefundener Bruch
@@ -622,7 +622,7 @@ bis dahin unverändert Sprint 40.
   Gate). Ergebnis bleibt sichtbar (Benchmark-Output als Job-Log/Artifact), blockiert aber keinen
   Merge. Verschärfung auf "blocking" ist ein möglicher Folge-Task, sobald genug CI-Läufe
   Rausch-Baseline zeigen.
-- **Bestehender Playwright-Spec (`frontend/tests/e2e/dashboard.spec.ts`) wird als non-blocking
+- **Bestehender Playwright-Spec (`tests/e2e/dashboard.spec.ts`) wird als non-blocking
   Informational-Job eingebunden**, aber nicht inhaltlich vertieft (bleibt oberflächlich, siehe
   Audit-Punkt D) — Ausbau der E2E-Tiefe ist ein eigener, größerer Folge-Task.
 - **Branch-Protection-Aktivierung (Required Status Checks) nur vorbereitet, nicht scharf
@@ -656,19 +656,34 @@ bis dahin unverändert Sprint 40.
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| CIGATE-01 | `Makefile`: neuer `test-unit`-Target (paketgefiltert ohne `tests/integration`), bestehende Targets unverändert | S | 🔲 Sprint 41 | — |
-| CIGATE-02 | `.github/workflows/test-go.yml`: 3 blockierende Jobs — `unit` (`make test-unit`), `safety` (`make test-safety`), `integration` (`make test-integration`, Docker-Stack) | M | 🔲 Sprint 41 | CIGATE-01 |
-| CIGATE-03 | `.github/workflows/test-frontend.yml`: Vitest-Unit-Tests blockierend (`npm ci && npm run test`) | S | 🔲 Sprint 41 | — |
-| CIGATE-04 | `.github/workflows/test-latency.yml`: Go-Benchmark + k6, bewusst non-blocking (`continue-on-error: true`, begründeter Kommentar analog `lint.yml`) | S/M | 🔲 Sprint 41 | CIGATE-01 |
-| CIGATE-05 | Bestehenden Playwright-Spec als non-blocking Informational-Job einbinden (kein Ausbau der Testtiefe) | S | 🔲 Sprint 41 | — |
-| CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | 🔲 Sprint 41 | CIGATE-02, CIGATE-03 |
-| CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | 🔲 Sprint 41 | CIGATE-01..06 |
+| CIGATE-01 | `Makefile`: neuer `test-unit`-Target (paketgefiltert ohne `tests/integration`), bestehende Targets unverändert | S | ✅ Sprint 41 | — |
+| CIGATE-02 | `.github/workflows/test-go.yml`: 3 blockierende Jobs — `unit` (`make test-unit`), `safety` (`make test-safety`), `integration` (`make test-integration`, Docker-Stack) | M | ✅ Sprint 41 | CIGATE-01 |
+| CIGATE-03 | `.github/workflows/test-frontend.yml`: Vitest-Unit-Tests blockierend (`npm ci && npm run test`) | S | ✅ Sprint 41 | — |
+| CIGATE-04 | `.github/workflows/test-latency.yml`: Go-Benchmark + k6, bewusst non-blocking (`continue-on-error: true`, begründeter Kommentar analog `lint.yml`) | S/M | ✅ Sprint 41 | CIGATE-01 |
+| CIGATE-05 | Bestehenden Playwright-Spec als non-blocking Informational-Job einbinden (kein Ausbau der Testtiefe) | S | ✅ Sprint 41 | — |
+| CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | ✅ Sprint 41 | CIGATE-02, CIGATE-03 |
+| CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | 🔶 Sprint 41 (siehe Hinweis unten) | CIGATE-01..06 |
+
+**Hinweis zu CIGATE-07:** "2 aufeinanderfolgende grüne CI-Läufe" im Sinne von echten GitHub-Actions-
+Runs konnte in diesem Sprint nicht verifiziert werden, da kein Commit/Push erfolgte (Nutzervorgabe:
+"nicht committen ohne ausdrückliche Aufforderung"). Ersatzweise wurden alle 3 blockierenden
+`test-go.yml`-Jobs sowie der `test-frontend.yml`-Job **lokal je 2× mit frischem Cache
+(`-count=1`)** gegen den jeweils echten Docker-Stack ausgeführt (siehe
+`tasks/sprints/41-ci-gates-einfuehren.md`, Abschnitt Ergebnisse) — durchgehend grün, keine
+Flakiness beobachtet. Alle 5 Workflow-Dateien wurden zusätzlich mit `actionlint` syntax-/
+semantik-geprüft (0 Findings). Die erste echte GitHub-Actions-Ausführung steht nach Push durch den
+Nutzer noch aus.
 
 **Nicht Teil dieses Sprints:** Latenz-Gate als hartes Blocking-Gate (siehe Architektur-
 Entscheidung oben), Vertiefung der Playwright-E2E-Tests bzw. echte WebRTC-SDP/ICE-E2E-Automatisierung
 (Audit-Punkt F — WebRTC bleibt bewusster Nicht-Scope, analog `WEBRTC-10`), Concurrency-Test-Lücke
 in `internal/webrtcsfu/sfu_test.go` und weiteren Packages (eigener, kleinerer Folge-Task), Safety
 Test Suite inhaltlich auf den echten `safetyservice.Bus` ausrichten (separater Folge-Task).
+
+**Bei der Umsetzung gefunden, nicht Teil dieses Sprints (siehe `DECISIONS.MD`):**
+`BenchmarkControlACKRoundtrip` skipt immer (fehlender `session_id`-Query-Parameter, ADR-025-Drift),
+`tests/e2e/dashboard.spec.ts` erwartet Dashboard-Inhalt ohne vorherigen Login — beide unkritisch
+(non-blocking Gates), aber als offene Folgepunkte dokumentiert.
 
 ---
 

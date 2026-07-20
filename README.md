@@ -266,3 +266,43 @@ make proto-gen-ts    # TypeScript → frontend/src/gen/
 - Safety Tests (19/19) müssen grün bleiben: `make test-safety`
 - Änderungen an `detector.go`, `statemachine.go`, `websocket.go` erfordern Test-Update
 - SAFE_MODE-Transitionen: erst `AuditWriter.WriteSync()` (Phase 7 — ADR-018), dann Transition
+
+### CI-Pipeline & Branch-Protection (Sprint 41, ADR-006-Bestandsaufnahme)
+
+`.github/workflows/` enthält 5 Dateien, 4 davon Merge-Gates (siehe ADR-006 + CLAUDE.MD §17):
+
+| Datei | Jobs | Blocking? |
+|-------|------|-----------|
+| `lint.yml` | `golangci-lint` | Nein (`continue-on-error`, Rollout noch nicht abgeschlossen) |
+| `test-go.yml` | `unit` (`make test-unit`), `safety` (`make test-safety`), `integration` (`make test-integration`) | **Ja, alle 3** |
+| `test-frontend.yml` | `vitest` (`npm run test`) | **Ja** |
+| `test-latency.yml` | `go-benchmark` (`make test-latency`), `k6` (`make test-k6`) | Nein — bewusste Abweichung von ADR-006 ("BLOCKING"), siehe Begründung dort und in `tasks/sprints/41-ci-gates-einfuehren.md` (Shared-Runner-Rauschen) |
+| `test-e2e.yml` | `playwright` (`npm run test:e2e`) | Nein (ADR-006 WebRTC/E2E Non-Determinism Policy) |
+
+**Required Status Checks — vorbereitet, NICHT aktiviert:** Branch-Protection ist eine geteilte
+Repo-Einstellung (betrifft alle künftigen PRs) und wurde in Sprint 41 bewusst nicht scharf
+geschaltet — das erfordert explizite Nutzerbestätigung (MB-Regeln zu risikoreichen/schwer
+umkehrbaren Aktionen). Bei Aktivierung sind genau diese 4 Checks als "Required" einzutragen
+(GitHub → Settings → Branches → Branch protection rule für `main` → "Require status checks to
+pass before merging"):
+
+```
+Unit Tests            (test-go.yml       / job: unit)
+Safety Test Suite     (test-go.yml       / job: safety)
+Integration Tests (Docker) (test-go.yml  / job: integration)
+Vitest Unit Tests      (test-frontend.yml / job: vitest)
+```
+
+`golangci-lint`, `go-benchmark`, `k6` und `playwright` bleiben absichtlich außen vor (non-blocking
+per Design, siehe Tabelle oben). Äquivalenter `gh`-Befehl (zur Referenz, nicht ausgeführt):
+
+```bash
+gh api repos/:owner/:repo/branches/main/protection \
+  --method PUT \
+  -f "required_status_checks[strict]=true" \
+  -f "required_status_checks[contexts][]=Unit Tests" \
+  -f "required_status_checks[contexts][]=Safety Test Suite" \
+  -f "required_status_checks[contexts][]=Integration Tests (Docker)" \
+  -f "required_status_checks[contexts][]=Vitest Unit Tests" \
+  -f "enforce_admins=true"
+```

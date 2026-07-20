@@ -1,0 +1,76 @@
+name: Test E2E (Playwright)
+
+# ADR-006 WebRTC/E2E Non-Determinism Policy: E2E tests are informational, not a merge gate.
+# CIGATE-05 (tasks/backlog.md EPIC "CI-Gates einführen") wires the existing spec
+# (tests/e2e/dashboard.spec.ts) into CI as-is — deliberately not deepened here (Audit-Punkt D:
+# the spec stays superficial, expanding its coverage is its own follow-up task).
+#
+# Known gap (found while wiring this job, 2026-07-19, not fixed here — same "no test-depth
+# work" boundary as above): manually verified via a live dashboard load that the app now shows
+# a login form first (Operator-ID/Passwort, likely ADR-024 authentication) — only the "AVOC
+# header" assertion matches that screen; the 4 assertions expecting IDLE state / Safety Panel /
+# Connection Panel / Emergency Stop button (post-login dashboard content) are expected to fail
+# until the spec is updated to log in first. Harmless because this job is non-blocking — the
+# report artifact makes the failures visible without blocking merges.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  playwright:
+    name: Playwright (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - name: Start dev stack
+        run: docker compose -f infrastructure/compose/docker-compose.yml --env-file .env up --build -d
+
+      - name: Wait for frontend readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/ > /dev/null; then
+              echo "Frontend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend did not become ready in time" >&2
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: npm run test:e2e
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/reports/
+          retention-days: 14
+
+      - name: Stop dev stack
+        if: always()
+        run: docker compose -f infrastructure/compose/docker-compose.yml --env-file .env down
