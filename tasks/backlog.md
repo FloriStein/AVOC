@@ -1164,7 +1164,7 @@ als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht a
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
 umgesetzt (2026-07-21). Teil 3 als **Sprint 53** umgesetzt (2026-07-21). Teil 4 als **Sprint 54**
-geplant (2026-07-21, noch nicht umgesetzt — Planungs-Stand, siehe `tasks/current-sprint.md`).
+umgesetzt (2026-07-21), siehe `tasks/sprints/54-e2e-ausbau.md`.
 Teil 5 bleibt unnummerierter Backlog-Kandidat für einen späteren Sprint-Kickoff.
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
@@ -1280,7 +1280,7 @@ Backoff-Reconnect-Zusammenspiel mit dem echten `WSClient` (hier gemockt), Gamepa
 `performance.now()`-Mocking, nicht Teil der bestehenden Testinfrastruktur). Details
 `tasks/sprints/53-frontend-hooks.md`.
 
-### Teil 4 — E2E-Flow-Ausbau (Sprint 54, 🔲 geplant)
+### Teil 4 — E2E-Flow-Ausbau (Sprint 54, ✅ abgeschlossen)
 
 **Vorrecherche:** Aktueller Stand (`origin/main`, `frontend/tests/e2e/dashboard.spec.ts`) deckt nach
 dem Login-Fix nur die 5 ursprünglichen Baseline-Assertions ab (Header, IDLE, SafetyPanel/
@@ -1295,16 +1295,18 @@ die alte Root-Level-Datei `tests/e2e/` enthält keine Spec mehr. Details/Task-Ve
 
 | ID | Task | Typ | Abhängigkeiten |
 |----|------|-----|-----------------|
-| E2ETEST-01 | Login-Fehlerfall (falsches Passwort → Fehlermeldung sichtbar, kein Übergang zu FleetOverview). | S | — |
-| E2ETEST-02 | Session-Konflikt real gegen Backend: zweiter Browser-Context/Operator sieht "Beobachten" statt "Teleoperate" (ADR-028), nicht nur UI-Mock. | M | — |
-| E2ETEST-03 | Emergency-Stop echter Klick-Flow (State-Transition sichtbar, Button danach disabled). | S | — |
-| E2ETEST-04 | Logout-Flow (zurück zu LoginPanel, Session serverseitig beendet). | S | — |
-| E2ETEST-05 | Verifikation: `npm run test:e2e` 2× lokal gegen echten Docker-Stack (non-blocking Job, aber Flakiness-Ausschluss laut CLAUDE.MD §17 trotzdem sinnvoll), Doku-Update. | S | E2ETEST-01..04 |
+| E2ETEST-01 | Login-Fehlerfall (falsches Passwort → Fehlermeldung sichtbar, kein Übergang zu FleetOverview). | S | ✅ Sprint 54 |
+| E2ETEST-02 | Session-Konflikt real gegen Backend: zweiter Browser-Context/Operator sieht "Beobachten" statt "Teleoperate" (ADR-028), nicht nur UI-Mock. | M | ✅ Sprint 54 |
+| E2ETEST-03 | Emergency-Stop echter Klick-Flow (State-Transition sichtbar, Button danach disabled). | S | ✅ Sprint 54 |
+| E2ETEST-04 | Logout-Flow (zurück zu LoginPanel, Session serverseitig beendet). | S | ✅ Sprint 54 |
+| E2ETEST-05 | Verifikation: `npm run test:e2e` 2× lokal gegen echten Docker-Stack (non-blocking Job, aber Flakiness-Ausschluss laut CLAUDE.MD §17 trotzdem sinnvoll), Doku-Update. | S | ✅ Sprint 54 |
 
 **Nicht Teil dieses Teils:** WebRTC-Verbindungsabbruch-UI, DEGRADED/SAFE_MODE-UI-Übergang über echte
 Verbindungsunterbrechung (technisch aufwändig in Playwright ohne echtes Video, eigener
-Entscheidungspunkt falls gewünscht), Permission-Denied/OBSERVER-Rolle (aktuell kein Rollen-Gating
-im Frontend gefunden, das E2E-testbar wäre — erst prüfen ob es das überhaupt gibt).
+Entscheidungspunkt falls gewünscht), Permission-Denied/OBSERVER-Rolle (bei Sprint-54-Umsetzung
+korrigiert: OBSERVER-Rollen-Gating existiert im Frontend real und wäre E2E-testbar, siehe
+`tasks/sprints/54-e2e-ausbau.md` — bewusst zurückgestellt, da ein zweiter Seed-User nötig wäre,
+Kandidat für einen künftigen Sprint statt "gibt es vermutlich nicht" wie ursprünglich vermutet).
 
 ### Teil 5 — CI-Härtung (kein Testcode, aber Testinfrastruktur-Lücken)
 
