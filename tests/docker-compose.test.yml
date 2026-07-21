@@ -32,7 +32,8 @@ services:
       CONTROL_PORT: "8080"
       JWT_SECRET: "test-secret-integration"
       SAFETY_SERVICE_URL: "http://safety-service:8082"
-      SFU_SERVICE_URL: "http://localhost:8084"   # SFU läuft nicht im Test-Stack
+      SFU_SERVICE_URL: "http://webrtc-sfu:8084"
+      MEDIAMTX_API_URL: "http://mediamtx:9997"
       AUTH_SERVICE_URL: "http://auth-service:8081"
       TELEMETRY_SERVICE_URL: "http://telemetry-service:8083"
       DATABASE_URL: "postgres://avoc:avoc_test_secret@postgres:5432/avoc?sslmode=disable"
@@ -45,6 +46,10 @@ services:
         condition: service_healthy
       telemetry-service:
         condition: service_healthy
+      webrtc-sfu:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
     networks:
       - avoc-test-net
 
@@ -158,6 +163,36 @@ services:
       interval: 3s
       timeout: 5s
       retries: 5
+    networks:
+      - avoc-test-net
+
+  webrtc-sfu:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/go-service.Dockerfile
+      args:
+        SERVICE_NAME: webrtc-sfu
+    ports:
+      - "18084:8084"
+    environment:
+      SFU_PORT: "8084"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+    networks:
+      - avoc-test-net
+
+  # INTTEST-01 (Sprint 52): reale MediaMTX Management API für control-server's SAFE_MODE-
+  # Media-Kick (internal/mediamtx.Client.KickVehicle) — bislang lief dieser Pfad im Teststack
+  # gegen keinen existenten Host. Kein echtes WHIP/WHEP (ADR-006, siehe tests/mediamtx-test.yml).
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    ports:
+      - "19997:9997"
+    volumes:
+      - ./mediamtx-test.yml:/mediamtx.yml:ro
     networks:
       - avoc-test-net
 

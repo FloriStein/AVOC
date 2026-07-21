@@ -27,6 +27,25 @@ func TestHandleSessionEvent_Created_SetsEmptyRouting(t *testing.T) {
 	assert.Equal(t, []string{}, s.routing["session-1"])
 }
 
+func TestGetSessionState_UnknownSession_ReturnsFalse(t *testing.T) {
+	s := New()
+
+	_, ok := s.GetSessionState("nonexistent")
+
+	assert.False(t, ok)
+}
+
+func TestGetSessionState_ReturnsLastRecordedEvent(t *testing.T) {
+	s := New()
+	s.HandleSessionEvent(SessionEvent{Type: EventCreated, SessionID: "session-1"})
+	s.HandleSessionEvent(SessionEvent{Type: EventSafeMode, SessionID: "session-1"})
+
+	state, ok := s.GetSessionState("session-1")
+
+	require.True(t, ok)
+	assert.Equal(t, EventSafeMode, state)
+}
+
 func TestHandleSessionEvent_OperatorAssigned_SetsRoutingToOperator(t *testing.T) {
 	s := New()
 

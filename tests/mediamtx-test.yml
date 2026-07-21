@@ -1,0 +1,41 @@
+# MediaMTX — Test-Stack-Config (INTTEST-01, Sprint 52).
+#
+# Zweck: control-server.mtxClient.KickVehicle() (internal/mediamtx) rief bisher im Docker-
+# Teststack gegen einen nicht existenten Host — der reale HTTP-Roundtrip auf SAFE_MODE war nie
+# Teil eines Integrationstests. Diese Config startet einen echten MediaMTX-Container nur für die
+# Management-API (Port 9997), die KickVehicle tatsächlich aufruft.
+#
+# webrtc bleibt aktiviert, damit die /v3/webrtcsessions/*-API-Pfade existieren (sonst 404) — es
+# findet aber nie echte SDP/ICE-Negotiation statt (kein Client verbindet sich), das bleibt laut
+# ADR-006 bewusst außerhalb des Scopes ("zu flaky in CI", siehe docker-compose.test.yml-Kopf).
+# Andere Protokolle (rtsp/rtmp/hls/srt) werden nicht gebraucht und deaktiviert.
+
+api: yes
+apiAddress: :9997
+
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: no
+rtmp: no
+hls: no
+srt: no
+
+webrtc: yes
+webrtcAddress: :8889
+# Kein echtes ICE-Gathering nötig (kein Client verbindet sich je) — Docker-Bridge-Interfaces
+# reichen als Platzhalter, damit MediaMTX überhaupt startet (verlangt eine der beiden Optionen).
+webrtcIPsFromInterfaces: true
+webrtcAllowOrigins:
+  - "*"
+
+# authMethod: internal (Default) würde die Management-API per authInternalUsers auf
+# 127.0.0.1/::1 beschränken — von einem anderen Container aus (wie control-server es hier tut)
+# schlägt das fehl ("authentication error"), erst hier entdeckt (kein bisheriger Integrationstest
+# rief die echte API prozessübergreifend auf). authMethod: http matcht die reale Prod-/Dev-Config
+# (infrastructure/mediamtx/mediamtx.yml) — MediaMTX's Default-`authHTTPExclude` nimmt die
+# "api"-Action ohnehin von der HTTP-Prüfung aus, der Webhook wird für unsere API-Calls nie
+# aufgerufen; authHTTPAddress zeigt trotzdem korrekt auf control-server, für den Fall dass sich
+# das Default künftig ändert.
+authMethod: http
+authHTTPAddress: http://control-server:8080/internal/media/auth

@@ -60,6 +60,33 @@ func TestSFUMux_Subscribe_MalformedJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+func TestSFUMux_SessionState_UnknownSession_404(t *testing.T) {
+	sfu := webrtcsfu.New()
+	mux := newSFUMux(sfu)
+
+	req := httptest.NewRequest(http.MethodGet, "/session/nonexistent/state", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestSFUMux_SessionState_KnownSession_ReturnsRecordedState(t *testing.T) {
+	sfu := webrtcsfu.New()
+	sfu.HandleSessionEvent(webrtcsfu.SessionEvent{Type: webrtcsfu.EventSafeMode, SessionID: "session-1"})
+	mux := newSFUMux(sfu)
+
+	req := httptest.NewRequest(http.MethodGet, "/session/session-1/state", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, "session-1", resp["session_id"])
+	assert.Equal(t, "SESSION_SAFE_MODE", resp["state"])
+}
+
 func TestSFUMux_Health(t *testing.T) {
 	sfu := webrtcsfu.New()
 	mux := newSFUMux(sfu)

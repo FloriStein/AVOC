@@ -32,8 +32,24 @@ func newSFUMux(sfu *webrtcsfu.SFU) *http.ServeMux {
 	mux.HandleFunc("POST /session/event", handleSessionEvent(sfu))
 	mux.HandleFunc("POST /offer/{sessionId}/{peerId}", handleVehicleOffer(sfu))
 	mux.HandleFunc("POST /subscribe/{sessionId}/{operatorId}", handleOperatorSubscribe(sfu))
+	mux.HandleFunc("GET /session/{sessionId}/state", handleSessionState(sfu))
 	mux.HandleFunc("GET /health", handleHealth)
 	return mux
+}
+
+// handleSessionState exposes the last session event type recorded for a session — status
+// introspection for integration tests (INTTEST-01) and operational debugging.
+func handleSessionState(sfu *webrtcsfu.SFU) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("sessionId")
+		state, ok := sfu.GetSessionState(sessionID)
+		if !ok {
+			http.Error(w, "unknown session", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID, "state": string(state)})
+	}
 }
 
 func handleSessionEvent(sfu *webrtcsfu.SFU) http.HandlerFunc {
