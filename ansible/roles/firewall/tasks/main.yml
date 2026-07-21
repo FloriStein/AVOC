@@ -1,0 +1,41 @@
+---
+# roles/firewall/tasks/main.yml — ufw-Regeln analog der Port-Tabelle aus
+# docs/deployment/hetzner-setup.md Schritt 2 (LOCALVM-04). Nutzt community.general.ufw
+# (s. ansible/requirements.yml).
+
+- name: ufw installieren
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+
+- name: Default-Policy — eingehend verweigern
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Default-Policy — ausgehend erlauben
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Einzelports erlauben (Port-Tabelle aus hetzner-setup.md Schritt 2)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ firewall_allowed_ports }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }}"
+
+- name: TURN-Relay-Portbereich erlauben (Fallback bei CGNAT/5G)
+  community.general.ufw:
+    rule: allow
+    port: "{{ firewall_relay_port_range }}"
+    proto: "{{ firewall_relay_port_proto }}"
+    comment: "TURN Relay-Ports (coturn)"
+
+- name: ufw aktivieren
+  community.general.ufw:
+    state: enabled

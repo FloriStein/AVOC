@@ -76,3 +76,14 @@ Safety takes priority: `EMERGENCY_STOP` is never blocked by the OBSERVER check i
 - Frontend: `ConnectionPanel` shows a role badge (Operator / Observer).
 - `DELETE /vehicles/{id}` uses `IsVehicleLocked()` instead of checking `GetCurrentSession()`.
 - WHEP auth unchanged — still verifies that an ACTIVE_OPERATOR session exists for the vehicle path.
+
+---
+
+## Update (2026-07-16)
+
+`ADR-026` builds directly on the `vehicleController map[string]string` introduced here and replaces
+the single global `statemachine.Machine` (Consequences above, "global, ACTIVE_OPERATOR-driven")
+with a per-vehicle `VehicleContextRegistry`. This is not a replacement of the role model or
+`session.Manager` decided in this ADR — `ACTIVE_OPERATOR`/`OBSERVER` roles, vehicle locking, and the
+session lifecycle described here remain unchanged; only the state machine underneath becomes
+per-vehicle instead of process-global. Both ADRs coexist. See `ADR-026`.

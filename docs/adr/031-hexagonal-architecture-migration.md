@@ -1,6 +1,6 @@
 # ADR-031: Migration zu hexagonaler Architektur (Ports & Adapters) — Strangler-Fig, Pilot fleet-service
 
-Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)**, **Schritt 2 (auth-service) abgeschlossen (Sprint 37, 2026-07-19)**, **Schritt 3 (telemetry-service) freigegeben, Sprint 43 vorgemerkt (2026-07-19)** — siehe "Offene Punkte".
+Status: Accepted (Strategie), **Pilot abgeschlossen (Sprint 33, 2026-07-18)**, **Schritt 2 (auth-service) abgeschlossen (Sprint 37, 2026-07-19)**, **Schritt 3 (telemetry-service) abgeschlossen (Sprint 43, 2026-07-19)**, **optionale Use-Case-Extraktion (HEX-06/HEXAUTH-04) abgeschlossen (Sprint 45, 2026-07-20)** — siehe "Offene Punkte".
 
 ## Kontext
 
@@ -291,6 +291,43 @@ akuter Schmerzpunkt, der eine Kollision mit laufenden Dashboard-Sprints rechtfer
 > Flakiness. Details: `tasks/sprints/43-hexagonal-migration-telemetry-service.md`. Use-Case-
 > Extraktion war hier von vornherein kein Thema (siehe Vorrecherche — `handleMessage`/`GetLatest`
 > bereits reine Funktionen). `control-server` bleibt wie geplant außerhalb dieses Schritts.
+
+> **Update (2026-07-20, Sprint 45 abgeschlossen):** Beide seit dem Piloten offenen optionalen
+> Entscheidungspunkte (`HEX-06` fleet-service, `HEXAUTH-04` auth-service) freigegeben und
+> umgesetzt. Vorrecherche ergab: die meisten Endpunkte beider Handler (`ListVehicles`,
+> `ListZones`, `ListStations`, `ListTasks`, `ListAlerts`, `GetTaskStatusHistory`,
+> `GetVehiclePositionHistory`, `VehicleRegister`, `ListUsers`, `CreateUser`) sind reine
+> 1:1-Store-Pass-Throughs ohne eigene Entscheidungslogik — dafür wurde bewusst **keine**
+> Use-Case-Schicht eingeführt (würde nur Indirektion ohne Testbarkeits-/Klarheitsgewinn erzeugen,
+> Rule of Three). Extrahiert wurden ausschließlich die Endpunkte mit echter Orchestrierung:
+> fleet-service (`internal/fleetservice/usecase.go`) — `createAndDispatchTask` (Persistenz +
+> Fire-and-forget-Dispatch, ADR-027), `transitionTaskStatus`/`acknowledgeAlert` (Store-Aufruf +
+> Dashboard-Broadcast als eine Einheit, da der Broadcast Domänen- und nicht Transport-Belang ist);
+> auth-service (`internal/authservice/usecase.go`) — `login`/`refreshToken`/`handoverToken`
+> (Token-Validierung + Ausstellungspolicy, mit Sentinel-Fehlern für die HTTP-Statuscode-Zuordnung)
+> sowie `canModifyUser` (löst eine tatsächliche Code-Duplizierung zwischen `DeleteUser` und
+> `UpdateUserRole` auf, Rule of Three). `Handler`-Methoden unverändert in Signatur/Verhalten,
+> nur noch dünne Wrapper (decode → Use-Case-Aufruf → broadcast/encode). 17 neue Unit-Tests
+> (7 fleet-service, 10 auth-service), direkt gegen die reinen Funktionen ohne `httptest` (bis auf
+> die Broadcast-Verifikation, die die bestehenden `broadcast_test.go`-WebSocket-Helper
+> wiederverwendet, da `Hub.Broadcast` nur über einen echten verbundenen Client beobachtbar ist).
+> Bestehende Handler-Tests unverändert grün. `go build`/`go vet ./...` sauber, `go test
+> ./internal/fleetservice/... ./internal/authservice/... -race -count=2` zweimal grün, keine
+> Flakiness. Details: `tasks/sprints/45-hexagonal-usecase-extraktion.md`. Damit ist die
+> Hexagonal-Migration für fleet-service/auth-service/telemetry-service inkl. beider optionaler
+> Folgeschritte vollständig abgeschlossen — `safety-service`/`webrtc-sfu`/`internal/recording`
+> (eigener, noch offener Entscheidungspunkt) und `control-server` (bewusst ausgeklammert, braucht
+> eigenes ADR + Testaufbau zuerst) bleiben die einzigen noch nicht migrierten Services.
+
+> **Update (2026-07-20, Sprint 46 abgeschlossen):** control-server-Vorbereitung: neues
+> [ADR-035](035-control-server-hexagonal-migration-prep.md) korrigiert die ursprüngliche
+> "geringste Testabdeckung"-Einschätzung (die `internal/controlserver`-Subpakete sind über
+> `tests/unit` tatsächlich bereits ~84% getestet — die echte Lücke ist `cmd/control-server/main.go`
+> selbst, 919 Zeilen, 0% Coverage) und baut Testabdeckung für den sicherheitskritischsten Teil davon
+> auf (`requireJWT`, `handleSessionStart`/`handleSessionEnd`/`handleEmergencyStop`,
+> `authcheck.Checker`). Kein Produktivcode-Refactor — die eigentliche Handler-Struct-Extraktion
+> bleibt ein separater, noch offener Entscheidungspunkt, siehe ADR-035 "Nächste Schritte". Details:
+> `tasks/sprints/46-control-server-hexagonal-migration-prep.md`.
 
 - Nach Abschluss des Piloten (HEX-01..05, siehe `tasks/backlog.md`): expliziter Entscheidungspunkt,
   ob und in welcher Reihenfolge auth-service/telemetry-service folgen — kein Automatismus, siehe

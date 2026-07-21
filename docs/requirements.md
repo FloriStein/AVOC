@@ -1,6 +1,6 @@
 # Requirements — Teleoperation Control System
 
-Stand: 2026-07-10 (Fleet Gateway Requirements ergänzt nach ADR-027)
+Stand: 2026-07-16 (Drift-Audit-Fixes Sprint 26 — State Machine Requirements um Per-Vehicle-Hinweis ADR-026 ergänzt)
 
 ---
 
@@ -199,7 +199,9 @@ Zwei Quellen, beide laufen in dieselbe Notification-UI:
 
 ## State Machine Requirements (ADR-011)
 
-Das System implementiert ein 4-Layer State Machine Modell:
+Das System implementiert ein 4-Layer State Machine Modell. Seit `ADR-026` läuft SYSTEM/CONTROL/MEDIA
+STATE pro Fahrzeug isoliert (`VehicleContextRegistry`) statt einmalig pro Prozess — siehe
+„Multi-Vehicle Requirements" unten für die Per-Vehicle-Anforderungen im Detail:
 
 ### SYSTEM STATE (Safety Truth — Master)
 Zustände: `IDLE → CONNECTING → AUTHENTICATED → CONNECTED ⇄ DEGRADED → SAFE_MODE → RECOVERING`

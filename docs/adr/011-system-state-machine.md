@@ -2,6 +2,13 @@
 
 Status: Accepted (erweitert durch ADR-014)
 
+> **Update (2026-07-16):** `ADR-026` führt Per-Vehicle-Isolation ein — jedes Fahrzeug erhält eine
+> eigene Instanz der hier beschriebenen SYSTEM/CONTROL/MEDIA-State-Machine (`VehicleContextRegistry`)
+> statt eines einzigen globalen Prozess-Singletons. Das hier beschriebene 4-Layer-Modell (Zustände,
+> Transition Rules, Invarianten) bleibt unverändert gültig — es gilt seither pro Fahrzeug statt
+> einmal pro Prozess. OPERATOR STATE (Abschnitt 4) bleibt weiterhin session-/operator-bezogen, nicht
+> Teil der Per-Vehicle-Registry. Details: `ADR-026`.
+
 ## Kontext
 
 Die ursprüngliche State Machine definierte 7 Zustände in einer einzigen Maschine. Mit der Einführung von WebRTC (ADR-014), Multi-Operator-Handover und dem Klarheitsbedarf zwischen Safety-State, Control-State, Video-State und Operator-State ist eine Erweiterung auf 4 orthogonale State Machines notwendig. Das Antipattern "eine State Machine für alles" wird explizit vermieden.

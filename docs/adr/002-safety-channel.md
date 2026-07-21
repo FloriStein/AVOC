@@ -42,7 +42,7 @@ DDS wird in dieser Projektphase nicht implementiert. Stattdessen wird ein dedizi
 
 ## Architektur
 
-Der Safety Event Bus stellt folgendes Interface bereit:
+Der Safety Event Bus stellt folgendes Interface bereit (Pseudocode zum Zeitpunkt der Entscheidung):
 
 - `PublishSafetyEvent(event SafetyEvent)`
 - `SubscribeSafetyEvents(handler SafetyEventHandler)`
@@ -50,6 +50,14 @@ Der Safety Event Bus stellt folgendes Interface bereit:
 - `GetSafetyState() SafetyState`
 
 Intern arbeitet die erste Implementierung mit einer in-memory Message-Queue und deterministischer Event-Simulation.
+
+> **Update (2026-07-16):** Die tatsächliche Implementierung (`internal/safetyservice/bus.go`) weicht
+> in den Methodennamen/-signaturen geringfügig vom obigen Pseudocode ab: `Subscribe(handler
+> SafetyEventHandler)` (kein `SafetyEvents`-Suffix) und `TriggerEmergencyStop(sessionID, vehicleID,
+> reason string)` (3 Parameter statt nur `reason` — Korrelation über Session/Fahrzeug war zum
+> Entscheidungszeitpunkt noch nicht Teil des Signatur-Entwurfs, siehe `ADR-016`). Kosmetische
+> Abweichung ohne Entscheidungsrelevanz — das entschiedene Interface-Prinzip (Strangler-Fig,
+> DDS-austauschbar) ist unverändert umgesetzt.
 
 ## Konsequenzen
 

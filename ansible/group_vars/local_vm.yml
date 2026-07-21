@@ -1,0 +1,8 @@
+---
+# Gemeinsame Variablen für alle Hosts der Gruppe [local_vm] — für alle drei Rollen
+# (bootstrap/firewall/secrets) und beide Playbooks (site.yml/deploy.yml) sichtbar
+# (group_vars hat höhere Präzedenz als role defaults, siehe Ansible-Variablen-Präzedenz).
+
+avoc_user: avoc
+app_base_dir: "/home/{{ avoc_user }}"
+app_dir: "{{ app_base_dir }}/app"

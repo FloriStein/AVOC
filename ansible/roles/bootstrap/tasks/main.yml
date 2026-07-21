@@ -1,0 +1,169 @@
+---
+# roles/bootstrap/tasks/main.yml
+# Idempotente Ablösung von docs/deployment/hetzner-setup.md Schritt 3 (einmaliger,
+# nicht-idempotenter Bash-Block, manuell in eine SSH-Session eingefügt). Läuft unverändert sowohl
+# gegen die lokale VM (ansible_user=avoc, siehe inventory/hosts.ini) als auch später gegen einen
+# frischen echten Hetzner-Server (ansible_user=root, eigenes Inventory) — beide Zweige sind
+# idempotent, s. Kommentare unten.
+
+- name: Python3 sicherstellen (Ubuntu-Cloud-Images liefern es nicht immer vorinstalliert)
+  ansible.builtin.raw: test -e /usr/bin/python3 || (apt-get update -qq && apt-get install -y -qq python3-minimal)
+  changed_when: false
+
+- name: Facts sammeln (erst jetzt möglich — Python3 s. Task oben)
+  ansible.builtin.setup:
+
+# HINWEIS (Sprint 49, LOCALVM-08b, Erkenntnis aus dem ersten echten site.yml-Lauf): Ein
+# ungebremstes 'apt: upgrade: safe' bricht auf Ubuntu 24.04 real ab, sobald ein openssh-server-
+# Update im Upgrade-Satz enthalten ist — Symptom war ein dpkg-Fehler mitten im Lauf ("Could not
+# execute systemctl", "installed openssh-server package post-installation script subprocess
+# returned error exit status 1"), und die VM war danach nur noch per 'virsh reboot' erreichbar
+# (SSH nahm TCP-Verbindungen an, brach sie aber sofort ohne Banner ab — ssh.socket/ssh@.service
+# starteten den durch die fehlgeschlagene Konfiguration kaputten Dienst nicht sauber). Ursache:
+# das openssh-server-Postinst startet den SSH-Dienst neu, während genau diese SSH-Verbindung
+# noch für den laufenden Ansible-'apt'-Task offen ist — ein klassisches "SSH-Upgrade-über-SSH"-
+# Race. Fix: Task async in den Hintergrund entkoppeln (überlebt einen Verbindungsabbruch durch
+# den sshd-Neustart, da der Kindprozess nicht an die SSH-Sitzung gebunden ist), separat pollen,
+# danach Verbindung zurücksetzen und auf Wiedererreichbarkeit warten. Falls der sshd-Neustart die
+# aktuelle Verbindung dennoch kappt, bevor der Job vollständig gestartet ist, fängt
+# 'ignore_unreachable' im Poll-Task das ab.
+- name: Paketindex aktualisieren + System-Upgrade (async — s. Kommentar oben zu SSH-Upgrade-Race)
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: safe
+    cache_valid_time: 3600
+  async: 600
+  poll: 0
+  register: avoc_system_upgrade_job
+
+- name: Auf Abschluss des System-Upgrades warten (separates Polling, s. Kommentar oben)
+  ansible.builtin.async_status:
+    jid: "{{ avoc_system_upgrade_job.ansible_job_id }}"
+  register: avoc_system_upgrade_result
+  until: avoc_system_upgrade_result.finished
+  retries: 40
+  delay: 10
+  ignore_unreachable: true
+
+- name: Verbindung nach möglichem SSH-Neustart zurücksetzen
+  ansible.builtin.meta: reset_connection
+
+- name: Warten bis SSH wieder erreichbar ist
+  ansible.builtin.wait_for_connection:
+    delay: 5
+    timeout: 180
+
+- name: dpkg-Konfiguration nachziehen, falls ein Paket-Postinst durch den sshd-Neustart unterbrochen wurde
+  ansible.builtin.raw: DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+  changed_when: false
+
+- name: Docker-Vorbedingungen installieren
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+
+- name: /etc/apt/keyrings anlegen
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Docker GPG-Key herunterladen
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+
+# HINWEIS (Sprint 49, LOCALVM-08b, Erkenntnis aus dem ersten echten site.yml-Lauf): Die
+# ursprüngliche Fassung nutzte 'ansible_architecture' (Ansible-Fact) für den apt-Zeilen-
+# 'arch='-Filter. Dieser Fact liefert auf x86_64-Systemen den Wert 'x86_64' (uname-Konvention),
+# APT erwartet für 'arch=' aber die Debian-Architekturbezeichnung 'amd64' (dpkg-Konvention) —
+# beide Namensschemata sind auf x86_64 unterschiedlich. Ergebnis war ein STILLER Fehlschlag:
+# 'apt-get update' lief fehlerfrei durch (Repo-Metadaten wurden geholt), aber
+# 'apt-cache policy docker-ce' zeigte 'Candidate: (none)' — APT filterte alle Pakete des Docker-
+# Repos wegen des Architektur-Mismatches einfach heraus, ohne Fehlermeldung. Der spätere Task
+# "Docker-Pakete installieren" scheiterte dadurch mit "No package matching 'docker-ce' is
+# available". Fix: dedizierter Task ermittelt die Debian-Architekturbezeichnung direkt per
+# 'dpkg --print-architecture' statt über den missverständlichen Ansible-Fact.
+- name: Debian-Architekturbezeichnung ermitteln (dpkg-Konvention, nicht ansible_architecture — s. Kommentar oben)
+  ansible.builtin.command: dpkg --print-architecture
+  register: avoc_dpkg_architecture
+  changed_when: false
+
+- name: Docker Apt-Repository eintragen
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ avoc_dpkg_architecture.stdout }}
+      signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu {{ docker_apt_release_codename }} stable
+    state: present
+    filename: docker
+
+- name: Docker-Pakete installieren
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: true
+
+- name: Docker-Dienst aktivieren + starten
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: "{{ avoc_user }}-Benutzer anlegen"
+  ansible.builtin.user:
+    name: "{{ avoc_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: docker
+    append: true
+
+- name: "Prüfen ob authorized_keys für {{ avoc_user }} bereits vorhanden ist"
+  ansible.builtin.stat:
+    path: "{{ app_base_dir }}/.ssh/authorized_keys"
+  register: avoc_authorized_keys
+
+- name: "SSH-Verzeichnis für {{ avoc_user }} anlegen"
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/.ssh"
+    state: directory
+    owner: "{{ avoc_user }}"
+    group: "{{ avoc_user }}"
+    mode: "0700"
+  when: not avoc_authorized_keys.stat.exists
+
+# Nur relevant für den Erstbootstrap eines frischen echten Hetzner-Servers (ansible_user=root,
+# root hat den Hetzner-Cloud-SSH-Key bereits über /root/.ssh/authorized_keys). Auf der lokalen VM
+# existiert dieser Pfad nicht (avoc bekommt den Key bereits direkt über cloud-init, siehe
+# scripts/local-vm-create.sh) — 'ignore_errors' macht diesen Task auf der lokalen VM zum
+# folgenlosen No-Op statt zum Abbruch.
+- name: "authorized_keys von root übernehmen (nur Erstbootstrap eines echten Servers)"
+  ansible.builtin.copy:
+    src: /root/.ssh/authorized_keys
+    dest: "{{ app_base_dir }}/.ssh/authorized_keys"
+    owner: "{{ avoc_user }}"
+    group: "{{ avoc_user }}"
+    mode: "0600"
+    remote_src: true
+  when: not avoc_authorized_keys.stat.exists
+  ignore_errors: true
+
+- name: App-Verzeichnisstruktur anlegen
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ avoc_user }}"
+    group: "{{ avoc_user }}"
+    mode: "0755"
+  loop:
+    - "{{ app_dir }}"
+    - "{{ app_dir }}/mosquitto"
+    - "{{ app_dir }}/mediamtx"
+    - "{{ app_base_dir }}/loki"
+    - "{{ app_base_dir }}/promtail"
+    - "{{ app_base_dir }}/grafana/provisioning/datasources"
+    - "{{ app_base_dir }}/grafana/provisioning/dashboards"

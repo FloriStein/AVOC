@@ -66,6 +66,25 @@ func TestRegistry_Get_CreatesFreshContext(t *testing.T) {
 	assert.Equal(t, statemachine.StateIdle, sys, "fresh VehicleContext must start at IDLE")
 }
 
+// DRIFT-K1 (2026-07-16): AuthWatchdog wiring is opt-in via WithUserChecker — these
+// two cases pin down both branches, since main.go's actual wiring (WithUserChecker
+// + Get()'s `if r.userChecker != nil`) previously had no direct test coverage of its
+// own (only AuthWatchdog itself, constructed directly, was unit-tested).
+
+func TestRegistry_Get_WithoutUserChecker_AuthWatchdogStaysNil(t *testing.T) {
+	r, _ := newRegistry()
+	ctx := r.Get("vehicle-001")
+	assert.Nil(t, ctx.AuthWatchdog, "no WithUserChecker call → AuthWatchdog must stay nil (callers nil-check before use)")
+}
+
+func TestRegistry_Get_WithUserChecker_AuthWatchdogIsWired(t *testing.T) {
+	pub := &mocks.MockSafetyPublisher{}
+	r := vc.NewRegistry(testRegistryDeadmanTimeout, testRegistryACKTimeout, testRegistryVehicleACKTimeout, pub).
+		WithUserChecker(&fakeUserChecker{active: true})
+	ctx := r.Get("vehicle-001")
+	require.NotNil(t, ctx.AuthWatchdog, "WithUserChecker must cause Get() to wire an AuthWatchdog")
+}
+
 // 2. Repeated Get() with the same ID returns the IDENTICAL instance — no re-creation,
 // no lost state between calls.
 func TestRegistry_Get_IsIdempotent(t *testing.T) {

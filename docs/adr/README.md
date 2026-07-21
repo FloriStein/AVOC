@@ -6,7 +6,7 @@ Kernentscheidungen, Status und offene Folge-Entscheidungen je ADR: **[DECISIONS.
 
 ---
 
-## ADR-Index (35 ADRs)
+## ADR-Index (36 ADRs)
 
 | ADR | Titel |
 |-----|-------|
@@ -45,6 +45,7 @@ Kernentscheidungen, Status und offene Folge-Entscheidungen je ADR: **[DECISIONS.
 | [ADR-032](032-task-status-history.md) | Task-Status-Audit-Historie |
 | [ADR-033](033-vehicle-position-history.md) | Vehicle Position History (gefahrene Route) |
 | [ADR-034](034-indoor-vehicle-position.md) | Indoor-Fahrzeugposition |
+| [ADR-035](035-control-server-hexagonal-migration-prep.md) | control-server Hexagonal-Migration — Vorbereitung (Testaufbau vor Refactor) |
 
 ---
 

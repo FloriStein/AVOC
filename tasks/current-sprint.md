@@ -6,8 +6,13 @@
 
 ---
 
-Kein aktiver Sprint. Nächster Sprint noch nicht geplant — siehe `tasks/backlog.md` für offene
-EPICs/Tasks.
+# Kein aktiver Sprint
 
-Vorgänger: Sprint 40 ✅ (TLS/MQTTS-Härtung für Mosquitto, siehe
-`tasks/sprints/40-tls-mqtts-haertung.md`)
+Sprint 49 (Lokale Ansible-VM als Hetzner-Nachbildung, Teil B: Verifikation) ist abgeschlossen —
+Volltext in [tasks/sprints/49-lokale-ansible-vm-teil-b.md](sprints/49-lokale-ansible-vm-teil-b.md).
+Damit ist das EPIC "Lokale Ansible-VM als Hetzner-Nachbildung (AWS-Ersatz für die Testumgebung)"
+vollständig abgeschlossen (Teil A Sprint 48, Teil B Sprint 49) — siehe
+[tasks/backlog.md](backlog.md).
+
+Nächster möglicher Sprint: nach Nutzerfreigabe, siehe offene Punkte in
+[tasks/backlog.md](backlog.md).

@@ -12,9 +12,11 @@ import (
 	commonv1 "avoc/gen/go/common/v1"
 	controlv1 "avoc/gen/go/control/v1"
 	"avoc/internal/controlserver/command"
+	csafety "avoc/internal/controlserver/safety"
 	"avoc/internal/controlserver/session"
 	"avoc/internal/controlserver/statemachine"
 	"avoc/internal/controlserver/vehiclecontext"
+	"avoc/internal/safetyservice"
 	"avoc/pkg/audit"
 	"avoc/pkg/logger"
 	"avoc/pkg/ulid"
@@ -45,6 +47,7 @@ type WSHandler struct {
 	sessionMgr      *session.Manager
 	engine          *command.Engine
 	auditWriter     audit.SafetyAuditWriter
+	publisher       csafety.Publisher
 }
 
 func NewWSHandler(
@@ -64,6 +67,14 @@ func NewWSHandler(
 // WithAuditWriter sets the audit writer for WS_DISCONNECT persistence (ADR-018).
 func (h *WSHandler) WithAuditWriter(aw audit.SafetyAuditWriter) *WSHandler {
 	h.auditWriter = aw
+	return h
+}
+
+// WithPublisher sets the Safety Event Bus publisher (ADR-002), used to publish
+// EventNoOperator when the OPERATOR layer transitions to NO_OPERATOR on disconnect
+// (2026-07-16, DRIFT-K2). Safe to omit in tests (nil publisher = no-op below).
+func (h *WSHandler) WithPublisher(pub csafety.Publisher) *WSHandler {
+	h.publisher = pub
 	return h
 }
 
@@ -123,6 +134,13 @@ func (h *WSHandler) recoverFromSafeMode(sess session.Session) {
 	vc.SM.TransitionToConnected()
 	vc.SM.TransitionOperator(statemachine.OpActive)
 	vc.Deadman.Start(sess.ID, sess.VehicleID)
+	if vc.AuthWatchdog != nil {
+		// Restart polling too (DRIFT-K1) — Stop() is only called on
+		// session/end, but a SAFE_MODE recovery does not go through
+		// session/start again, so without this the watchdog would never
+		// resume checking the reconnected operator's account.
+		vc.AuthWatchdog.Start(sess.ID, sess.VehicleID, sess.OperatorID)
+	}
 	svcLog.Event(logger.EventStateTransition,
 		"ACTIVE_OPERATOR reconnected — recovered from SAFE_MODE, deadman restarted",
 		"session_id", sess.ID)
@@ -216,6 +234,9 @@ func (h *WSHandler) handleWSDisconnect(ws wsConn) {
 	}
 
 	ws.vc.Deadman.Stop()
+	if ws.vc.AuthWatchdog != nil {
+		ws.vc.AuthWatchdog.Stop()
+	}
 	// If the session was already released via POST /session/end, the WS close
 	// is intentional — do not trigger SAFE_MODE in that case.
 	_, sessionStillActive := h.sessionMgr.GetSession(ws.sess.ID)
@@ -226,6 +247,25 @@ func (h *WSHandler) handleWSDisconnect(ws wsConn) {
 			"subject", ws.claims.Subject, "session_id", ws.sess.ID)
 		h.auditWSDisconnect(ws)
 		ws.vc.SM.TransitionSystem(statemachine.StateSafeMode)
+
+		// OPERATOR layer (2026-07-16, DRIFT-K2): SYSTEM is already SAFE_MODE by
+		// this point, so TransitionOperator's own SAFE_MODE branch (guarded on
+		// System==Connected/Degraded) is a no-op here — this call only corrects
+		// the OPERATOR field, which previously hung at ACTIVE_OPERATOR forever
+		// after a disconnect. It also makes TransitionOperator(OpNoOperator) the
+		// single canonical "operator gone" trigger that future callers (e.g. the
+		// AuthWatchdog, DRIFT-K1) can reuse directly, instead of only being
+		// reachable through this WS-specific code path.
+		ws.vc.SM.TransitionOperator(statemachine.OpNoOperator)
+		if h.publisher != nil {
+			h.publisher.PublishEvent(safetyservice.SafetyEvent{
+				SessionID: ws.sess.ID,
+				VehicleID: ws.sess.VehicleID,
+				Type:      safetyservice.EventNoOperator,
+				Reason:    "ACTIVE_OPERATOR WebSocket disconnected — no active operator",
+				Timestamp: time.Now(),
+			})
+		}
 	}
 	if !sessionStillActive {
 		svcLog.Event(logger.EventWsDisconnect,

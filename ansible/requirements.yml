@@ -1,0 +1,6 @@
+---
+# Ansible-Collections, die roles/firewall (ufw-Modul) benötigt.
+# Installation: ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general
+    version: ">=8.0.0"

@@ -1,0 +1,18 @@
+---
+# ansible/site.yml — vollständige Erst-Provisionierung der lokalen VM (Hetzner-Nachbildung).
+# Läuft bootstrap (Docker, avoc-User, Verzeichnisse) -> firewall (ufw) -> secrets (.env +
+# SSL-Zertifikat) in dieser Reihenfolge. Danach: ansible-playbook deploy.yml für den
+# eigentlichen Stack-Deploy (kann beliebig oft wiederholt werden, dieses Playbook nur einmalig
+# pro VM nötig).
+#
+# Aufruf: ansible-playbook site.yml   (aus dem Verzeichnis ansible/)
+# Syntax-Check ohne Zielmaschine: ansible-playbook site.yml --syntax-check
+
+- name: AVOC lokale VM — vollständige Provisionierung
+  hosts: local_vm
+  become: true
+  gather_facts: false # roles/bootstrap holt Facts selbst ein, erst NACH dem Python3-Bootstrap
+  roles:
+    - bootstrap
+    - firewall
+    - secrets

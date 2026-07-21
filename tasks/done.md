@@ -3,11 +3,80 @@
 Lifecycle: backlog → sprint → done
 
 Kompakter Index aller abgeschlossenen Sprints. Volltext (Tasks, Testprotokolle, Datei-Listen,
-Scope-Details) je Sprint in [tasks/sprints/](sprints/). Sprint 26 existiert auf diesem Branch
-nicht — Nummernkollision mit einem nie gemergten Parallel-Strang (`feature/docs-drift-audit`,
-siehe `tasks/backlog.md`).
+Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
+
+## Sprint 49 — Lokale Ansible-VM als Hetzner-Nachbildung, Teil B: Verifikation (LOCALVM-08a/08b/08c/09) ✅
+2026-07-21 → [tasks/sprints/49-lokale-ansible-vm-teil-b.md](sprints/49-lokale-ansible-vm-teil-b.md)
+- Fortsetzung von Sprint 48 (reine Autorierung) — jetzt real gegen eine laufende lokale VM
+  (`avoc-local-vm`, libvirt/KVM) verifiziert. EPIC "Lokale Ansible-VM als Hetzner-Nachbildung"
+  damit vollständig abgeschlossen (Teil A+B).
+- LOCALVM-08a gegengecheckt (VM-IP unverändert, Inventory-Platzhalter musste nachträglich befüllt
+  werden — Sed-Ersetzung aus dem Vorlauf war nicht persistiert). LOCALVM-08b:
+  `ansible-playbook site.yml`/`deploy.yml` real ausgeführt, 5 reale, vorher unbekannte Bugs
+  gefunden und behoben: (1) `apt upgrade` bricht SSH ab, sobald `openssh-server` mit upgegradet
+  wird (Fix: async-Task + Reconnect-Pattern), (2) Docker-Apt-Repo mit falscher
+  Architekturbezeichnung (`ansible_architecture`=`x86_64` statt `dpkg --print-architecture`=
+  `amd64` — stiller Fehlschlag, kein Docker-Paket verfügbar), (3) `ufw`-Kommentar mit Apostroph
+  bricht das Ansible-Modul-Quoting, (4) Mosquitto-Container-Crash-Loop durch zu strikte
+  Dateiberechtigungen (`chmod 600` statt `644` auf Bind-Mounts), (5) MQTT-Test-Passwort passte
+  nicht zum committeten `infrastructure/mosquitto/passwd`-Hash. Zusätzlich (kein Ansible-Bug):
+  lokal gebaute avoc-*-Images waren älter als der TLS-Client-Support aus Sprint 40 — neu gebaut.
+- LOCALVM-08c: Smoke-Test grün — alle 15 Container `Up`/`postgres healthy`, keine Restart-Loops,
+  Frontend (`:3000`) und Control-Server-API (`:8080/health`) beide HTTP 200 von der VM-IP aus.
+- LOCALVM-09: `docs/deployment/hetzner-setup.md` auf den Ansible-Workflow umgestellt (Schritt
+  1/3/4/6/7 durch Kurzbeschreibung + Ansible-/Skript-Verweis ersetzt, Rest unverändert für den
+  echten Server gültig); zwei Doku-Lücken aus Sprint 48 mitkorrigiert (MQTT-Port-Tabelle auf
+  TLS-8883 statt 1883, `docs/deployment/UEBERGABE-ABWEICHUNGEN.md` neu angelegt); `DECISIONS.MD`
+  + `tasks/backlog.md`-Status aktualisiert (EPIC komplett ✅).
+
+---
+
+## Sprint 48 — Lokale Ansible-VM als Hetzner-Nachbildung, Teil A: Autorierung (LOCALVM-01..07) ✅
+2026-07-20 → [tasks/sprints/48-lokale-ansible-vm-teil-a.md](sprints/48-lokale-ansible-vm-teil-a.md)
+- Nutzerfreigabe 2026-07-20: AWS als lokale Test-/Referenzumgebung durch eine lokale,
+  per Ansible provisionierte VM ersetzen, die den zukünftigen Hetzner-Server nachbildet
+  (libvirt/KVM + `virt-install` + cloud-init, kein Vagrant/VirtualBox). Teil A deckt reine
+  Autorierung ab (kein Zugriff auf eine echte laufende VM nötig) — Teil B (Verifikation gegen die
+  echte VM, LOCALVM-08/09) folgt als eigener Sprint.
+- Neues `ansible/`-Grundgerüst (Rollen `bootstrap`/`firewall`/`secrets`, Playbooks
+  `site.yml`/`deploy.yml`), `scripts/local-vm-create.sh` (virt-install + cloud-init NoCloud-ISO),
+  sowie erstmalige Materialisierung der drei bisher nur in `docs/deployment/hetzner-setup.md`
+  dokumentierten Dateien als echten Code: `infrastructure/compose/docker-compose.hetzner.yml`,
+  `scripts/deploy-hetzner.sh`, `scripts/secrets-setup-hetzner.sh`.
+- Eine dokumentierte, minimale Abweichung vom 1:1-Materialisierungsauftrag: `deploy-hetzner.sh`
+  bekam einen optionalen `SKIP_REGISTRY_PULL`-Zweig, ohne den die bereits freigegebene
+  "kein-Docker-Hub-Roundtrip"-Architektur-Entscheidung für die lokale VM nicht hätte funktionieren
+  können (Default-Verhalten für den echten Hetzner-Server bleibt unverändert).
+- `ansible`/`ansible-playbook` konnten in dieser Agenten-Session nicht per `sudo apt-get install`
+  systemweit installiert werden (kein TTY für interaktive `sudo`-Passwortabfrage) — als Ersatz
+  lokal aus denselben Ubuntu-Paketen (`apt-get download` + `dpkg-deb -x`, kein Root nötig)
+  verifiziert. Für den Nutzer offen: `sudo apt-get install -y ansible` einmalig manuell
+  ausführen.
+- Verifiziert: `ansible-playbook site.yml/deploy.yml --syntax-check` + `--list-tasks` (beide
+  grün), alle YAML-Dateien einzeln per `yaml.safe_load` geprüft, `bash -n` für alle 3 neuen/
+  geänderten Shell-Skripte, `docker compose -f docker-compose.hetzner.yml config` gegen
+  Dummy-`.env` (Exit 0, alle 5 dokumentierten Hetzner-Änderungen im aufgelösten YAML bestätigt).
+  Kein echter Playbook-Lauf/keine echte VM-Erzeugung (explizit Sprint B). Details, erkannte
+  Doku-Lücken (`hetzner-setup.md` teils veraltet seit MQTTS-01) und vollständige Testliste im
+  Sprint-Dokument.
+
+## Sprint 46 — control-server: Hexagonal-Migration Vorbereitung (neues ADR-035 + Testaufbau) ✅
+2026-07-20 → [tasks/sprints/46-control-server-hexagonal-migration-prep.md](sprints/46-control-server-hexagonal-migration-prep.md)
+- Schließt den seit ADR-031 offenen Punkt "control-server bräuchte eigenes ADR + Testabdeckung-Aufbau zuerst". Nutzerentscheidung 2026-07-20 gegenüber 2 Alternativen (Hexagonal-Migration safety-service/webrtc-sfu/recording — verworfen, keine vergleichbare Infrastruktur-Abhängigkeit dort; `newSafetyMux` exportieren — zu klein).
+- Vorrecherche korrigierte die ursprüngliche "geringste Testabdeckung"-Annahme: `internal/controlserver`-Subpakete sind über die bestehende `tests/unit`-Suite bereits ~84% getestet (nur mit `-coverpkg` sichtbar). Die echte Lücke ist `cmd/control-server/main.go` selbst (919 Zeilen, 0% Coverage auf jeder Funktion).
+- Neues ADR `docs/adr/035-control-server-hexagonal-migration-prep.md` (36 ADRs gesamt). Testaufbau (kein Produktivcode-Refactor) für den sicherheitskritischsten Teil: `requireJWT`, `handleSessionStart`/`advanceVehicleToActiveOperator`, `handleSessionEnd`, `handleEmergencyStop` (neue `cmd/control-server/main_test.go`, 20 Tests) sowie `authcheck.Checker` (neue, `DATABASE_URL`-gated `checker_test.go`, 3 Tests).
+- Echter Fund dabei: ein Fahrzeug ohne aktive Session steht in SYSTEM=IDLE, und `IDLE→SAFE_MODE` ist kein gültiger State-Transition — Emergency-Stop auf so ein Fahrzeug wird lautlos ignoriert (nur Warn-Log). Dokumentiert als offener Entscheidungspunkt im ADR, nicht behoben (Scope: Vorbereitung, kein Fix).
+- Verifiziert: `go build`/`go vet ./...` sauber, `go test ./cmd/control-server/... ./internal/controlserver/authcheck/... -race -count=2` zweimal grün; `authcheck`-Tests zusätzlich gegen einen ephemeren `postgres:16-alpine`-Container real verifiziert; `go test ./... -race` gesamt geprüft (nur erwartbare `tests/integration`-Fehlschläge ohne Docker-Teststack).
+
+## Sprint 45 — Hexagonale Architektur: Use-Case-Extraktion fleet-service/auth-service (HEX-06/HEXAUTH-04) ✅
+2026-07-20 → [tasks/sprints/45-hexagonal-usecase-extraktion.md](sprints/45-hexagonal-usecase-extraktion.md)
+- Schließt die beiden seit Sprint 33/37 offenen optionalen ADR-031-Entscheidungspunkte (HEX-06 fleet-service, HEXAUTH-04 auth-service). Nutzerentscheidung 2026-07-20 gegenüber 2 Alternativen (Hexagonal-Migration safety-service/webrtc-sfu/recording; control-server-Vorbereitung per neuem ADR + Testaufbau).
+- Vorrecherche ergab: die meisten Endpunkte beider Handler sind reine 1:1-Store-Pass-Throughs ohne Entscheidungslogik — dafür bewusst keine Use-Case-Schicht (Rule of Three / "keine Abstraktion ohne Konsument"). Extrahiert wurden nur Endpunkte mit echter Orchestrierung: `internal/fleetservice/usecase.go` (`createAndDispatchTask`, `transitionTaskStatus`/`acknowledgeAlert` — Store-Aufruf + Dashboard-Broadcast als eine Einheit) und `internal/authservice/usecase.go` (`login`/`refreshToken`/`handoverToken` mit Sentinel-Fehlern für die HTTP-Statuscode-Zuordnung, plus `canModifyUser` löst eine echte Code-Duplizierung zwischen `DeleteUser`/`UpdateUserRole` auf).
+- `Handler`-Methoden unverändert in Signatur/HTTP-Verhalten, nur noch dünne Wrapper. 17 neue Unit-Tests (7 fleet-service, 10 auth-service) direkt gegen die reinen Funktionen ohne `httptest`; Broadcast-Verifikation nutzt bestehende `broadcast_test.go`-WebSocket-Helper.
+- Damit ist die Hexagonal-Migration für fleet-service/auth-service/telemetry-service inkl. beider optionaler Folgeschritte vollständig abgeschlossen — `safety-service`/`webrtc-sfu`/`internal/recording` und `control-server` bleiben die einzigen noch nicht migrierten Services (beide eigene, noch offene Entscheidungspunkte).
+- Verifiziert: `go build`/`go vet ./...` sauber, `go test ./internal/fleetservice/... ./internal/authservice/... -race -count=2` zweimal grün, keine Flakiness.
 
 ## Sprint 44 — Backup-Strategie Audit Store (ADR-018/023 Folge) ✅
 2026-07-19 → [tasks/sprints/44-backup-strategie-audit-store.md](sprints/44-backup-strategie-audit-store.md)
@@ -117,6 +186,14 @@ Sprint 40 unten.)
 ## Sprint 27 — Fundament: `pkg/db`, `pkg/env`, non-blocking Linter-Gate ✅
 2026-07-17 → [tasks/sprints/27-fundament-pkg-db-env-linter.md](sprints/27-fundament-pkg-db-env-linter.md)
 - Erster Go-Style-Guide-Rollout-Sprint: DB-Open+WaitForReady- und `envOr`-Dreifach-Duplikate in `pkg/db`/`pkg/env` gebündelt; `golangci-lint` als non-blocking Warn-Gate eingerichtet.
+
+## Sprint 26 — Drift-Audit MD-Doku vs. Ist-Zustand + DRIFT-K1/K2/K3-Sicherheitsfixes ✅
+2026-07-16 (Audit) / 2026-07-17 (Fixes) / 2026-07-20 (gemerged) → [tasks/sprints/26-drift-audit-md-doku-vs-ist-zustand.md](sprints/26-drift-audit-md-doku-vs-ist-zustand.md)
+- Reine Bestandsaufnahme (kein Fix-Scope): 38 bestätigte Drifts zwischen `docs/vision.md`/34 ADRs/`CLAUDE.MD`/`CONTEXT.MD`/`requirements.md` und dem tatsächlichen Code-/Test-/Deployment-Zustand, konsolidiert in `docs/drift-audit-2026-07.md` (6 Kritisch, 25 Mittel, 7 Niedrig), als `DRIFT-*`-Tasks in `tasks/backlog.md` aufgenommen.
+- Fast-Track (2026-07-16): 24 reine Doku-Korrekturen (DRIFT-M01..M17, N01..N07) — ADR-Update-Blöcke, Cross-Referenzen, zwei Code-Kommentar-Fixes.
+- DRIFT-K1/K2/K3 (2026-07-17): drei CRITICAL/DEGRADED-Safety-Trigger aus ADR-009, die zuvor nur synthetisch in Unit-Tests existierten, bekamen einen echten Produktivpfad — neuer `AuthWatchdog` (Auth Invalidation), `TransitionOperator(OpNoOperator)` im WS-Disconnect-Handler (No Active Operator), `MEDIA_DEGRADED`-Schwellwerte + Recovery-Pfad (Media-DEGRADED-Wiring). Je Befund eigene Grill-Me-Session (Typ L).
+- Branch (`feature/drift-k1-k3-safety-model`) wurde erst am 2026-07-20 gemerged, 33 Commits nach seinem Abzweigpunkt — `AuthWatchdog`/`vehiclecontext.Registry` mussten dabei auf die inzwischen (Sprint 28/29) verschlankte `audit.SafetyAuditWriter`-Schnittstelle umgestellt werden, die DRIFT-K1/K2-Anpassungen in die inzwischen (Sprint 29) extrahierten `handleSessionStart`/`handleSessionEnd`/`recoverFromSafeMode`/`handleWSDisconnect`-Methoden übertragen werden statt in die ursprünglichen (inzwischen aufgelösten) Inline-Handler.
+- Verifiziert: `go build`/`go vet ./...` sauber, `go test ./... -race` grün für alle Pakete außer den erwartbaren `tests/integration`-Fehlschlägen (kein laufender Docker-Teststack).
 
 ## Sprint 25 — Audio-Benachrichtigungen ✅
 2026-07-16 → [tasks/sprints/25-audio-benachrichtigungen.md](sprints/25-audio-benachrichtigungen.md)

@@ -28,9 +28,34 @@ Dev-Rechner                           Hetzner Server
 5. Configs kopieren + deployen     ──▶ Stack läuft
 ```
 
+> **Ansible-Workflow (seit Sprint 48/49) — empfohlener Weg, ersetzt Schritt 1/3/4/6/7:**
+> Statt der manuellen Bash-Blöcke/`scp`-Befehle unten gibt es inzwischen `ansible/` (Rollen
+> `bootstrap`/`firewall`/`secrets` + `site.yml`/`deploy.yml`). Ursprünglich für eine **lokale
+> Verifikations-VM** gebaut (Hetzner-Nachbildung via `scripts/local-vm-create.sh` + libvirt/KVM,
+> siehe `tasks/backlog.md` EPIC "Lokale Ansible-VM als Hetzner-Nachbildung"), funktionieren die
+> Rollen unverändert auch gegen einen echten frischen Hetzner-Server — `roles/bootstrap` ist für
+> beide Fälle idempotent gebaut (`ansible_user=avoc` bei der lokalen VM vs. `ansible_user=root`
+> beim Erstbootstrap eines echten Servers, siehe Kommentare in `ansible/inventory/hosts.ini` und
+> `roles/bootstrap/tasks/main.yml`). Für einen echten Server: eigene Inventory-Datei anlegen
+> (analog `ansible/inventory/hosts.ini`, aber mit der Server-IP + `ansible_user=root` für den
+> Erstlauf) und `ansible-playbook site.yml && ansible-playbook deploy.yml` ausführen. Schritt 2
+> (Firewall-Portliste), 5 (Images bauen/pushen), 8 (Compose-Unterschiede zu EC2) und 9 (erster
+> Deploy, jetzt per Ansible) bleiben unverändert bzw. mit Ansible-Verweis gültig — siehe dort.
+> Real gegen eine VM verifiziert in Sprint 49 (`tasks/sprints/49-lokale-ansible-vm-teil-b.md`),
+> inklusive drei dabei gefundener und behobener echter Bugs (SSH-Upgrade-Race, apt-Architektur-
+> Mismatch, ufw-Kommentar-Quoting) und zwei Deploy-seitiger (Mosquitto-Dateiberechtigungen,
+> MQTT-Test-Passwort) — Details in den Kommentaren der jeweiligen `ansible/`-Dateien.
+
 ---
 
 ## Schritt 1 — Server anlegen (Hetzner Cloud Console)
+
+> **Lokale Verifikations-VM statt echtem Server:** `bash scripts/local-vm-create.sh` erzeugt via
+> virt-install/cloud-init eine lokale Ubuntu-24.04-VM als Näherung dieses Schritts (gleiche
+> RAM/vCPU-Empfehlung wie unten, `avoc`-User bereits per cloud-init statt manuell angelegt,
+> `ansible/inventory/hosts.ini` wird automatisch mit der VM-IP befüllt). Kein Hetzner-Account
+> nötig. Danach direkt mit dem Ansible-Workflow (Hinweis oben) fortfahren — dieser Schritt hier
+> (Cloud-Console-Bedienung) ist dann nicht nötig.
 
 Unter [console.hetzner.cloud](https://console.hetzner.cloud):
 
@@ -76,7 +101,7 @@ In der Cloud Console: **Firewalls** → **Firewall erstellen** → Regeln:
 | 8084 | TCP | WebRTC SFU |
 | 8889 | TCP | MediaMTX WHIP/WHEP Signaling |
 | 9997 | TCP | MediaMTX Management API (optional, intern) |
-| 1883 | TCP | MQTT Broker |
+| 8883 | TCP | MQTT Broker (TLS — seit MQTTS-01/MQTTAUTH-04, siehe Hinweis unten) |
 | 3001 | TCP | Grafana |
 | 3100 | TCP | Loki (optional, intern) |
 | 3478 | TCP + UDP | STUN/TURN (coturn) |
@@ -91,6 +116,14 @@ Abschnitt "Services & zugehöriger Quellcode".
 
 Firewall dem Server zuweisen: **Server** → `avoc-server` → **Firewalls** → Zuweisen.
 
+> **MQTT-Port-Korrektur (Sprint 49, LOCALVM-09):** Diese Tabelle nannte hier bis Sprint 48
+> Port 1883 (Klartext-MQTT) — veraltet seit MQTTS-01/MQTTAUTH-04, Mosquitto läuft im
+> tatsächlichen Compose-Stand (`docker-compose.prod.yml`/`docker-compose.hetzner.yml`) TLS-only
+> auf Port 8883, Port 1883 ist im Compose-Setup nicht mal mehr nach außen exponiert. Korrigiert
+> auf den echten Stand. Der Ansible-Workflow (`ansible/roles/firewall/defaults/main.yml`) setzt
+> ohnehin automatisch beide Regeln (1883 als Doku-Altlast-Kommentar + der tatsächlich benötigte
+> 8883) — bei manueller Firewall-Konfiguration reicht 8883.
+>
 > **Wichtig — UDP 8189:** Dieser Port ist entscheidend für WebRTC-Mediadaten.
 > Ohne ihn schlägt ICE fehl (WHIP-Signaling gelingt, kein Video).
 >
@@ -100,66 +133,35 @@ Firewall dem Server zuweisen: **Server** → `avoc-server` → **Firewalls** →
 
 ## Schritt 3 — Server-Bootstrap (einmalig)
 
+**Per Ansible (empfohlen, seit Sprint 48/49):** `ansible/roles/bootstrap` deckt exakt das ab, was
+früher hier als manueller Bash-Block dokumentiert war — System-Update, Docker-Installation,
+`avoc`-User anlegen, `authorized_keys` übernehmen, App-Verzeichnisstruktur anlegen — idempotent
+und wiederholbar. Für einen echten, frischen Hetzner-Server: eigene Inventory-Datei mit
+`ansible_user=root` (root hat den Hetzner-Cloud-SSH-Key bereits, `roles/bootstrap` übernimmt
+`authorized_keys` für den neu angelegten `avoc`-User automatisch von dort), dann:
+
 ```bash
 SERVER_IP=5.161.x.x    # Public-IPv4 aus Schritt 1
-
-ssh root@${SERVER_IP}
+cd ansible
+ansible-playbook -i <eigene-inventory-mit-root-user>.ini site.yml
 ```
 
-Im Server-Terminal das folgende Bootstrap-Script ausführen:
+`roles/bootstrap` enthält (Stand Sprint 49, real gegen eine VM verifiziert) außerdem eine Absicherung
+gegen einen bekannten Ubuntu-24.04-Fallstrick: ein direktes `apt upgrade` bricht ab, sobald ein
+`openssh-server`-Update enthalten ist (der Dienst wird durch sein eigenes Postinst-Skript
+neugestartet, während genau diese SSH-Verbindung noch den Ansible-Task ausführt) — der Task läuft
+daher async, entkoppelt vom SSH-Kanal, mit anschließendem Verbindungs-Reset + Wartephase (siehe
+Kommentar in `roles/bootstrap/tasks/main.yml`).
 
-```bash
-#!/bin/bash
-set -euo pipefail
-
-# ─── System aktualisieren ────────────────────────────────────────────────────
-apt-get update && apt-get upgrade -y
-
-# ─── Docker installieren ─────────────────────────────────────────────────────
-apt-get install -y ca-certificates curl gnupg
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-  https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-  > /etc/apt/sources.list.d/docker.list
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# ─── Deployment-User anlegen ─────────────────────────────────────────────────
-useradd -m -s /bin/bash avoc
-usermod -aG docker avoc
-
-# ─── Authorized Keys für avoc-User kopieren ──────────────────────────────────
-mkdir -p /home/avoc/.ssh
-cp /root/.authorized_keys /home/avoc/.ssh/authorized_keys 2>/dev/null || \
-  cp /root/.ssh/authorized_keys /home/avoc/.ssh/authorized_keys
-chown -R avoc:avoc /home/avoc/.ssh
-chmod 700 /home/avoc/.ssh
-chmod 600 /home/avoc/.ssh/authorized_keys
-
-# ─── App-Verzeichnis anlegen ─────────────────────────────────────────────────
-mkdir -p /home/avoc/app/mosquitto
-mkdir -p /home/avoc/app/mediamtx
-mkdir -p /home/avoc/loki
-mkdir -p /home/avoc/promtail
-mkdir -p /home/avoc/grafana/provisioning/datasources
-mkdir -p /home/avoc/grafana/provisioning/dashboards
-chown -R avoc:avoc /home/avoc/
-
-# ─── Docker autostart ────────────────────────────────────────────────────────
-systemctl enable docker
-systemctl start docker
-
-echo "Bootstrap abgeschlossen. Login als 'avoc' per SSH möglich."
-```
+**Manuell (Fallback ohne Ansible):** Der ursprüngliche Bash-Block ist weiterhin in der
+Sprint-Historie dokumentiert (`tasks/sprints/` vor Sprint 48) und lässt sich unverändert per SSH
+ausführen, falls `ansible-playbook` auf dem Dev-Rechner nicht verfügbar ist — inhaltlich deckungsgleich
+mit `roles/bootstrap/tasks/main.yml`, dort als kommentierte, idempotente Ansible-Tasks gepflegt
+(die maßgebliche, aktuell gehaltene Fassung).
 
 Prüfen:
 ```bash
-docker compose version   # → Docker Compose version v2.x.x
-id avoc                  # → groups: docker
+ssh avoc@${SERVER_IP} "docker compose version && id avoc"   # → Compose v2.x.x, groups: docker
 ```
 
 ---
@@ -172,111 +174,29 @@ andere Nutzer (chmod 600) und liegt außerhalb des Source-Codes.
 
 ### Script: `scripts/secrets-setup-hetzner.sh`
 
-Dieses Script liest Secrets interaktiv ein und schreibt sie direkt auf den Server:
+Dieses Script liest Secrets interaktiv ein (JWT_SECRET, DB_PASSWORD, ADMIN_PASSWORD,
+WHIP_STREAM_KEY, TURN_REALM/USER/PASSWORD, GRAFANA_ADMIN_USER/PASSWORD, DOCKER_USERNAME/PASSWORD —
+je mit Mindestlängen-Prüfung), schreibt sie direkt als `/home/avoc/app/.env` (chmod 600) auf den
+Server und generiert das Self-Signed-SSL-Zertifikat. Für den vollständigen, aktuell gehaltenen
+Skriptinhalt siehe `scripts/secrets-setup-hetzner.sh` direkt (hier nicht dupliziert, um
+Doku-Drift wie bei den in Sprint 49 gefundenen Lücken zu vermeiden).
 
 ```bash
-#!/bin/bash
-# secrets-setup-hetzner.sh — Richtet .env auf Hetzner Server ein.
-# Verwendung: SERVER_IP=5.161.x.x bash scripts/secrets-setup-hetzner.sh
-set -euo pipefail
-
-SERVER_IP=${SERVER_IP:?Bitte SERVER_IP setzen}
-
-echo "=== AVOC Hetzner Secrets Setup ==="
-echo "Server: ${SERVER_IP}"
-echo ""
-echo "Bitte Werte eingeben:"
-echo ""
-
-read -rp   "SERVER_IP (Public-IPv4 des Hetzner Servers): " server_ip
-server_ip=${server_ip:-$SERVER_IP}
-
-read -rp   "JWT_SECRET (min. 32 Zeichen): " jwt_secret
-[ ${#jwt_secret} -lt 32 ] && echo "ERROR: Zu kurz." && exit 1
-
-read -rsp  "DB_PASSWORD (min. 16 Zeichen): " db_password; echo ""
-[ ${#db_password} -lt 16 ] && echo "ERROR: Zu kurz." && exit 1
-
-read -rsp  "ADMIN_PASSWORD (min. 12 Zeichen): " admin_password; echo ""
-[ ${#admin_password} -lt 12 ] && echo "ERROR: Zu kurz." && exit 1
-
-read -rsp  "WHIP_STREAM_KEY (min. 32 Zeichen): " whip_stream_key; echo ""
-[ ${#whip_stream_key} -lt 32 ] && echo "ERROR: Zu kurz." && exit 1
-
-read -rp   "TURN_REALM [avoc.example.com]: " turn_realm
-turn_realm=${turn_realm:-avoc.example.com}
-
-read -rp   "TURN_USER [avoc]: " turn_user
-turn_user=${turn_user:-avoc}
-
-read -rsp  "TURN_PASSWORD (min. 16 Zeichen): " turn_password; echo ""
-[ ${#turn_password} -lt 16 ] && echo "ERROR: Zu kurz." && exit 1
-
-read -rp   "GRAFANA_ADMIN_USER [admin]: " grafana_user
-grafana_user=${grafana_user:-admin}
-
-read -rsp  "GRAFANA_ADMIN_PASSWORD (min. 12 Zeichen): " grafana_password; echo ""
-[ ${#grafana_password} -lt 12 ] && echo "ERROR: Zu kurz." && exit 1
-
-read -rp   "DOCKER_USERNAME (Docker Hub Benutzername): " docker_username
-[ -z "$docker_username" ] && echo "ERROR: Pflichtfeld." && exit 1
-
-read -rsp  "DOCKER_PASSWORD (Docker Hub Access Token): " docker_password; echo ""
-[ -z "$docker_password" ] && echo "ERROR: Pflichtfeld." && exit 1
-
-# .env auf Server schreiben
-ENV_CONTENT=$(cat <<EOF
-# AVOC Hetzner Deployment Secrets
-# Erstellt: $(date -u '+%Y-%m-%d %H:%M UTC')
-# ACHTUNG: chmod 600 — nicht committen, nicht loggen
-
-REGISTRY=docker.io/${docker_username}
-VERSION=latest
-
-JWT_SECRET=${jwt_secret}
-DB_PASSWORD=${db_password}
-ADMIN_PASSWORD=${admin_password}
-WHIP_STREAM_KEY=${whip_stream_key}
-
-TURN_EXTERNAL_IP=${server_ip}
-TURN_REALM=${turn_realm}
-TURN_USER=${turn_user}
-TURN_PASSWORD=${turn_password}
-
-GRAFANA_ADMIN_USER=${grafana_user}
-GRAFANA_ADMIN_PASSWORD=${grafana_password}
-
-DOCKER_USERNAME=${docker_username}
-DOCKER_PASSWORD=${docker_password}
-EOF
-)
-
-echo ""
-echo "Schreibe /home/avoc/app/.env auf Server..."
-ssh avoc@${SERVER_IP} "cat > /home/avoc/app/.env && chmod 600 /home/avoc/app/.env" <<< "$ENV_CONTENT"
-echo "  /home/avoc/app/.env geschrieben (chmod 600)"
-
-# SSL-Zertifikat generieren (für HTTPS/getUserMedia)
-echo ""
-echo "Generiere Self-Signed SSL-Zertifikat..."
-ssh avoc@${SERVER_IP} "
-  mkdir -p /home/avoc/app/ssl
-  if [ ! -f /home/avoc/app/ssl/cert.pem ]; then
-    openssl req -x509 -newkey rsa:2048 \
-      -keyout /home/avoc/app/ssl/key.pem \
-      -out    /home/avoc/app/ssl/cert.pem \
-      -days 365 -nodes \
-      -subj '/CN=${server_ip}' \
-      -addext 'subjectAltName=IP:${server_ip}' 2>/dev/null
-    echo '  SSL-Zertifikat erstellt.'
-  else
-    echo '  SSL-Zertifikat bereits vorhanden.'
-  fi
-"
-
-echo ""
-echo "=== Secrets Setup abgeschlossen ==="
+SERVER_IP=5.161.x.x bash scripts/secrets-setup-hetzner.sh
 ```
+
+> **Lokale Verifikations-VM:** `ansible/roles/secrets` ersetzt dieses interaktive Script für die
+> lokale VM durch fest hinterlegte Test-Dummy-Werte (kein echtes, internet-exponiertes System,
+> siehe Kopfkommentar der Rolle) — läuft automatisch als Teil von `ansible-playbook site.yml`,
+> keine manuelle Eingabe nötig. **Wichtig, falls die generierten Mosquitto-Zugangsdaten geändert
+> werden:** `avoc_secrets_mqtt_password` in `roles/secrets/defaults/main.yml` muss zum
+> Klartext-Passwort passen, mit dem `infrastructure/mosquitto/passwd` gehasht wurde (Default:
+> `avoc`/`changeme`, siehe `tasks/sprints/38-mqtt-authentifizierung.md`) — `ansible/deploy.yml`
+> kopiert diese Datei unverändert, anders als `secrets-setup-hetzner.sh`, das für den echten
+> Server keine Mosquitto-Datei anfasst (das übernimmt weiterhin `scripts/deploy.sh`-artige
+> Logik bzw. muss für den Hetzner-Produktivpfad noch ergänzt werden, s. `MQTTAUTH-04`-Notizen).
+> Ein Mismatch äußert sich als "not Authorized" in den MQTT-Client-Logs (telemetry-service/
+> fleet-service/vehicle-mock) — real in Sprint 49 gefunden und auf den korrekten Wert korrigiert.
 
 ---
 
@@ -299,6 +219,19 @@ VERSION=1.0.0 make push
 
 ## Schritt 6 — Deployment-Dateien auf Hetzner kopieren
 
+**Per Ansible (empfohlen):** `ansible/deploy.yml` übernimmt den kompletten Config-Transfer dieses
+Schritts als eigene Tasks (`docker-compose.hetzner.yml`, `deploy-hetzner.sh`, Mosquitto/MediaMTX/
+Loki/Promtail/Grafana-Configs) — inklusive der Mosquitto-TLS-Dateien (`passwd`, `ca.pem`,
+`cert.pem`, `key.pem`), die in der ursprünglichen `scp`-Liste unten seit MQTTS-01/MQTTAUTH-04
+fehlten (Doku-Lücke aus Sprint 48, hier in Sprint 49 korrigiert):
+
+```bash
+cd ansible
+ansible-playbook -i <inventory>.ini deploy.yml
+```
+
+**Manuell (Fallback ohne Ansible)** — vollständige, korrigierte Liste inkl. der TLS-Dateien:
+
 ```bash
 SERVER_IP=5.161.x.x
 
@@ -308,9 +241,14 @@ scp scripts/deploy-hetzner.sh                             avoc@${SERVER_IP}:~/ap
 # docker-compose.hetzner.yml
 scp infrastructure/compose/docker-compose.hetzner.yml     avoc@${SERVER_IP}:~/app/
 
-# Konfigurationsdateien
-scp infrastructure/mosquitto/mosquitto.conf               avoc@${SERVER_IP}:~/app/mosquitto/
-scp infrastructure/mediamtx/mediamtx.yml                  avoc@${SERVER_IP}:~/app/mediamtx/
+# Mosquitto: Config + TLS-Assets (passwd/ca.pem/cert.pem/key.pem — seit MQTTS-01/MQTTAUTH-04
+# nötig, TLS-only auf Port 8883, s. Hinweis in Schritt 2)
+scp infrastructure/mosquitto/mosquitto.conf                avoc@${SERVER_IP}:~/app/mosquitto/
+scp infrastructure/mosquitto/passwd                        avoc@${SERVER_IP}:~/app/mosquitto/
+scp infrastructure/mosquitto/certs/ca.pem                  avoc@${SERVER_IP}:~/app/mosquitto/
+scp infrastructure/mosquitto/certs/cert.pem                avoc@${SERVER_IP}:~/app/mosquitto/
+scp infrastructure/mosquitto/certs/key.pem                 avoc@${SERVER_IP}:~/app/mosquitto/
+scp infrastructure/mediamtx/mediamtx.yml                   avoc@${SERVER_IP}:~/app/mediamtx/
 
 # Loki + Promtail (bind-mount Pfade)
 scp infrastructure/loki/loki.yml                          avoc@${SERVER_IP}:~/loki/loki.yml
@@ -324,6 +262,12 @@ scp infrastructure/grafana/provisioning/dashboards/dashboards.yml \
                                                           avoc@${SERVER_IP}:~/grafana/provisioning/dashboards/
 ```
 
+> **Achtung, real in Sprint 49 gefunden:** `passwd`/`key.pem` NICHT mit `chmod 600` auf dem
+> Server ablegen, obwohl das für Secrets naheliegend wirkt — der `eclipse-mosquitto:2`-Container
+> konnte die Datei sonst nicht öffnen ("Unable to open pwfile", Container-Crash-Loop). `chmod 644`
+> verwenden (für die hier verwendeten Test-/Dev-Credentials ausreichend, s. Kommentar in
+> `ansible/deploy.yml`).
+
 Erwartete Verzeichnisstruktur auf dem Server:
 ```
 /home/avoc/
@@ -335,7 +279,11 @@ Erwartete Verzeichnisstruktur auf dem Server:
 │   │   ├── cert.pem
 │   │   └── key.pem
 │   ├── mosquitto/
-│   │   └── mosquitto.conf
+│   │   ├── mosquitto.conf
+│   │   ├── passwd                    ← chmod 644, s. Hinweis oben
+│   │   ├── ca.pem
+│   │   ├── cert.pem
+│   │   └── key.pem                   ← chmod 644, s. Hinweis oben
 │   └── mediamtx/
 │       └── mediamtx.yml
 ├── loki/
@@ -352,106 +300,34 @@ Erwartete Verzeichnisstruktur auf dem Server:
 
 ---
 
-## Schritt 7 — `deploy-hetzner.sh` (Script-Inhalt)
+## Schritt 7 — `deploy-hetzner.sh` (Ablauf)
 
-Das Deploy-Script für Hetzner entfällt der AWS-spezifische Code (SSM, IMDS).
-Secrets kommen aus der `.env`-Datei, die in Schritt 4 angelegt wurde.
+Das Deploy-Script für Hetzner entfällt der AWS-spezifische Code (SSM, IMDS). Secrets kommen aus
+der `.env`-Datei, die in Schritt 4 angelegt wurde. Für den vollständigen, aktuell gehaltenen
+Skriptinhalt siehe `scripts/deploy-hetzner.sh` direkt (hier nicht dupliziert — der frühere
+vollständige Abdruck in dieser Doku war bereits veraltet, s. Sprint-49-Hinweis unten).
 
-Inhalt von `scripts/deploy-hetzner.sh`:
+Ablauf in Kurzform: Pflichtdateien prüfen → Secrets aus `.env` laden → Self-Signed-SSL-Zertifikat
+generieren (falls noch nicht vorhanden) → Docker-Images bereitstellen → Stack starten
+(`docker compose up -d`) → Status ausgeben.
+
+**Per Ansible (empfohlen):** `ansible-playbook deploy.yml` ruft `deploy-hetzner.sh` automatisch
+mit `SKIP_REGISTRY_PULL=true` auf (Images wurden zuvor bereits per `docker save`/`docker load`
+auf den Server übertragen, s. Schritt 6 — kein Docker-Hub-Login/-Pull nötig, s.
+`docs/deployment/UEBERGABE-ABWEICHUNGEN.md` Abweichung 2).
+
+**Manuell (regulärer Docker-Hub-Weg für den echten Server, Standardfall laut diesem Dokument):**
 
 ```bash
-#!/bin/bash
-# deploy-hetzner.sh — AVOC Deployment auf Hetzner Server.
-# Liest Secrets aus .env (kein AWS SSM).
-# Kein IMDSv2 — Hetzner-Server kennen ihre Public-IP direkt.
-#
-# Voraussetzung auf Server:
-#   - docker + docker compose plugin installiert
-#   - /home/avoc/app/.env vorhanden (chmod 600), enthält alle Secrets
-#   - docker-compose.hetzner.yml liegt in APP_DIR
-#
-# Verwendung:
-#   VERSION=latest bash ~/app/deploy-hetzner.sh
-#
-set -euo pipefail
-
-APP_DIR=${APP_DIR:-$(dirname "$(realpath "$0")")}
-VERSION=${VERSION:-latest}
-
-echo "=== AVOC Hetzner Deploy === Version: $VERSION"
-echo ""
-
-# ─── Pflichtdateien prüfen ───────────────────────────────────────────────────
-
-REQUIRED_FILES=(
-  "$APP_DIR/docker-compose.hetzner.yml"
-  "$APP_DIR/.env"
-  "$APP_DIR/mediamtx/mediamtx.yml"
-  "$APP_DIR/mosquitto/mosquitto.conf"
-)
-for f in "${REQUIRED_FILES[@]}"; do
-  [ ! -f "$f" ] && echo "ERROR: Pflichtdatei fehlt: $f" && exit 1
-done
-
-# ─── Secrets aus .env laden ──────────────────────────────────────────────────
-
-echo "[1/4] Lade Secrets aus .env..."
-set -a
-# shellcheck source=/dev/null
-source "$APP_DIR/.env"
-set +a
-
-export VERSION
-
-echo "  REGISTRY            ${REGISTRY}"
-echo "  TURN_EXTERNAL_IP    ${TURN_EXTERNAL_IP}"
-echo "  TURN_REALM          ${TURN_REALM}"
-echo "  VERSION             ${VERSION}"
-
-# ─── SSL-Zertifikat ──────────────────────────────────────────────────────────
-
-SSL_DIR="$APP_DIR/ssl"
-mkdir -p "$SSL_DIR"
-if [ ! -f "$SSL_DIR/cert.pem" ]; then
-  echo "Generiere Self-Signed SSL-Zertifikat für ${TURN_EXTERNAL_IP}..."
-  openssl req -x509 -newkey rsa:2048 \
-    -keyout "$SSL_DIR/key.pem" \
-    -out    "$SSL_DIR/cert.pem" \
-    -days 365 -nodes \
-    -subj "/CN=${TURN_EXTERNAL_IP}" \
-    -addext "subjectAltName=IP:${TURN_EXTERNAL_IP}" 2>/dev/null
-  echo "  Zertifikat erstellt."
-else
-  echo "  SSL-Zertifikat vorhanden."
-fi
-
-# ─── Docker Hub Login ─────────────────────────────────────────────────────────
-
-echo ""
-echo "[2/4] Docker Hub Login..."
-echo "$DOCKER_PASSWORD" | docker login \
-  --username "$DOCKER_USERNAME" \
-  --password-stdin
-
-# ─── Images pullen ────────────────────────────────────────────────────────────
-
-echo ""
-echo "[3/4] Pull Images..."
-cd "$APP_DIR"
-docker compose -f docker-compose.hetzner.yml pull
-
-# ─── Stack starten ────────────────────────────────────────────────────────────
-
-echo ""
-echo "[4/4] Start Stack..."
-docker compose -f docker-compose.hetzner.yml up -d
-
-echo ""
-echo "=== Deploy abgeschlossen — $(date) ==="
-echo ""
-echo "Status:"
-docker compose -f docker-compose.hetzner.yml ps
+ssh avoc@${SERVER_IP}
+cd ~/app
+VERSION=latest bash deploy-hetzner.sh
 ```
+
+`SKIP_REGISTRY_PULL=true VERSION=latest bash deploy-hetzner.sh` ist die manuelle Variante des
+Ansible-Aufrufs oben (kein Docker-Hub-Schritt, prüft stattdessen nur, ob die benötigten Images
+bereits lokal auf dem Server vorhanden sind) — nur sinnvoll, wenn die Images vorher bereits anders
+auf den Server gelangt sind (z. B. per manuellem `docker save`/`docker load`).
 
 ---
 
@@ -520,6 +396,16 @@ Dann in `docker-compose.hetzner.yml` folgende Änderungen vornehmen:
 
 ## Schritt 9 — Erster Deploy auf dem Server
 
+**Per Ansible (empfohlen):** Schritt 3+4+6+7 zusammen als zwei Befehle vom Dev-Rechner aus (siehe
+Hinweis am Dokumentanfang):
+
+```bash
+cd ansible
+ansible-playbook -i <inventory>.ini site.yml     # Bootstrap + Firewall + Secrets
+ansible-playbook -i <inventory>.ini deploy.yml   # Config-Transfer + Images + Stack-Start
+```
+
+**Manuell:**
 ```bash
 ssh avoc@${SERVER_IP}
 cd ~/app
@@ -531,7 +417,9 @@ Stack-Status prüfen:
 docker compose -f ~/app/docker-compose.hetzner.yml ps
 ```
 
-Alle Container sollten `running` / `healthy` sein.
+Alle Container sollten `running` sein (`postgres` zusätzlich `healthy`) — real gegen die lokale
+Verifikations-VM geprüft in Sprint 49 (LOCALVM-08c, alle 15 Container liefen stabil, keine
+Restart-Loops).
 
 ---
 
@@ -541,8 +429,8 @@ Alle Container sollten `running` / `healthy` sein.
 |---|---|
 | Operator UI (Frontend, HTTP) | `http://<SERVER_IP>:3000` |
 | Operator UI (Frontend, HTTPS) | `https://<SERVER_IP>` (Self-Signed) |
-| Control Server API | `http://<SERVER_IP>:8080` |
-| MQTT Broker (Vehicle) | `<SERVER_IP>:1883` |
+| Control Server API | `http://<SERVER_IP>:8080` (Health-Check: `/health`) |
+| MQTT Broker (Vehicle, TLS) | `<SERVER_IP>:8883` (seit MQTTS-01/MQTTAUTH-04 TLS-only, s. Hinweis Schritt 2) |
 | Grafana | `http://<SERVER_IP>:3001` |
 | STUN/TURN | `<SERVER_IP>:3478` |
 

@@ -189,20 +189,11 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "vehicle_id, from_station_id and to_station_id required", http.StatusBadRequest)
 		return
 	}
-	created, err := h.store.CreateTask(t)
+	created, err := createAndDispatchTask(h.store, h.gw, t)
 	if err != nil {
 		http.Error(w, "store error", http.StatusInternalServerError)
 		return
 	}
-
-	// Dispatch error intentionally not surfaced as a request failure — the task is already
-	// persisted and visible/retriable via the Dashboard regardless (ADR-027: real dispatch ack
-	// semantics unknown until the AP1 workshop). internal/ packages don't log (cmd/ does); a
-	// dispatch failure here is silent by design for this first slice.
-	_ = h.gw.DispatchTask(fleetgateway.TaskAssignment{
-		TaskID: created.ID, VehicleID: created.VehicleID,
-		FromStationID: created.FromStationID, ToStationID: created.ToStationID, Priority: created.Priority,
-	})
 
 	h.hub.Broadcast("task_created", created)
 
@@ -230,7 +221,7 @@ func (h *Handler) UpdateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.store.UpdateTaskStatus(id, req.Status, req.ChangedBy)
+	updated, err := transitionTaskStatus(h.store, h.hub, id, req.Status, req.ChangedBy)
 	switch {
 	case errors.Is(err, ErrTaskNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
@@ -242,13 +233,6 @@ func (h *Handler) UpdateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "store error", http.StatusInternalServerError)
 		return
 	}
-
-	h.hub.Broadcast("task_status_changed", TaskStatusChangedEvent{
-		ID:          updated.ID,
-		Status:      updated.Status,
-		CompletedAt: updated.CompletedAt,
-		ChangedBy:   req.ChangedBy,
-	})
 
 	writeJSON(w, updated)
 }
@@ -322,15 +306,10 @@ func (h *Handler) AcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "acknowledged_by required", http.StatusBadRequest)
 		return
 	}
-	if err := h.store.AcknowledgeAlert(id, req.AcknowledgedBy); err != nil {
+	if err := acknowledgeAlert(h.store, h.hub, id, req.AcknowledgedBy); err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	h.hub.Broadcast("alert_acknowledged", AlertAcknowledgedEvent{
-		ID:             id,
-		AcknowledgedBy: req.AcknowledgedBy,
-		AcknowledgedAt: time.Now(),
-	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

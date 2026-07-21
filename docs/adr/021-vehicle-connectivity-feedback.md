@@ -136,3 +136,14 @@ Frontend (InputIndicatorPanel)
 - ADR-010: Control Loop & Safety Override
 - ADR-014: Video Streaming (coturn, separate vom Control-Kanal)
 - ADR-019: Deployment-Strategie (Docker-Mock in Compose)
+
+---
+
+## Update (2026-07-16)
+
+Seit Sprint 21 (`ADR-027`) trägt `cmd/vehicle-mock/` eine Doppelrolle: die hier entschiedene
+Single-Vehicle-WebSocket-Mock-Implementierung (`vehicle-mock`/`vehicle-mock-2` als Direct-Teleop-
+Fahrzeug, `lastenzug-01`/`lastenrad-01`) läuft im selben Service-Binary neben `fleet_simulator.go`,
+das zusätzlich als Fleet-Simulator per MQTT Status-/Alert-Daten für mehrere Fahrzeuge publiziert
+(ADR-027-Fahrzeugschnittstelle). Beide Rollen sind unabhängig voneinander nutzbar. Details:
+`architecture.md` (Container-Services-Tabelle), `ADR-027`.
