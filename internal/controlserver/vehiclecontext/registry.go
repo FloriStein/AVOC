@@ -12,45 +12,56 @@ import (
 
 	csafety "avoc/internal/controlserver/safety"
 	"avoc/internal/controlserver/statemachine"
+	"avoc/internal/controlserver/telemetrycheck"
 	"avoc/pkg/audit"
 )
 
 // VehicleContext bundles the safety-critical state for exactly ONE vehicle.
-// AuthWatchdog is nil unless the Registry was given a UserChecker (DRIFT-K1,
-// 2026-07-16) — callers must nil-check before Start()/Stop(), same as any
-// optional dependency (mirrors auditWriter's nil-safe handling in each watchdog).
+// AuthWatchdog/TelemetryWatchdog are nil unless the Registry was given a
+// UserChecker/telemetrycheck.Checker respectively — callers must nil-check
+// before Start()/Stop(), same as any optional dependency (mirrors
+// auditWriter's nil-safe handling in each watchdog). In production both are
+// always configured (cmd/control-server/main.go) — the nil-checks exist so
+// unrelated tests that construct a Registry without a TELEMETRY_SERVICE_URL/
+// UserChecker don't need to care about either watchdog.
 type VehicleContext struct {
 	SM                 *statemachine.Machine
 	Deadman            *csafety.DeadmanWatchdog
 	ACKTimeoutWatcher  *csafety.ACKTimeoutWatcher
 	VehicleACKWatchdog *csafety.VehicleACKWatchdog
 	AuthWatchdog       *csafety.AuthWatchdog
+	TelemetryWatchdog  *telemetrycheck.TelemetryWatchdog
 }
 
 // Registry lazily creates and permanently retains one VehicleContext per
 // vehicle ID. Per ADR-026: small, known fleet — no GC, no eviction.
 type Registry struct {
-	mu                sync.Mutex
-	contexts          map[string]*VehicleContext
-	deadmanTimeout    time.Duration
-	ackTimeout        time.Duration
-	vehicleACKTimeout time.Duration
-	authInterval      time.Duration
-	authThreshold     int
-	publisher         csafety.Publisher
-	auditWriter       audit.SafetyAuditWriter
-	userChecker       csafety.UserChecker
+	mu                 sync.Mutex
+	contexts           map[string]*VehicleContext
+	deadmanTimeout     time.Duration
+	ackTimeout         time.Duration
+	vehicleACKTimeout  time.Duration
+	authInterval       time.Duration
+	authThreshold      int
+	telemetryInterval  time.Duration
+	telemetryThreshold int
+	publisher          csafety.Publisher
+	auditWriter        audit.SafetyAuditWriter
+	userChecker        csafety.UserChecker
+	telemetryChecker   *telemetrycheck.Checker
 }
 
 func NewRegistry(deadmanTimeout, ackTimeout, vehicleACKTimeout time.Duration, publisher csafety.Publisher) *Registry {
 	return &Registry{
-		contexts:          make(map[string]*VehicleContext),
-		deadmanTimeout:    deadmanTimeout,
-		ackTimeout:        ackTimeout,
-		vehicleACKTimeout: vehicleACKTimeout,
-		authInterval:      csafety.DefaultAuthCheckInterval,
-		authThreshold:     csafety.DefaultAuthFailThreshold,
-		publisher:         publisher,
+		contexts:           make(map[string]*VehicleContext),
+		deadmanTimeout:     deadmanTimeout,
+		ackTimeout:         ackTimeout,
+		vehicleACKTimeout:  vehicleACKTimeout,
+		authInterval:       csafety.DefaultAuthCheckInterval,
+		authThreshold:      csafety.DefaultAuthFailThreshold,
+		telemetryInterval:  telemetrycheck.DefaultTelemetryCheckInterval,
+		telemetryThreshold: telemetrycheck.DefaultTelemetryFailThreshold,
+		publisher:          publisher,
 	}
 }
 
@@ -76,6 +87,22 @@ func (r *Registry) WithAuthWatchdogTiming(interval time.Duration, threshold int)
 	return r
 }
 
+// WithTelemetryChecker enables TelemetryWatchdog on every VehicleContext (DRIFT-K3-TELEMETRY,
+// Sprint 50). Call before the first Get() — without it, VehicleContext.TelemetryWatchdog stays
+// nil, same nil-safety idiom as WithUserChecker/AuthWatchdog above.
+func (r *Registry) WithTelemetryChecker(checker *telemetrycheck.Checker) *Registry {
+	r.telemetryChecker = checker
+	return r
+}
+
+// WithTelemetryWatchdogTiming overrides the default 2s×2 poll/threshold (tests only — production
+// always uses telemetrycheck.DefaultTelemetryCheckInterval/DefaultTelemetryFailThreshold).
+func (r *Registry) WithTelemetryWatchdogTiming(interval time.Duration, threshold int) *Registry {
+	r.telemetryInterval = interval
+	r.telemetryThreshold = threshold
+	return r
+}
+
 // Get returns the VehicleContext for vehicleID, creating it on first access.
 // Safe for concurrent use — exactly one VehicleContext is ever created per ID.
 func (r *Registry) Get(vehicleID string) *VehicleContext {
@@ -93,6 +120,9 @@ func (r *Registry) Get(vehicleID string) *VehicleContext {
 	}
 	if r.userChecker != nil {
 		ctx.AuthWatchdog = csafety.NewAuthWatchdog(r.authInterval, r.authThreshold, sm, r.publisher, r.userChecker).WithAuditWriter(r.auditWriter)
+	}
+	if r.telemetryChecker != nil {
+		ctx.TelemetryWatchdog = telemetrycheck.NewTelemetryWatchdog(r.telemetryInterval, r.telemetryThreshold, sm, r.telemetryChecker)
 	}
 	r.contexts[vehicleID] = ctx
 	return ctx

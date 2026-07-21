@@ -8,20 +8,10 @@
 
 # Kein aktiver Sprint
 
-Sprint 47 (Multi-Cause-DEGRADED-Fundament in der State Machine, DRIFT-K3-TELEMETRY Teil 1) ist
-abgeschlossen — Volltext in
-[tasks/sprints/47-multi-cause-degraded-fundament.md](sprints/47-multi-cause-degraded-fundament.md).
+Sprint 50 (TelemetryWatchdog, DRIFT-K3-TELEMETRY Teil 2) ist abgeschlossen — Volltext in
+[tasks/sprints/50-telemetry-watchdog.md](sprints/50-telemetry-watchdog.md). DRIFT-K3-TELEMETRY ist
+damit vollständig behoben (`tasks/backlog.md`).
 
-Mögliche nächste Sprints (Nummer jeweils erst bei Kickoff vergeben, siehe [tasks/backlog.md](backlog.md)):
-- **DRIFT-K3-TELEMETRY Teil 2** — der eigentliche `TelemetryWatchdog`: neues Paket
-  `internal/controlserver/telemetrycheck`, Verdrahtung in `vehiclecontext.Registry`/
-  `cmd/control-server/main.go`, `TELEMETRY_SERVICE_URL`, Schwellwert-Entscheidungen per eigener
-  Grill-Me-Session — Architekturskizze bereits in
-  [docs/adr/009-failure-model.md](../docs/adr/009-failure-model.md) Update 2026-07-20 dokumentiert.
-  (War in Sprint 47 als "Sprint 48" angekündigt — die Nummer ist inzwischen durch die lokale
-  Ansible-VM belegt, siehe `DECISIONS.MD`; nächste freie Nummer ist aktuell 51, da 48/49 die
-  Ansible-VM und 50 Teil 1 des Testabdeckungs-Gesamtaudits belegen.)
-- **Testabdeckungs-Gesamtaudit 2026-07-21, Teil 1** (Sprint 50, bereits vollständig geplant) —
-  Safety-kritische Backend-Testlücken (`internal/mediamtx`, `internal/vehicleregistry`, u. a.),
-  siehe EPIC in [tasks/backlog.md](backlog.md).
-- oder ein anderer Backlog-Punkt nach Nutzerfreigabe.
+Nächster Kandidat: **Testabdeckungs-Gesamtaudit 2026-07-21, Teil 1** (Sprint 51, bereits vollständig
+geplant, siehe EPIC in [tasks/backlog.md](backlog.md)) — Safety-kritische Backend-Testlücken
+(`internal/mediamtx`, `internal/vehicleregistry`, u. a.).

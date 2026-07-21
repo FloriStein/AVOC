@@ -352,3 +352,46 @@ DEGRADED, Entfernen des zweiten wechselt zu CONNECTED), SAFE_MODE leert das Set.
 `tests/unit`-Suite (`statemachine`/`safety`/`session`) bleibt unverändert grün — reines internes
 Umrouten, keine Verhaltensänderung für den Single-Cause-Fall. Details:
 `tasks/sprints/47-multi-cause-degraded-fundament.md`.
+
+## Update (2026-07-21)
+
+Sprint 50 (`tasks/sprints/50-telemetry-watchdog.md`) implementiert den in Sprint 47 skizzierten
+`TelemetryWatchdog` produktiv. Grill-Me-Session (2026-07-21, CLAUDE.MD §1.1/§5) hat die vier zuvor
+offen gelassenen Schwellwerte geklärt:
+
+- **Poll-Interval: 2s.** Bewusst abweichend von `SafetyBusWatchdog`/`AuthWatchdog`s 5s-Standard —
+  Telemetrie ist die Hauptquelle für das Situationsbewusstsein des Operators, schnellere Erkennung
+  gerechtfertigt.
+- **Fail-Threshold: 2** aufeinanderfolgende Fehlschläge — gleiches Muster wie die anderen
+  Watchdogs, ergibt mit 2s-Intervall ein Budget von **4s** bis DEGRADED.
+- **"Noch nie/nicht aktuell empfangen"-Handling:** Vorrecherche ergab, dass
+  `GET /telemetry/latest/{vehicleID}` (`telemetry-service`, bestehender Endpoint aus BE-05) den
+  letzten je empfangenen Wert **über Session-Grenzen hinweg** cached (`internal/telemetryservice/
+  client.go`s `latest map[string]*TelemetryEvent`, keyed nur nach `vehicleID`, nicht nach Session).
+  Ein HTTP 200 mit veraltetem `timestamp` von einer früheren Session könnte damit einen echten
+  Ausfall in der aktuellen Session verdecken. Entscheidung: sowohl HTTP 404 (nie empfangen) als
+  auch HTTP 200 mit `timestamp`-Alter größer als `maxAge` (= Intervall × Threshold = 4s) zählen
+  gleichwertig als ein Fehlschlag Richtung Threshold — kein separater, unabhängiger
+  Staleness-Schwellwert.
+- **Timeout/HTTP-Fehlerverhalten:** 3s `http.Client`-Timeout, identisch zu `SafetyBusWatchdog`.
+  Netzwerkfehler/Timeout/unerwarteter Status (≠404) zählen gleich wie ein Freshness-Fehlschlag —
+  aus Sicht des Watchdogs sind 404, Stale-200 und Netzwerkfehler alle nur "keine frischen Daten in
+  diesem Poll", keine Sonderbehandlung nötig.
+
+**Architekturumsetzung:** `internal/controlserver/telemetrycheck` (neues Paket, wie skizziert) mit
+`Checker.HasFreshTelemetry(ctx, vehicleID, maxAge) (bool, error)` (HTTP-Polling gegen
+`telemetry-service`) und `TelemetryWatchdog` (Lifecycle `Start(sessionID, vehicleID)`/`Stop()`,
+Fehlschlag-Zählung, feuert über die neue exportierte `statemachine.Machine.TransitionTelemetry
+(healthy bool)` — analog `TransitionMedia`, nutzt die bestehenden privaten `enterDegraded`/
+`exitDegraded`-Helper aus Sprint 47 unverändert). Anders als `AuthWatchdog` **stoppt der Loop nach
+einem Trigger nicht** — ein Telemetrieausfall ist reversibel und beendet die Session nicht, im
+Gegensatz zu einem revozierten Operator-Account. `TelemetryWatchdog` ist — anders als das optionale
+`AuthWatchdog` — immer aktiv (kein Nil-Check nötig), da `TELEMETRY_SERVICE_URL` eine reguläre
+konfigurierte URL ist, keine optionale DB-Abhängigkeit.
+
+**SAFE_MODE-Verhalten:** der Watchdog pollt während SAFE_MODE unverändert weiter (Start/Stop ist an
+die Session gebunden, nicht an SYSTEM STATE), aber `TransitionTelemetry`s Guards (analog
+`TransitionMedia`: enter nur bei `StateConnected`, exit nur bei `StateDegraded`) machen seine
+Aufrufe während SAFE_MODE automatisch zu No-Ops — Invariante 1 bleibt gewahrt, kein Sonderfall im
+Watchdog-Code nötig. Details, Task-Aufschlüsselung und Teststandard:
+`tasks/sprints/50-telemetry-watchdog.md`.

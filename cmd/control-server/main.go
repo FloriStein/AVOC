@@ -18,6 +18,7 @@ import (
 	csafety "avoc/internal/controlserver/safety"
 	"avoc/internal/controlserver/session"
 	"avoc/internal/controlserver/statemachine"
+	"avoc/internal/controlserver/telemetrycheck"
 	"avoc/internal/controlserver/transport"
 	"avoc/internal/controlserver/vehiclecontext"
 	"avoc/internal/mediamtx"
@@ -43,6 +44,7 @@ type serverConfig struct {
 	safetyURL      string
 	sfuURL         string
 	authURL        string
+	telemetryURL   string
 	whipStreamKey  string
 	mediamtxAPIURL string
 	turnExternalIP string
@@ -65,6 +67,7 @@ func loadConfig() serverConfig {
 	cfg.safetyURL = env.OptionalOr("SAFETY_SERVICE_URL", "http://safety-service:8082")
 	cfg.sfuURL = env.OptionalOr("SFU_SERVICE_URL", "http://webrtc-sfu:8084")
 	cfg.authURL = env.OptionalOr("AUTH_SERVICE_URL", "http://auth-service:8081")
+	cfg.telemetryURL = env.OptionalOr("TELEMETRY_SERVICE_URL", "http://telemetry-service:8083")
 	cfg.whipStreamKey = os.Getenv("WHIP_STREAM_KEY")
 	cfg.mediamtxAPIURL = env.OptionalOr("MEDIAMTX_API_URL", "http://mediamtx:9997")
 	cfg.turnExternalIP = os.Getenv("TURN_EXTERNAL_IP")
@@ -154,11 +157,14 @@ func newControlServer(cfg serverConfig, db *sql.DB, auditWriter audit.AuditWrite
 	// caused two vehicles to silently share (and overwrite) safety monitoring.
 	// AuthWatchdog (DRIFT-K1, 2026-07-16) reads the shared `avoc` DB directly —
 	// same pattern as vehicleregistry/audit below — no new HTTP dependency on
-	// auth-service.
+	// auth-service. TelemetryWatchdog (DRIFT-K3-TELEMETRY, Sprint 50) polls
+	// telemetry-service over HTTP instead — telemetry-service isn't backed by
+	// the shared `avoc` DB, unlike auth-service's users table.
 	userChecker := authcheck.NewChecker(db)
+	telemetryChecker := telemetrycheck.NewChecker(cfg.telemetryURL)
 	vehicleContexts := vehiclecontext.NewRegistry(
 		csafety.DefaultDeadmanTimeout, csafety.DefaultACKTimeout, csafety.DefaultVehicleACKTimeout, safetyPub,
-	).WithAuditWriter(auditWriter).WithUserChecker(userChecker)
+	).WithAuditWriter(auditWriter).WithUserChecker(userChecker).WithTelemetryChecker(telemetryChecker)
 
 	// HandoverManager resolves each vehicle's own State Machine via the same
 	// per-vehicle registry as everything else (ADR-026 follow-up, MV-11) — no
@@ -381,6 +387,9 @@ func (s *controlServer) advanceVehicleToActiveOperator(sess session.Session) {
 	if vc.AuthWatchdog != nil {
 		vc.AuthWatchdog.Start(sess.ID, sess.VehicleID, sess.OperatorID)
 	}
+	if vc.TelemetryWatchdog != nil {
+		vc.TelemetryWatchdog.Start(sess.ID, sess.VehicleID)
+	}
 	s.sessionMgr.PushSFUEvent("SESSION_CREATED")
 	s.recorder.StartSession(sess.ID, sess.VehicleID, sess.OperatorID)
 	sys, ctrl, _, _ := vc.SM.Get()
@@ -413,6 +422,9 @@ func (s *controlServer) handleSessionEnd(w http.ResponseWriter, r *http.Request)
 				if vc.AuthWatchdog != nil {
 					vc.AuthWatchdog.Stop()
 				}
+				if vc.TelemetryWatchdog != nil {
+					vc.TelemetryWatchdog.Stop()
+				}
 				s.sessionMgr.PushSFUEvent("SESSION_ENDED")
 				s.sessionMgr.ReleaseSession(sess.ID)
 				// Reset to IDLE — clears SAFE_MODE if active (e.g. operator logged out mid-session).
@@ -442,6 +454,9 @@ func (s *controlServer) handleSessionEnd(w http.ResponseWriter, r *http.Request)
 			vc.VehicleACKWatchdog.Stop()
 			if vc.AuthWatchdog != nil {
 				vc.AuthWatchdog.Stop()
+			}
+			if vc.TelemetryWatchdog != nil {
+				vc.TelemetryWatchdog.Stop()
 			}
 			vc.SM.TransitionSystem(statemachine.StateIdle)
 		}

@@ -222,12 +222,20 @@ func (m *Machine) TransitionToConnected() bool {
 // transitions back to CONNECTED — closes a gap where video recovering after a drop
 // left SYSTEM STATE stuck at DEGRADED forever (CONTEXT.MD documents CONNECTED ⇄
 // DEGRADED as bidirectional; only the DEGRADED-entry direction was implemented).
+//
+// Bugfix (2026-07-21, Sprint 50): the entry guard also accepts System == StateDegraded now, not
+// just StateConnected. Found while wiring TelemetryWatchdog as the second real DEGRADED cause:
+// Media-fails-first-then-Telemetry-fails (or vice versa) silently dropped the second reason,
+// because enterDegraded was never even called once System had already left CONNECTED — so a lone
+// recovery of the FIRST cause emptied degradedReasons and returned to CONNECTED while the second
+// cause was still active. enterDegraded itself already handles "already DEGRADED" correctly (adds
+// to the set, skips the redundant transitionSystemLocked); only this outer guard was too narrow.
 func (m *Machine) TransitionMedia(next MediaState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Media = next
 	switch {
-	case (next == MediaFailed || next == MediaDegraded) && m.System == StateConnected:
+	case (next == MediaFailed || next == MediaDegraded) && (m.System == StateConnected || m.System == StateDegraded):
 		svcLog.Event(logger.EventMediaStateChange,
 			"media failure → SYSTEM DEGRADED (Invariant 1: never SAFE_MODE)",
 			"media_state", next)
@@ -237,6 +245,30 @@ func (m *Machine) TransitionMedia(next MediaState) {
 			"media recovered → SYSTEM DEGRADED→CONNECTED",
 			"media_state", next)
 		m.exitDegraded(DegradedReasonMedia)
+	}
+}
+
+// TransitionTelemetry updates the TELEMETRY DEGRADED-reason independent of Media (ADR-009 Update
+// 2026-07-21, DRIFT-K3-TELEMETRY Teil 2, TelemetryWatchdog). Unlike TransitionMedia there is no
+// separate sub-state to track — the watchdog only reports healthy/unhealthy — so this maps
+// directly onto enterDegraded/exitDegraded(DegradedReasonTelemetry) with the same guards
+// (enter from CONNECTED or already-DEGRADED, exit only from DEGRADED) as TransitionMedia,
+// preserving Invariant 1 (telemetry never triggers or lifts SAFE_MODE). The entry guard accepts
+// StateDegraded too, same reasoning as TransitionMedia's 2026-07-21 bugfix above — otherwise a
+// Telemetry failure arriving while Media has already caused DEGRADED would never be added to
+// degradedReasons, and Media's later recovery would incorrectly clear DEGRADED.
+func (m *Machine) TransitionTelemetry(healthy bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch {
+	case !healthy && (m.System == StateConnected || m.System == StateDegraded):
+		svcLog.Event(logger.EventTelemetryStateChange,
+			"telemetry loss → SYSTEM DEGRADED (Invariant 1: never SAFE_MODE)")
+		m.enterDegraded(DegradedReasonTelemetry)
+	case healthy && m.System == StateDegraded:
+		svcLog.Event(logger.EventTelemetryStateChange,
+			"telemetry recovered → SYSTEM DEGRADED→CONNECTED")
+		m.exitDegraded(DegradedReasonTelemetry)
 	}
 }
 

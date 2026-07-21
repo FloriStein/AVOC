@@ -34,6 +34,7 @@ services:
       SAFETY_SERVICE_URL: "http://safety-service:8082"
       SFU_SERVICE_URL: "http://localhost:8084"   # SFU läuft nicht im Test-Stack
       AUTH_SERVICE_URL: "http://auth-service:8081"
+      TELEMETRY_SERVICE_URL: "http://telemetry-service:8083"
       DATABASE_URL: "postgres://avoc:avoc_test_secret@postgres:5432/avoc?sslmode=disable"
     depends_on:
       postgres:
@@ -41,6 +42,8 @@ services:
       auth-service:
         condition: service_healthy
       safety-service:
+        condition: service_healthy
+      telemetry-service:
         condition: service_healthy
     networks:
       - avoc-test-net
@@ -97,6 +100,33 @@ services:
       - ./mosquitto-certs/ca.pem:/mosquitto/config/ca.pem:ro
       - ./mosquitto-certs/cert.pem:/mosquitto/config/cert.pem:ro
       - ./mosquitto-certs/key.pem:/mosquitto/config/key.pem:ro
+    networks:
+      - avoc-test-net
+
+  telemetry-service:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/go-service.Dockerfile
+      args:
+        SERVICE_NAME: telemetry-service
+    ports:
+      - "18083:8083"
+    environment:
+      TELEMETRY_PORT: "8083"
+      MQTT_BROKER: "mosquitto:8883"
+      MQTT_USERNAME: "avoc"
+      MQTT_PASSWORD: "mqtt_test_secret"
+      MQTT_CA_CERT: /mosquitto-ca/ca.pem
+    volumes:
+      - ./mosquitto-certs/ca.pem:/mosquitto-ca/ca.pem:ro
+    depends_on:
+      mosquitto:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
     networks:
       - avoc-test-net
 

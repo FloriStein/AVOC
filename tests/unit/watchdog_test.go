@@ -16,6 +16,7 @@ import (
 	csafety "avoc/internal/controlserver/safety"
 	"avoc/internal/controlserver/session"
 	"avoc/internal/controlserver/statemachine"
+	"avoc/internal/controlserver/telemetrycheck"
 	"avoc/internal/controlserver/vehiclecontext"
 	"avoc/internal/safetyservice"
 	"avoc/tests/unit/mocks"
@@ -727,6 +728,223 @@ func TestAuthWatchdog_ConcurrentStartStop_RaceSafe(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		wg.Add(2)
 		go func() { defer wg.Done(); w.Start("sess-1", "vehicle-1", "operator-1") }()
+		go func() { defer wg.Done(); w.Stop() }()
+	}
+	wg.Wait()
+	w.Stop()
+}
+
+// ── TelemetryWatchdog (DRIFT-K3-TELEMETRY Teil 2, Sprint 50) ────────────────
+// Per-VehicleContext like AuthWatchdog. Unlike AuthWatchdog it fires into DEGRADED
+// (via TransitionTelemetry) instead of SAFE_MODE, and — like SafetyBusWatchdog —
+// keeps polling after firing so it can also detect recovery.
+
+const (
+	testTelemetryInterval  = 40 * time.Millisecond
+	testTelemetryThreshold = 2
+)
+
+// fakeFreshnessChecker is a controllable in-memory stand-in for telemetrycheck.Checker — keeps
+// these tests focused on TelemetryWatchdog's polling/threshold/firing/recovery logic without a
+// real telemetry-service dependency. The real Checker's HTTP behavior is covered separately by
+// internal/controlserver/telemetrycheck/checker_test.go.
+type fakeFreshnessChecker struct {
+	mu    sync.Mutex
+	fresh bool
+	err   error
+	calls int
+}
+
+func (f *fakeFreshnessChecker) HasFreshTelemetry(_ context.Context, _ string, _ time.Duration) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.fresh, f.err
+}
+
+func (f *fakeFreshnessChecker) setFresh(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fresh, f.err = v, nil
+}
+
+func (f *fakeFreshnessChecker) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeFreshnessChecker) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func newTelemetryWatchdogSetup(t *testing.T) (*statemachine.Machine, *fakeFreshnessChecker) {
+	t.Helper()
+	sm := statemachine.New()
+	sm.TransitionSystem(statemachine.StateConnecting)
+	sm.TransitionSystem(statemachine.StateAuthenticated)
+	require.True(t, sm.TransitionToConnected())
+	return sm, &fakeFreshnessChecker{fresh: true}
+}
+
+// waitForSystemState polls until sm reaches want or the deadline passes.
+func waitForSystemState(t *testing.T, sm *statemachine.Machine, want statemachine.SystemState, within time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		sys, _, _, _ := sm.Get()
+		if sys == want {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
+// 1. Telemetry stays fresh → never enters DEGRADED, even after many poll intervals.
+func TestTelemetryWatchdog_AlwaysFresh_NeverTriggersDegraded(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	defer w.Stop()
+
+	time.Sleep(testTelemetryInterval * 5)
+
+	sys, _, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys)
+	assert.GreaterOrEqual(t, checker.callCount(), 2, "watchdog must actually be polling")
+}
+
+// 2. Stale/missing telemetry → threshold consecutive failures → DEGRADED (not SAFE_MODE —
+// Invariant 1, telemetry never triggers SAFE_MODE).
+func TestTelemetryWatchdog_StaleTelemetry_TriggersDegraded(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	checker.setFresh(false)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	defer w.Stop()
+
+	require.True(t, waitForSystemState(t, sm, statemachine.StateDegraded, testTelemetryInterval*20))
+
+	sys, ctrl, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateDegraded, sys)
+	assert.Equal(t, statemachine.ControlActive, ctrl, "control must remain ACTIVE during DEGRADED (ADR-011)")
+}
+
+// 3. Checker query errors (e.g. telemetry-service unreachable) count as failures too — same
+// treatment as SafetyBusWatchdog's connection-refused handling.
+func TestTelemetryWatchdog_CheckerError_CountsAsFailure(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	checker.setErr(fmt.Errorf("connection refused"))
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	defer w.Stop()
+
+	require.True(t, waitForSystemState(t, sm, statemachine.StateDegraded, testTelemetryInterval*20))
+}
+
+// 4. One failure then recovery resets the counter — a single transient blip must not degrade.
+func TestTelemetryWatchdog_OneFailureThenRecovery_NoDegraded(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	checker.setFresh(false)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	defer w.Stop()
+
+	time.Sleep(testTelemetryInterval + testTelemetryInterval/2) // let exactly 1 failure register
+	checker.setFresh(true)
+	time.Sleep(testTelemetryInterval * 5)
+
+	sys, _, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "single blip + recovery must not trigger DEGRADED")
+}
+
+// 5. Recovery after firing: once DEGRADED, fresh telemetry again must return to CONNECTED —
+// unlike AuthWatchdog, the loop keeps running after a trigger specifically to detect this.
+func TestTelemetryWatchdog_RecoversAfterDegraded(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	checker.setFresh(false)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	defer w.Stop()
+
+	require.True(t, waitForSystemState(t, sm, statemachine.StateDegraded, testTelemetryInterval*20))
+
+	checker.setFresh(true)
+	require.True(t, waitForSystemState(t, sm, statemachine.StateConnected, testTelemetryInterval*20))
+}
+
+// 6. Stop() before threshold is reached cancels the watchdog — no DEGRADED even after the time
+// that would have been needed passes.
+func TestTelemetryWatchdog_StopCancelsWatchdog(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	checker.setFresh(false)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+
+	time.Sleep(testTelemetryInterval / 2)
+	w.Stop()
+
+	time.Sleep(time.Duration(testTelemetryThreshold+2) * testTelemetryInterval * 3)
+
+	sys, _, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "Stop() must cancel watchdog — no DEGRADED after stop")
+}
+
+// 7. Already in SAFE_MODE for an unrelated reason (e.g. dead-man timeout): the watchdog keeps
+// polling (Start/Stop is session-scoped, not SYSTEM-STATE-scoped), but TransitionTelemetry's
+// guard makes its calls no-ops — SAFE_MODE must not be affected either way (ADR-009 Invariant 1).
+func TestTelemetryWatchdog_NoOpDuringSafeMode(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	sm.TransitionSystem(statemachine.StateSafeMode)
+	checker.setFresh(false)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	defer w.Stop()
+
+	time.Sleep(time.Duration(testTelemetryThreshold+2) * testTelemetryInterval * 3)
+
+	sys, ctrl, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateSafeMode, sys, "telemetry loss must never trigger or affect SAFE_MODE")
+	assert.Equal(t, statemachine.ControlBlocked, ctrl)
+}
+
+// 8. Start() after Stop() is a clean restart — failure counter resets.
+func TestTelemetryWatchdog_StartAfterStop_FreshStart(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	checker.setFresh(false)
+
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+	w.Start("sess-1", "vehicle-1")
+	time.Sleep(testTelemetryInterval + testTelemetryInterval/2) // 1 failure registered
+	w.Stop()
+
+	checker.setFresh(true)
+	w.Start("sess-1", "vehicle-1") // fresh counter
+	time.Sleep(testTelemetryInterval * 5)
+
+	sys, _, _, _ := sm.Get()
+	assert.Equal(t, statemachine.StateConnected, sys, "restart must not carry over the pre-Stop() failure count")
+}
+
+// 9. Concurrent Start()/Stop() calls must not race — run with -race (CLAUDE.MD §17).
+func TestTelemetryWatchdog_ConcurrentStartStop_RaceSafe(t *testing.T) {
+	sm, checker := newTelemetryWatchdogSetup(t)
+	w := telemetrycheck.NewTelemetryWatchdog(testTelemetryInterval, testTelemetryThreshold, sm, checker)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); w.Start("sess-1", "vehicle-1") }()
 		go func() { defer wg.Done(); w.Stop() }()
 	}
 	wg.Wait()

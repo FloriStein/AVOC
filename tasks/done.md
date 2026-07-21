@@ -7,6 +7,42 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 50 — TelemetryWatchdog (DRIFT-K3-TELEMETRY Teil 2) ✅
+2026-07-21 → [tasks/sprints/50-telemetry-watchdog.md](sprints/50-telemetry-watchdog.md)
+- Grill-Me-Session (Typ L) klärt die vier in Sprint 47 offen gelassenen Schwellwerte: 2s
+  Poll-Interval, 2 Fehlschläge Threshold (4s-Budget), Timestamp-Alter zählt gleichwertig zu HTTP 404
+  ("nie/nicht aktuell empfangen" — `telemetry-service`s `/telemetry/latest/{id}`-Cache ist nicht
+  session-gebunden, stale Werte aus Vorsessions dürfen einen echten Ausfall nicht verdecken), 3s
+  HTTP-Timeout analog `SafetyBusWatchdog`.
+- Neues Paket `internal/controlserver/telemetrycheck`: `Checker.HasFreshTelemetry(...)` (HTTP-Poll)
+  + `TelemetryWatchdog` (Lifecycle `Start`/`Stop`, per-`VehicleContext` wie `AuthWatchdog`, feuert
+  über die neue exportierte `statemachine.Machine.TransitionTelemetry(healthy bool)`). Bewusst ohne
+  Safety-Bus/Audit-Anbindung (DEGRADED-only-Ursachen nutzen diesen Kanal in diesem Code nicht, siehe
+  Media-Präzedenz) — abweichend vom ursprünglichen Taskzuschnitt, mit Nutzer nicht extra
+  rückgefragt (reine Konsistenz mit bestehendem Muster).
+- **Ungeplanter Bugfix (mit Nutzer abgestimmt, da er den als "nicht anfassen" markierten
+  `TransitionMedia`-Code berührt):** `TransitionMedia`/`TransitionTelemetry`s äußerer Guard prüfte
+  nur `System == StateConnected` vor `enterDegraded` — ein zweiter, unabhängiger DEGRADED-Grund,
+  der eintraf während SYSTEM bereits wegen eines ersten Grundes DEGRADED war, wurde nie ins
+  `degradedReasons`-Set aufgenommen; die Recovery des ersten Grundes hätte DEGRADED dann fälschlich
+  komplett aufgehoben. Guard erweitert auf `StateConnected || StateDegraded` in beiden Funktionen,
+  Regressionstest `TestSecondCause_ArrivingAfterFirstCauseAlreadyDegraded`.
+- Wiring: `vehiclecontext.Registry.WithTelemetryChecker(...)` (optionales `With*`-Muster wie
+  `AuthWatchdog`, um `NewRegistry`s Signatur und damit 6 bestehende Testaufrufstellen nicht
+  anzufassen — in Produktion trotzdem immer aktiv), `cmd/control-server/main.go` neue
+  `TELEMETRY_SERVICE_URL`-Env-Var, Start/Stop an allen drei bestehenden `AuthWatchdog`-Call-Sites.
+- `tests/docker-compose.test.yml`: `telemetry-service` fehlte komplett im Integrations-Teststack —
+  neuer Service-Block ergänzt (analog `fleet-service`s MQTT-TLS-Setup), `control-server` erhält
+  `TELEMETRY_SERVICE_URL` + `depends_on`. Neuer Integrationstest
+  `TestIntegration_TelemetryLoss_TriggersDegrade_ThenRecovers` publiziert direkt per MQTT (eigener
+  Test-Client) statt über `vehicle-mock`s Dauerschleife — volle Timing-Kontrolle. Gegen echten
+  `make test-integration`-Lauf verifiziert: 33/33 grün, keine Regression.
+- 25 neue Unit-Tests (`statemachine`, `telemetrycheck`, `tests/unit/watchdog_test.go`) + 1
+  Integrationstest. `go build`/`go vet`/`gofmt -l`/`go test ./internal/... ./tests/unit/... ./pkg/...
+  -race -count=2` grün.
+
+---
+
 ## Sprint 47 — Multi-Cause-DEGRADED-Fundament in der State Machine (DRIFT-K3-TELEMETRY Teil 1) ✅
 2026-07-21 → [tasks/sprints/47-multi-cause-degraded-fundament.md](sprints/47-multi-cause-degraded-fundament.md)
 - Zwei Grill-Me-Entscheidungen (Typ L, Kernsystem State Machine/Sicherheitsmodell): Poll-basierter
