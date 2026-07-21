@@ -1163,8 +1163,9 @@ parallel geplante lokale Ansible-VM belegt) — Sprint 47 selbst referenziert in
 als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht angefasster
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
-umgesetzt (2026-07-21). Teil 3 als **Sprint 53** umgesetzt (2026-07-21). Teil 4–5 bleiben
-unnummerierte Backlog-Kandidaten für spätere Sprint-Kickoffs.
+umgesetzt (2026-07-21). Teil 3 als **Sprint 53** umgesetzt (2026-07-21). Teil 4 als **Sprint 54**
+geplant (2026-07-21, noch nicht umgesetzt — Planungs-Stand, siehe `tasks/current-sprint.md`).
+Teil 5 bleibt unnummerierter Backlog-Kandidat für einen späteren Sprint-Kickoff.
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
@@ -1279,19 +1280,25 @@ Backoff-Reconnect-Zusammenspiel mit dem echten `WSClient` (hier gemockt), Gamepa
 `performance.now()`-Mocking, nicht Teil der bestehenden Testinfrastruktur). Details
 `tasks/sprints/53-frontend-hooks.md`.
 
-### Teil 4 — E2E-Flow-Ausbau (auf `origin/main`-Stand, siehe Branch-Divergenz-Hinweis oben)
+### Teil 4 — E2E-Flow-Ausbau (Sprint 54, 🔲 geplant)
 
 **Vorrecherche:** Aktueller Stand (`origin/main`, `frontend/tests/e2e/dashboard.spec.ts`) deckt nach
 dem Login-Fix nur die 5 ursprünglichen Baseline-Assertions ab (Header, IDLE, SafetyPanel/
 ConnectionPanel sichtbar, E-Stop-Button im DOM) — alle hinter echtem Login erreicht, aber
 inhaltlich unverändert oberflächlich (bewusst so seit Sprint 41, CIGATE-05).
 
+**Vorrecherche-Gegenprüfung (2026-07-21, bei Sprint-54-Planungsübernahme):** Die "Branch-Divergenz"
+aus dem EPIC-Kopf ist gegenstandslos — analog Sprint 51-53 wird direkt gegen `main` gearbeitet,
+`frontend/tests/e2e/dashboard.spec.ts` (inkl. vollständigem `login()`-Helper) existiert bereits,
+die alte Root-Level-Datei `tests/e2e/` enthält keine Spec mehr. Details/Task-Verfeinerung
+(konkrete Locators, Abmelden-Button-Pfad) in `tasks/current-sprint.md`.
+
 | ID | Task | Typ | Abhängigkeiten |
 |----|------|-----|-----------------|
-| E2ETEST-01 | Login-Fehlerfall (falsches Passwort → Fehlermeldung sichtbar, kein Übergang zu FleetOverview). | S | Branch-Divergenz geklärt |
-| E2ETEST-02 | Session-Konflikt real gegen Backend: zweiter Browser-Context/Operator sieht "Beobachten" statt "Teleoperate" (ADR-028), nicht nur UI-Mock. | M | Branch-Divergenz geklärt |
-| E2ETEST-03 | Emergency-Stop echter Klick-Flow (State-Transition sichtbar, Button danach disabled). | S | Branch-Divergenz geklärt |
-| E2ETEST-04 | Logout-Flow (zurück zu LoginPanel, Session serverseitig beendet). | S | Branch-Divergenz geklärt |
+| E2ETEST-01 | Login-Fehlerfall (falsches Passwort → Fehlermeldung sichtbar, kein Übergang zu FleetOverview). | S | — |
+| E2ETEST-02 | Session-Konflikt real gegen Backend: zweiter Browser-Context/Operator sieht "Beobachten" statt "Teleoperate" (ADR-028), nicht nur UI-Mock. | M | — |
+| E2ETEST-03 | Emergency-Stop echter Klick-Flow (State-Transition sichtbar, Button danach disabled). | S | — |
+| E2ETEST-04 | Logout-Flow (zurück zu LoginPanel, Session serverseitig beendet). | S | — |
 | E2ETEST-05 | Verifikation: `npm run test:e2e` 2× lokal gegen echten Docker-Stack (non-blocking Job, aber Flakiness-Ausschluss laut CLAUDE.MD §17 trotzdem sinnvoll), Doku-Update. | S | E2ETEST-01..04 |
 
 **Nicht Teil dieses Teils:** WebRTC-Verbindungsabbruch-UI, DEGRADED/SAFE_MODE-UI-Übergang über echte
