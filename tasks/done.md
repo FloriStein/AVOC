@@ -7,6 +7,28 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 55 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 5 (CI-Härtung) ✅
+2026-07-21 → [tasks/sprints/55-ci-haertung.md](sprints/55-ci-haertung.md)
+- `BenchmarkControlACKRoundtrip`-Skip-Bug (`tests/performance/latency_test.go`) endgültig behoben
+  (DRIFT-K5/K6): drei statt der vorrecherchierten zwei Ursachen — falsche `vehicle_id`, fehlender
+  `session_id`-Query-Parameter, UND ein bei der Verifikation neu entdecktes Session-Leak (kein
+  `/session/end`), das den zweiten Kalibrierungslauf des Go-Bench-Harness als `OBSERVER` statt
+  `ACTIVE_OPERATOR` startete und `conn.ReadMessage()` unbegrenzt hängen ließ. 2× gegen frischen
+  Docker-Stack grün (§17 Flakiness-Ausschluss): ~200k Iterationen je Lauf, p99 0-1ms (Budget 100ms).
+- Neuer non-blocking Security-Scan-Job (`.github/workflows/security-scan.yml`): `gosec` (Go) +
+  `npm audit` (Frontend), `continue-on-error: true` analog `lint.yml`. Lokal gegengeprüft: 44 gosec-
+  Findings (informational), 4 npm-audit-Findings (1 low, 3 high, transitive Dependencies) — beide
+  Job-Mechanismen bestätigt funktionsfähig, Findings selbst bewusst nicht behoben (Scope war der
+  Job, nicht Remediation).
+- Neuer non-blocking Docker-Build-Verifikationsjob (`.github/workflows/docker-build.yml`): 8
+  Build-Targets (6 Go-Services über `SERVICE_NAME`-Matrix + `frontend.Dockerfile` +
+  `vehicle-mock.Dockerfile`), kein Push. Lokal per `docker buildx build` gegengeprüft.
+- CIHARD-04 (`buf breaking` für `proto/`) gegengeprüft und bewusst weiterhin zurückgestellt —
+  Deployment ist unverändert monolithisches `docker-compose`, kein unabhängig deploybarer
+  proto-Konsument.
+- **EPIC-Abschluss:** Mit Sprint 55 sind alle 5 Teile des EPICs "Testabdeckungs-Gesamtaudit
+  2026-07-21" abgeschlossen (Sprint 51-55).
+
 ## Sprint 54 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 4 (E2E-Flow-Ausbau) ✅
 2026-07-21 → [tasks/sprints/54-e2e-ausbau.md](sprints/54-e2e-ausbau.md)
 - 4 neue Playwright-Spec-Dateien (`01-login-failure`, `02-logout`, `03-session-conflict`,

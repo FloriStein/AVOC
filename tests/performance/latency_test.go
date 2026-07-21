@@ -39,7 +39,10 @@ func loginOperator(t testing.TB, username string) string {
 	return token
 }
 
-func startSession(t testing.TB, vehicleID, operatorID, token string) {
+// startSession creates a session for vehicleID and returns the session_id from
+// the /session/start response — required as a WS query parameter (ADR-025,
+// see authenticateWS in internal/controlserver/transport/websocket.go).
+func startSession(t testing.TB, vehicleID, operatorID, token string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{
 		"vehicle_id":    vehicleID,
@@ -49,7 +52,45 @@ func startSession(t testing.TB, vehicleID, operatorID, token string) {
 	req, _ := http.NewRequest(http.MethodPost, testControlURL+"/session/start", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("session/start failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("session/start returned %d", resp.StatusCode)
+	}
+	var m struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatalf("session/start response decode failed: %v", err)
+	}
+	if m.SessionID == "" {
+		t.Fatalf("session/start response missing session_id")
+	}
+	return m.SessionID
+}
+
+// endSession releases the vehicle lock via /session/end. Without this, the Go
+// benchmark harness's calibration re-invocations of BenchmarkControlACKRoundtrip
+// (increasing b.N until -benchtime elapses) each call startSession again for the
+// same vehicle — since the previous session was never ended, StartSession sees
+// the vehicle still locked and hands out an OBSERVER session instead of
+// ACTIVE_OPERATOR. OBSERVER commands are never ACKed, so conn.ReadMessage()
+// blocks forever on the next calibration run.
+func endSession(t testing.TB, sessionID, token string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"session_id": sessionID})
+	req, _ := http.NewRequest(http.MethodPost, testControlURL+"/session/end", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Logf("session/end failed (non-fatal, cleanup only): %v", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // BenchmarkControlACKRoundtrip measures the WebSocket ACK roundtrip for a
@@ -61,7 +102,10 @@ func BenchmarkControlACKRoundtrip(b *testing.B) {
 		b.Skip("auth service not available — start test stack with: make test-integration")
 	}
 
-	wsURL := fmt.Sprintf("ws://localhost:18080/ws?token=%s", token)
+	sessionID := startSession(b, "vehicle-int-mock", "admin", token)
+	defer endSession(b, sessionID, token)
+
+	wsURL := fmt.Sprintf("ws://localhost:18080/ws?token=%s&session_id=%s", token, sessionID)
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		b.Skipf("WebSocket not available (start test stack): %v", err)
@@ -69,8 +113,6 @@ func BenchmarkControlACKRoundtrip(b *testing.B) {
 	defer conn.Close()
 
 	time.Sleep(300 * time.Millisecond)
-	startSession(b, "bench-vehicle", "admin", token)
-	time.Sleep(100 * time.Millisecond)
 
 	// Minimal Protobuf ControlCommand: field 2 (type=DEADMAN_HOLD=6) as varint
 	cmdDeadmanHold := []byte{0x10, 0x06}

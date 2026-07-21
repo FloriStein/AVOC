@@ -1,0 +1,74 @@
+name: Docker Build Verification
+
+# CIHARD-03 (tasks/backlog.md EPIC "Testabdeckungs-Gesamtaudit 2026-07-21", Teil 5 —
+# CI-Härtung, Sprint 55): non-blocking container build check. continue-on-error: true —
+# deliberately NOT a merge gate: this only guards against "builds locally, doesn't build in
+# CI/Prod" Dockerfile drift (missing files in .dockerignore, stale base images, etc.), it is
+# not a functional test — build failures need a look, not an automatic merge block. No push,
+# just `docker buildx build` against each of the 8 targets from
+# infrastructure/compose/docker-compose.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go-services:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      matrix:
+        service:
+          - control-server
+          - auth-service
+          - safety-service
+          - telemetry-service
+          - webrtc-sfu
+          - fleet-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: docker buildx build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/go-service.Dockerfile
+          build-args: |
+            SERVICE_NAME=${{ matrix.service }}
+          push: false
+
+  frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: docker buildx build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/frontend.Dockerfile
+          push: false
+
+  vehicle-mock:
+    name: Build vehicle-mock
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: docker buildx build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/vehicle-mock.Dockerfile
+          push: false

@@ -1,0 +1,46 @@
+name: Security Scan
+
+# CIHARD-02 (tasks/backlog.md EPIC "Testabdeckungs-Gesamtaudit 2026-07-21", Teil 5 —
+# CI-Härtung, Sprint 55): non-blocking security scan. continue-on-error: true — deliberately
+# NOT a merge gate, analog lint.yml: gosec/npm audit findings need triage (false positives,
+# accepted-risk transitive deps) before they can gate merges; this makes findings visible
+# per-PR without blocking anyone while that triage backlog doesn't exist yet.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gosec:
+    name: gosec (Go)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
+  npm-audit:
+    name: npm audit (Frontend)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit

@@ -1164,8 +1164,9 @@ als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht a
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
 umgesetzt (2026-07-21). Teil 3 als **Sprint 53** umgesetzt (2026-07-21). Teil 4 als **Sprint 54**
-umgesetzt (2026-07-21), siehe `tasks/sprints/54-e2e-ausbau.md`. Teil 5 als **Sprint 55** geplant
-(2026-07-21, noch nicht umgesetzt — Planungsstand, siehe `tasks/current-sprint.md`).
+umgesetzt (2026-07-21), siehe `tasks/sprints/54-e2e-ausbau.md`. Teil 5 als **Sprint 55** umgesetzt
+(2026-07-21), siehe `tasks/sprints/55-ci-haertung.md`. **EPIC vollständig abgeschlossen** — alle 5
+Teile (Sprint 51-55) umgesetzt.
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
@@ -1308,7 +1309,7 @@ korrigiert: OBSERVER-Rollen-Gating existiert im Frontend real und wäre E2E-test
 `tasks/sprints/54-e2e-ausbau.md` — bewusst zurückgestellt, da ein zweiter Seed-User nötig wäre,
 Kandidat für einen künftigen Sprint statt "gibt es vermutlich nicht" wie ursprünglich vermutet).
 
-### Teil 5 — CI-Härtung (Sprint 55, 🔲 geplant)
+### Teil 5 — CI-Härtung (Sprint 55, ✅ abgeschlossen)
 
 **Vorrecherche (CI-Agent, 2026-07-21):** Keiner der 5 Workflows scannt auf Sicherheitslücken
 (kein `gosec`/`npm audit`/Trivy/CodeQL). Kein Contract-Test für `proto/` (5 `.proto`-Dateien, keine
@@ -1328,16 +1329,28 @@ Build-Targets für CIHARD-03 identifiziert: 6 Go-Services (`SERVICE_NAME`-Matrix
 
 | ID | Task | Typ | Abhängigkeiten |
 |----|------|-----|-----------------|
-| CIHARD-01 | `BenchmarkControlACKRoundtrip`-Skip-Bug beheben (`vehicle_id` korrigieren + `session_id`-Query-Parameter ergänzen) — schließt DRIFT-K5/K6 endgültig ab. | S | — |
-| CIHARD-02 | Neuer non-blocking CI-Job: `gosec` (Go) + `npm audit` (Frontend), analog `lint.yml`-Muster (`continue-on-error`, informational). | S/M | — |
-| CIHARD-03 | Container-Build-Verifikation als eigener CI-Job (`docker buildx build` je Service, kein Push) — verhindert "baut lokal, baut nicht in CI/Prod"-Drift. | S/M | — |
-| CIHARD-04 | *(Zur Diskussion, kein fester Task)* `buf breaking` für `proto/` — nur sinnvoll falls mehrere Konsumenten unabhängig deployt werden; bei aktuell monolithischem Deploy (`docker-compose`) ggf. verzichtbar. Entscheidungspunkt vor Umsetzung. | S/M | — |
-| CIHARD-05 | Verifikation: `make test-latency` läuft grün ohne Skip, neue Workflows so weit wie möglich lokal gegengeprüft, Doku-Update. | S | CIHARD-01..03 |
+| CIHARD-01 | `BenchmarkControlACKRoundtrip`-Skip-Bug beheben (`vehicle_id` korrigieren + `session_id`-Query-Parameter ergänzen) — schließt DRIFT-K5/K6 endgültig ab. | S | ✅ Sprint 55 |
+| CIHARD-02 | Neuer non-blocking CI-Job: `gosec` (Go) + `npm audit` (Frontend), analog `lint.yml`-Muster (`continue-on-error`, informational). | S/M | ✅ Sprint 55 |
+| CIHARD-03 | Container-Build-Verifikation als eigener CI-Job (`docker buildx build` je Service, kein Push) — verhindert "baut lokal, baut nicht in CI/Prod"-Drift. | S/M | ✅ Sprint 55 |
+| CIHARD-04 | *(Zur Diskussion, kein fester Task)* `buf breaking` für `proto/` — nur sinnvoll falls mehrere Konsumenten unabhängig deployt werden; bei aktuell monolithischem Deploy (`docker-compose`) ggf. verzichtbar. Entscheidungspunkt vor Umsetzung. | S/M | 🔲 weiterhin offener Diskussionspunkt |
+| CIHARD-05 | Verifikation: `make test-latency` läuft grün ohne Skip, neue Workflows so weit wie möglich lokal gegengeprüft, Doku-Update. | S | ✅ Sprint 55 |
 
 **Nicht Teil dieses Teils:** CIHARD-04 bleibt Diskussionspunkt, kein umzusetzender Task;
 Branch-Protection-Aktivierung (bereits als eigener, bewusst zurückgestellter Punkt seit Sprint 41
 bekannt, CIGATE-06 — betrifft alle PRs, eigene Nutzerbestätigung nötig, unabhängig von diesem
 Testabdeckungs-Audit).
+
+**Ergebnis (2026-07-21):** Alle 4 Tasks (CIHARD-01, -02, -03, -05) umgesetzt. CIHARD-01 hatte bei
+der Umsetzung eine dritte, erst durch tatsächliches Ausführen des Benchmarks entdeckte Bug-Ursache
+(Session-Leak durch fehlendes `/session/end` zwischen den Kalibrierungsläufen des Go-Bench-
+Harness — führte zu `OBSERVER` statt `ACTIVE_OPERATOR` beim zweiten Lauf und unbegrenztem Hang in
+`conn.ReadMessage()`). `make test-latency` läuft jetzt 2× hintereinander grün ohne Skip (~200k
+Iterationen je Lauf, p99 0-1ms gegen 100ms-Budget). Neue Workflows `security-scan.yml` (gosec +
+npm audit) und `docker-build.yml` (8 Build-Targets) lokal gegengeprüft (`actionlint` sauber,
+Kernbefehle jedes Jobs manuell reproduziert). CIHARD-04 gegengeprüft und bewusst weiterhin
+zurückgestellt (Deployment unverändert monolithisches `docker-compose`). Details
+`tasks/sprints/55-ci-haertung.md`. **Damit ist das EPIC "Testabdeckungs-Gesamtaudit 2026-07-21"
+vollständig abgeschlossen (Teil 1-5, Sprint 51-55).**
 
 ---
 
