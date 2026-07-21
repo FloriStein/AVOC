@@ -104,6 +104,25 @@ make dev-frontend
 
 ---
 
+## Claude Code MCP-Server
+
+`.mcp.json` (Repo-Root) konfiguriert 6 MCP-Server für Claude-Code-Sessions/-Agenten in diesem
+Projekt. Nach Änderungen an `.mcp.json` braucht es einen Neustart der Claude-Code-Session, damit
+die Server geladen werden.
+
+| Server | Zweck | Setup nötig |
+|---|---|---|
+| `chrome-devtools` / `firefox-devtools` | Browser interaktiv steuern (Navigation, Klicks, Snapshots, Netzwerk/Konsole) | Keins — nutzt System-Chromium (`/snap/bin/chromium`) headless |
+| `playwright` | Wie oben, aber mit Playwright-Semantik — passend zu `frontend/tests/e2e/` (gleiche Locator-API wie im echten Testcode) | Keins — nutzt ebenfalls System-Chromium, umgeht so den bekannten `npx playwright install`-Blocker auf nicht unterstützten Host-OS-Versionen |
+| `github` | Direkter GitHub-Zugriff (PRs, Issues, Actions-Runs inkl. Logs) — ohne `gh`-CLI/Token stößt man sonst auf 403/401 bei Actions-Logs/Artefakten | `export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...` (Fine-grained Token, Scope `repo`+`workflow` für `FloriStein/AVOC`) |
+| `postgres` | Read/Write-Zugriff auf die lokale Dev-DB (`avoc`) für Debugging, ohne Ad-hoc-Skripte | `export POSTGRES_CONNECTION_STRING="postgresql://avoc:avoc_dev_secret@localhost:5432/avoc"` — braucht laufenden Dev-Stack (`postgres`-Service published seit 2026-07-21 Port `5432:5432` an den Host) |
+| `grafana` | Grafana/Loki-Abfragen (Logs, Dashboards) gegen den lokalen Dev-Stack | Keins zwingend — Dev-Grafana läuft mit `GF_AUTH_ANONYMOUS_ENABLED=true` (Admin-Rolle) auf Port `3001`; `export GRAFANA_SERVICE_ACCOUNT_TOKEN=""` sicherheitshalber setzen, falls die Platzhalter-Expansion sonst leerläuft |
+
+`github`/`postgres`/`grafana` lesen Secrets ausschließlich über `${VAR}`-Platzhalter aus der
+Shell-Umgebung — nie im Klartext in `.mcp.json` (die Datei ist committed).
+
+---
+
 ## Troubleshooting
 
 ### 502 Bad Gateway nach Container-Rebuild
