@@ -1163,8 +1163,9 @@ parallel geplante lokale Ansible-VM belegt) — Sprint 47 selbst referenziert in
 als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht angefasster
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
-umgesetzt (2026-07-21). Teil 3–5 bleiben unnummerierte Backlog-Kandidaten für spätere
-Sprint-Kickoffs.
+umgesetzt (2026-07-21). Teil 3 als **Sprint 53** geplant (2026-07-21, noch nicht umgesetzt —
+Planungs-Stand, siehe `tasks/current-sprint.md`). Teil 4–5 bleiben unnummerierte
+Backlog-Kandidaten für spätere Sprint-Kickoffs.
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
@@ -1239,7 +1240,7 @@ neuer `GET /session/{id}/state`-Status-Endpoint auf `webrtc-sfu`. Zwei neue Inte
 ohne `-count=1`, wodurch wiederholte Läufe ohne Codeänderung gecachte statt echter Testergebnisse
 lieferten — behoben. Details `tasks/sprints/52-integrationstests-services.md`.
 
-### Teil 3 — Frontend: Session-/Safety-kritische Hooks
+### Teil 3 — Frontend: Session-/Safety-kritische Hooks (Sprint 53, 🔲 geplant)
 
 **Vorrecherche (Frontend-Agent, 2026-07-21):** Gesamt-Coverage 52,2 % Stmts, aber die
 sicherheitsrelevantesten Hooks liegen weit darunter: `useSession.ts` (Login/Logout/`startSession`
