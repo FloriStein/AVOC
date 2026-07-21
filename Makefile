@@ -87,7 +87,7 @@ test-integration:
 	@echo "Waiting for services..."
 	@sleep 5
 	@echo "Running integration tests..."
-	go test ./tests/integration/... -v -timeout 120s; \
+	go test ./tests/integration/... -v -timeout 120s -count=1; \
 	EXIT=$$?; \
 	docker compose -f tests/docker-compose.test.yml down; \
 	exit $$EXIT

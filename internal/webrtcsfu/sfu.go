@@ -92,6 +92,17 @@ func (s *SFU) HandleSessionEvent(event SessionEvent) {
 	}
 }
 
+// GetSessionState returns the last session event type recorded for sessionID. Exposes the SFU's
+// internal state map (already used by forwardTrack for the SAFE_MODE drop-check) over HTTP so
+// external callers — integration tests, operational debugging — can verify a session event
+// actually arrived, without reading service logs.
+func (s *SFU) GetSessionState(sessionID string) (SessionEventType, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.state[sessionID]
+	return state, ok
+}
+
 // newPeerConnection creates a PeerConnection with the SFU's shared ICE configuration.
 func (s *SFU) newPeerConnection() (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
