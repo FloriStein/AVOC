@@ -19,6 +19,7 @@ type MockGateway struct {
 	simMu    sync.Mutex
 	simState map[string]*simulatedVehicle
 	stopSim  chan struct{}
+	simDone  chan struct{} // closed once the simulation goroutine has actually returned
 }
 
 type simulatedVehicle struct {
@@ -89,8 +90,11 @@ func (g *MockGateway) StartSimulation(vehicleIDs []string, startLat, startLon fl
 	}
 	g.stopSim = make(chan struct{})
 	stop := g.stopSim
+	g.simDone = make(chan struct{})
+	done := g.simDone
 
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
 		for {
@@ -104,15 +108,25 @@ func (g *MockGateway) StartSimulation(vehicleIDs []string, startLat, startLon fl
 	}()
 }
 
-// Stop ends the simulation loop started by StartSimulation. Safe to call even if no simulation
-// is running.
+// Stop ends the simulation loop started by StartSimulation and blocks until the loop's goroutine
+// has actually returned — closing stopSim alone would let a tick already selected concurrently
+// with Stop() still emit one more event after Stop() returns (a real, reproducible race: the
+// ticker and the caller's shutdown timing are independent, and a plain "signal and return
+// immediately" Stop() gives no guarantee the goroutine reacted before the caller moves on).
+// Safe to call even if no simulation is running.
 func (g *MockGateway) Stop() {
 	g.simMu.Lock()
-	defer g.simMu.Unlock()
-	if g.stopSim != nil {
-		close(g.stopSim)
-		g.stopSim = nil
+	stop := g.stopSim
+	done := g.simDone
+	g.stopSim = nil
+	g.simDone = nil
+	g.simMu.Unlock()
+
+	if stop == nil {
+		return
 	}
+	close(stop)
+	<-done
 }
 
 func (g *MockGateway) simulateTick() {
