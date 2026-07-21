@@ -81,6 +81,16 @@ Um das Kontextfenster (Tokens) zu schonen und Informationsüberlastung der KI zu
 
 _Regel:_ Die KI muss im Chat explizit deklarieren, wenn sie ein Dokument nachlädt (z. B. _„[Lazy-Load] Lade ADR-004 für DB-Design...“_).
 
+**Verfügbare MCP-Server (2026-07-21, siehe README.md "Claude Code MCP-Server" für Details/Setup):**
+`.mcp.json` stellt `chrome-devtools`, `firefox-devtools`, `playwright`, `github`, `postgres`,
+`grafana` bereit — sofern die Session danach neu gestartet wurde und (bei `github`/`postgres`/
+`grafana`) die nötigen Env-Vars gesetzt sind. Bevor auf einen Workaround ausgewichen wird (curl
+gegen die GitHub-API ohne Auth, Selektoren blind aus React-Quellcode ableiten, Ad-hoc-DB-Skripte),
+prüfen ob das passende MCP-Tool verfügbar ist und es stattdessen nutzen — Beispiel aus der Praxis:
+ohne `github`-MCP endeten Actions-Log-/Artefakt-Abrufe wiederholt an 403/401, PRs mussten vom
+Nutzer manuell geöffnet werden. Ist ein MCP-Tool nicht verfügbar (z. B. fehlendes Token), das kurz
+benennen statt stillschweigend auf den alten Workaround zurückzufallen.
+
 ---
 
 ## 3. Regel-Hierarchie (wichtig für Konflikte)

@@ -1,7 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
-  testDir: '../tests/e2e',
+  // Spec files must live inside frontend/'s own node_modules tree — Node resolves bare imports
+  // (e.g. `from '@playwright/test'`) by walking up from the file's own path, not from this
+  // config's location, so a spec outside frontend/ can never see frontend/node_modules.
+  testDir: './tests/e2e',
   timeout: 30_000,
   retries: 1,
   use: {
@@ -22,5 +25,5 @@ export default defineConfig({
     },
   ],
   // Non-blocking: E2E failures don't break CI (ADR-006)
-  reporter: [['html', { outputFolder: '../tests/e2e/reports' }]],
+  reporter: [['html', { outputFolder: './tests/e2e/reports' }]],
 })

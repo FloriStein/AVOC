@@ -26,6 +26,11 @@ services:
       POSTGRES_USER: avoc
       POSTGRES_PASSWORD: ${DB_PASSWORD:-avoc_dev_secret}
       POSTGRES_DB: avoc
+    ports:
+      # Host-Zugriff für lokales Debugging/Postgres-MCP (2026-07-21). Wie bei grafana (3001:3000)
+      # kollidiert das bei zwei gleichzeitig laufenden Worktree-Stacks auf demselben Host — bewusst
+      # in Kauf genommen, siehe Makefile-Kommentar zu COMPOSE_PROJECT_NAME.
+      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
