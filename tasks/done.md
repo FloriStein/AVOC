@@ -7,6 +7,28 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 54 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 4 (E2E-Flow-Ausbau) ✅
+2026-07-21 → [tasks/sprints/54-e2e-ausbau.md](sprints/54-e2e-ausbau.md)
+- 4 neue Playwright-Spec-Dateien (`01-login-failure`, `02-logout`, `03-session-conflict`,
+  `04-emergency-stop.spec.ts`) + geteilter `helpers.ts` (`login`/`authenticate`/
+  `fleetVehicleButton`), `dashboard.spec.ts` auf denselben Helfer refactored. `vehicle-002`
+  (docker-compose.yml, echt WS-verbunden) als dediziertes Ziel für Session-Konflikt- und
+  Emergency-Stop-Test, statt der nie `CONNECTED` werdenden `FLEET_VEHICLES`-Einträge.
+- Zwei echte Backend-Eigenheiten beim Schreiben entdeckt und in der Testreihenfolge/-struktur
+  berücksichtigt: `POST /logout`s `active_session`-Guard ist global pro Operator-ID (nicht pro
+  Browser-Session) — Logout-Test läuft daher bewusst vor jeder vehicle-claimenden Datei; ein hart
+  geschlossener `ACTIVE_OPERATOR`-WebSocket schickt das Fahrzeug laut ADR-025 sofort in SAFE_MODE
+  (korrektes Sicherheitsverhalten, kein Bug) — Session-Konflikt-Test beendet seine Session daher
+  aktiv über den echten "Session beenden"-Button, bevor der Browser-Context schließt.
+- `playwright.config.ts` bekommt `workers: 1` (Voraussetzung für deterministische Reihenfolge über
+  Dateien mit geteiltem Backend-State hinweg).
+- Verifikation: `npx tsc --noEmit`/`npm run lint` sauber, `npm run test:e2e` 2× gegen den echten,
+  per `docker compose up --build` gestarteten Stack grün (9/9 Tests je Lauf).
+- Funde für spätere Sprints: OBSERVER-Rollen-Gating existiert im Frontend real und ist E2E-testbar
+  (anders als die Kickoff-Vorrecherche vermutete) — bräuchte einen zweiten Seed-User; kein
+  UI-Recovery-Pfad aus SAFE_MODE ohne Reconnect; Session-Records akkumulieren nach hartem
+  ACTIVE_OPERATOR-Disconnect als "Geister-Sessions" in `GET /api/sessions`.
+
 ## Sprint 53 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 3 (Frontend: Session-/Safety-kritische Hooks) ✅
 2026-07-21 → [tasks/sprints/53-frontend-hooks.md](sprints/53-frontend-hooks.md)
 - 6 Tasks (FETEST-01..06): 4 neue Testdateien (`useSession.test.ts`, `useControls.test.ts`,
