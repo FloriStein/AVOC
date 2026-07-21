@@ -1125,6 +1125,154 @@ Typ S sind Fast-Track (reine Doku-Korrektur). Mittel Typ M/L durchlaufen die vol
 
 ---
 
+## EPIC: Testabdeckungs-Gesamtaudit 2026-07-21 (alle Systeme, alle Testarten)
+
+**Auslöser (2026-07-21):** Nutzerwunsch, die gesamte Anwendung (7 Go-Services, Frontend,
+CI-Infrastruktur) auf sinnvoll ergänzbare Unit-/Integration-/Smoke-/E2E-Tests zu prüfen — zunächst
+nur Ist-Analyse + Plan, keine Umsetzung. Durchgeführt über 3 parallele Recherche-Agenten
+(Go-Backend-Coverage inkl. `-coverpkg`-Korrektur, Frontend-Coverage inkl. Vitest, CI-Wiring-Audit
+aller 5 Workflows). Reine Bestandsaufnahme, deckt sich bewusst **nicht** mit bereits bekannten,
+noch offenen Punkten — die werden hier nur referenziert, nicht dupliziert: `DRIFT-K3-TELEMETRY`
+(läuft bereits als Sprint 47), `DRIFT-K4/K5/K6` (CI-/Latenz-Testing-Debt, Grill-Me weiterhin
+ausstehend, Nutzer hat sie bei der Sprint-47-Freigabe bewusst zurückgestellt), `DRIFT-M19/M22`,
+sowie der seit Sprint 41 bekannte `BenchmarkControlACKRoundtrip`-Skip-Bug (fehlender `session_id`-
+Parameter, ADR-025-Drift).
+
+**Zwei operative Funde, KEINE Test-Tasks, vor Umsetzung zu klären (siehe Fragen unten):**
+1. **Branch-Divergenz:** `feature/fleet-service-foundation` (Basis für ~15 aktive Worktrees) hängt
+   `origin/main` um 5 Commits hinterher, darunter der reale E2E-Login-Fix (`e57586c`,
+   `frontend/tests/e2e/dashboard.spec.ts` mit `login()`-Helper). Hier im Worktree existiert
+   stattdessen noch eine veraltete Alt-Datei `tests/e2e/dashboard.spec.ts` (Root-Level, ohne Login,
+   referenziert von `.github/workflows/test-e2e.yml` mit dem alten "Known gap"-Kommentarblock).
+   Die Frontend-E2E-Tasks unten (`E2ETEST-*`) setzen auf dem **origin/main-Stand**
+   (`frontend/tests/e2e/`) auf, nicht auf der lokalen Alt-Datei.
+2. **Unmerged Sprint-49-Branch:** `feature/fleet-service-foundation-localvm` (Commit `fd3c589`,
+   Ansible-Lokal-VM-Verifikation) ist nicht Teil dieses Branches — kein Testabdeckungs-Bezug hier,
+   nur der Vollständigkeit halber vermerkt, da der CI-Agent danach gesucht und "nicht gefunden"
+   zurückgemeldet hatte.
+
+**Priorisierung (Risiko vor Aufwand, CLAUDE.MD §0 "Sicherheit schlägt alles"):** Safety-kritische
+Backend-Lücken (Teil 1) vor Integrationslücken zwischen Services (Teil 2) vor Frontend-Session-/
+Safety-Hooks (Teil 3) vor E2E-Flow-Ausbau (Teil 4) vor CI-Härtung (Teil 5). Jeder Teil ein eigener,
+in sich abgeschlossener Sprint (S/M-Tasks, ~200k-Token-Budget), Reihenfolge ist Empfehlung, kein
+Zwang — Nutzer entscheidet beim jeweiligen Sprint-Kickoff wie gewohnt.
+
+### Teil 1 — Safety-kritische Backend-Testlücken
+
+**Vorrecherche (Go-Agent, 2026-07-21):** `go test ./... -cover` unterschätzt `control-server`s
+Safety-Layer strukturell (Tests liegen in `tests/unit`, externes Package) — korrekt gemessen via
+`-coverpkg` liegt `internal/controlserver/{statemachine,session,safety,command,vehiclecontext}`
+bereits bei 84,1 %. Echte Nullstellen: `internal/mediamtx` (WHIP/WHEP-Auth-Client für den
+SAFE_MODE-Video-Kick, 87 Zeilen, **0 Tests überhaupt**) und `internal/vehicleregistry` (Vehicle-
+CRUD/Persistenz, 137 Zeilen, **0 Tests überhaupt**). Zusätzlich mehrere gezielte Funktionslücken
+mit Sicherheitsbezug: `session/sfu_publisher.go` (`PublishSessionEvent`, `NewHTTPSFUPublisher`)
+0 %, `safety/http_publisher.go:TriggerEmergencyStop` 0 % — der HTTP-Fehlerpfad zu safety-service
+wird geloggt und verschluckt, dieses Silent-Failure-Verhalten ist nie verifiziert;
+`command/engine.go`s Audit-Write-Fehlerpfad innerhalb der E-Stop-Behandlung
+(`svcLog.Error("audit write failed — proceeding to SAFE_MODE")`) ebenfalls ungetestet;
+`session/handover.go:issueHandoverToken` nur 20 % (auth-service-HTTP-Fehlerpfade offen).
+
+| ID | Task | Typ | Abhängigkeiten |
+|----|------|-----|-----------------|
+| GOTEST-01 | `internal/mediamtx/client_test.go` — WHIP/WHEP-Auth-Client vollständig (Erfolg, HTTP-Fehler, Timeout, malformed Response). | S/M | — |
+| GOTEST-02 | `internal/vehicleregistry/registry_test.go` — Vehicle-CRUD (`SQLiteVehicleStore`/`NoopVehicleStore`, `ErrNotFound`-Sentinel, Doppel-Registrierung, Löschen bei aktiver Session). | M | — |
+| GOTEST-03 | `internal/controlserver/safety/http_publisher_test.go` — `TriggerEmergencyStop` gegen simulierten HTTP-Fehler (Netzwerkfehler, non-2xx) — verifiziert, dass der Swallow-Pfad wirklich geloggt und der Aufrufer nicht blockiert wird. | S | — |
+| GOTEST-04 | `internal/controlserver/command/engine_test.go` — Audit-Write-Fehlerpfad innerhalb `handleEmergencyStop`/`forwardMovementCommand` (Audit-Writer liefert Fehler, E-Stop muss trotzdem nach SAFE_MODE laufen). | S/M | — |
+| GOTEST-05 | `internal/controlserver/session/sfu_publisher_test.go` + `manager_test.go` — `PublishSessionEvent`/`NewHTTPSFUPublisher` (inkl. Fehlerpfad) und `ListSessions`. | S/M | — |
+| GOTEST-06 | `internal/controlserver/session/handover_test.go` — `issueHandoverToken`-Fehlerpfade (auth-service antwortet mit non-2xx/Timeout). | S | — |
+| GOTEST-07 | Verifikation: `go build ./...`, `go vet ./...`, `go test ./... -race` (2× gegen Flakiness), Coverage-Diff dokumentieren, `DECISIONS.MD`/`tasks/backlog.md`-Update. | S | GOTEST-01..06 |
+
+**Nicht Teil dieses Teils:** `internal/webrtcsfu`s `forwardTrack`/echte SDP-Negotiation (bewusster
+Nicht-Scope seit Sprint 39, ADR-006 "zu flaky in CI"), Load-/Stress-Test der Watchdogs unter
+gleichzeitiger Multi-Vehicle-Last (siehe Teil 5).
+
+### Teil 2 — Fehlende Integrationstests zwischen Services
+
+**Vorrecherche:** `tests/docker-compose.test.yml` baut aktuell `control-server`, `auth-service`,
+`safety-service`, `fleet-service`, `mosquitto`, `vehicle-mock`, `postgres` — **`telemetry-service`
+und `webrtc-sfu` fehlen komplett**, obwohl beide reguläre der 7 Kern-Services sind.
+Konkret fehlt: control-server↔webrtc-sfu (SAFE_MODE-Media-Kick via mediamtx, Session-Event-Push an
+die SFU — genau der Pfad, den `session/sfu_publisher.go`/`internal/mediamtx` bedienen, siehe Teil
+1) und jegliche Ende-zu-Ende-Verifikation der telemetry-service-MQTT-Ingestion gegen echte
+Downstream-Konsumenten.
+
+| ID | Task | Typ | Abhängigkeiten |
+|----|------|-----|-----------------|
+| INTTEST-01 | `webrtc-sfu` + `internal/mediamtx`-Ziel in `tests/docker-compose.test.yml` ergänzen; neuer Integrationstest control-server→webrtc-sfu (SAFE_MODE löst echten Media-Kick/Session-Event aus, verifiziert über SFU-HTTP-Status). | M/L | — |
+| INTTEST-02 | `telemetry-service` in `tests/docker-compose.test.yml` ergänzen; Integrationstest MQTT-Publish (vehicle-mock) → telemetry-service-Ingestion → `GET /telemetry/latest`-Abfrage über Prozessgrenze. | M | — |
+| INTTEST-03 | Verifikation: `make test-integration` gegen erweiterten Stack, Laufzeit-Impact prüfen (CI-Timeout `test-go.yml` ggf. anpassen), Doku-Updates. | S | INTTEST-01, INTTEST-02 |
+
+**Nicht Teil dieses Teils:** echte WebRTC-SDP/ICE-Negotiation im Integrationstest (bleibt Mock-/
+Status-Ebene, ADR-006-Policy).
+
+### Teil 3 — Frontend: Session-/Safety-kritische Hooks
+
+**Vorrecherche (Frontend-Agent, 2026-07-21):** Gesamt-Coverage 52,2 % Stmts, aber die
+sicherheitsrelevantesten Hooks liegen weit darunter: `useSession.ts` (Login/Logout/`startSession`
+— genau der ADR-028-Teleoperate/Beobachten-Mechanismus) nur **2,6 %**, bislang ausschließlich
+indirekt über gemockte Props in `FleetVehicleDetail.test.tsx`/`FleetOverview.test.tsx` berührt,
+nie als eigene State-Machine getestet. `SafetyPanel.test.tsx` prüft beim Emergency-Stop-Button nur
+Sichtbarkeit/Disabled-State — der vorhandene Mock wird nie auf tatsächlichen Aufruf assertiert,
+kein Test simuliert den Klick. `useControls.ts` 36 % (Keyboard-/E-Stop-Wiring bei Zeile 66-191
+größtenteils ungetestet). `ws-client.ts` 10,5 % / `fleet-ws-client.ts` 2,2 % (Connect/Reconnect/
+Close-Logik ohne Testdatei). `useWebRTC.ts` 29 % (Connection-State-Übergänge Zeile 206-265
+ungetestet).
+
+| ID | Task | Typ | Abhängigkeiten |
+|----|------|-----|-----------------|
+| FETEST-01 | `frontend/src/hooks/useSession.test.ts` — `login`/`logout`/`startSession`/`endSession` als eigene State-Machine (nicht nur über gemockte Props), inkl. ADR-028-Fall (Vehicle bereits belegt → "Beobachten"). | M | — |
+| FETEST-02 | `SafetyPanel.test.tsx` erweitern — echter Klick auf Emergency-Stop, Assertion dass `emergencyStop()` aufgerufen wurde, Disabled-State danach. | S | — |
+| FETEST-03 | `useControls.test.ts` — Keyboard-Wiring inkl. Emergency-Stop-Taste (Zeile 66-191). | S/M | — |
+| FETEST-04 | `frontend/src/lib/ws-client.test.ts` + `fleet-ws-client.test.ts` — Connect/Reconnect/Close, insbesondere die von Sprint-14 bekannte Race-Condition-Fixstelle (`onclose = null` vor `close()`) als Regressionsschutz. | M | — |
+| FETEST-05 | `useWebRTC.test.ts` erweitern — Connection-State-Übergänge (Zeile 206-265). | S/M | — |
+| FETEST-06 | Verifikation: `npx vitest run --coverage`, Coverage-Diff dokumentieren, `tasks/backlog.md`-Update. | S | FETEST-01..05 |
+
+**Nicht Teil dieses Teils:** `useWHIPSender.ts`/`useTelemetry.ts`/`useVehicleAck.ts` (niedrige
+Coverage, aber nicht sicherheitskritisch — reiner Datenfluss, kein Steuerpfad), `api-client.ts`-
+Fehlerpfade (Teil 5), ErrorBoundary (existiert aktuell nicht im Codebase — eigener
+Architektur-Entscheidungspunkt, kein Test-Task).
+
+### Teil 4 — E2E-Flow-Ausbau (auf `origin/main`-Stand, siehe Branch-Divergenz-Hinweis oben)
+
+**Vorrecherche:** Aktueller Stand (`origin/main`, `frontend/tests/e2e/dashboard.spec.ts`) deckt nach
+dem Login-Fix nur die 5 ursprünglichen Baseline-Assertions ab (Header, IDLE, SafetyPanel/
+ConnectionPanel sichtbar, E-Stop-Button im DOM) — alle hinter echtem Login erreicht, aber
+inhaltlich unverändert oberflächlich (bewusst so seit Sprint 41, CIGATE-05).
+
+| ID | Task | Typ | Abhängigkeiten |
+|----|------|-----|-----------------|
+| E2ETEST-01 | Login-Fehlerfall (falsches Passwort → Fehlermeldung sichtbar, kein Übergang zu FleetOverview). | S | Branch-Divergenz geklärt |
+| E2ETEST-02 | Session-Konflikt real gegen Backend: zweiter Browser-Context/Operator sieht "Beobachten" statt "Teleoperate" (ADR-028), nicht nur UI-Mock. | M | Branch-Divergenz geklärt |
+| E2ETEST-03 | Emergency-Stop echter Klick-Flow (State-Transition sichtbar, Button danach disabled). | S | Branch-Divergenz geklärt |
+| E2ETEST-04 | Logout-Flow (zurück zu LoginPanel, Session serverseitig beendet). | S | Branch-Divergenz geklärt |
+| E2ETEST-05 | Verifikation: `npm run test:e2e` 2× lokal gegen echten Docker-Stack (non-blocking Job, aber Flakiness-Ausschluss laut CLAUDE.MD §17 trotzdem sinnvoll), Doku-Update. | S | E2ETEST-01..04 |
+
+**Nicht Teil dieses Teils:** WebRTC-Verbindungsabbruch-UI, DEGRADED/SAFE_MODE-UI-Übergang über echte
+Verbindungsunterbrechung (technisch aufwändig in Playwright ohne echtes Video, eigener
+Entscheidungspunkt falls gewünscht), Permission-Denied/OBSERVER-Rolle (aktuell kein Rollen-Gating
+im Frontend gefunden, das E2E-testbar wäre — erst prüfen ob es das überhaupt gibt).
+
+### Teil 5 — CI-Härtung (kein Testcode, aber Testinfrastruktur-Lücken)
+
+**Vorrecherche (CI-Agent, 2026-07-21):** Keiner der 5 Workflows scannt auf Sicherheitslücken
+(kein `gosec`/`npm audit`/Trivy/CodeQL). Kein Contract-Test für `proto/` (5 `.proto`-Dateien, keine
+`buf breaking`-Prüfung). Kein Container-Build-Verifikationsjob in CI (`docker buildx build` nur
+manuell). `BenchmarkControlACKRoundtrip` (`tests/performance`) skipt seit Sprint 41 bekannt immer
+(fehlender `session_id`-Parameter) — bislang nur dokumentiert, nicht behoben.
+
+| ID | Task | Typ | Abhängigkeiten |
+|----|------|-----|-----------------|
+| CIHARD-01 | `BenchmarkControlACKRoundtrip`-Skip-Bug beheben (`session_id`-Query-Parameter ergänzen) — schließt DRIFT-K5/K6 endgültig ab. | S | — |
+| CIHARD-02 | Neuer non-blocking CI-Job: `gosec` (Go) + `npm audit` (Frontend), analog `lint.yml`-Muster (`continue-on-error`, informational). | S/M | — |
+| CIHARD-03 | Container-Build-Verifikation als eigener CI-Job (`docker buildx build` je Service, kein Push) — verhindert "baut lokal, baut nicht in CI/Prod"-Drift. | S/M | — |
+| CIHARD-04 | *(Zur Diskussion, kein fester Task)* `buf breaking` für `proto/` — nur sinnvoll falls mehrere Konsumenten unabhängig deployt werden; bei aktuell monolithischem Deploy (`docker-compose`) ggf. verzichtbar. Entscheidungspunkt vor Umsetzung. | S/M | — |
+
+**Nicht Teil dieses Teils:** Branch-Protection-Aktivierung (bereits als eigener, bewusst
+zurückgestellter Punkt seit Sprint 41 bekannt, CIGATE-06 — betrifft alle PRs, eigene
+Nutzerbestätigung nötig, unabhängig von diesem Testabdeckungs-Audit).
+
+---
+
 ## Offene Entscheidungen (blockieren zukünftige Tasks)
 
 | Entscheidung | Blockiert | Referenz |
