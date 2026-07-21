@@ -7,6 +7,32 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 49 — Lokale Ansible-VM als Hetzner-Nachbildung, Teil B: Verifikation (LOCALVM-08a/08b/08c/09) ✅
+2026-07-21 → [tasks/sprints/49-lokale-ansible-vm-teil-b.md](sprints/49-lokale-ansible-vm-teil-b.md)
+- Fortsetzung von Sprint 48 (reine Autorierung) — jetzt real gegen eine laufende lokale VM
+  (`avoc-local-vm`, libvirt/KVM) verifiziert. EPIC "Lokale Ansible-VM als Hetzner-Nachbildung"
+  damit vollständig abgeschlossen (Teil A+B).
+- LOCALVM-08a gegengecheckt (VM-IP unverändert, Inventory-Platzhalter musste nachträglich befüllt
+  werden — Sed-Ersetzung aus dem Vorlauf war nicht persistiert). LOCALVM-08b:
+  `ansible-playbook site.yml`/`deploy.yml` real ausgeführt, 5 reale, vorher unbekannte Bugs
+  gefunden und behoben: (1) `apt upgrade` bricht SSH ab, sobald `openssh-server` mit upgegradet
+  wird (Fix: async-Task + Reconnect-Pattern), (2) Docker-Apt-Repo mit falscher
+  Architekturbezeichnung (`ansible_architecture`=`x86_64` statt `dpkg --print-architecture`=
+  `amd64` — stiller Fehlschlag, kein Docker-Paket verfügbar), (3) `ufw`-Kommentar mit Apostroph
+  bricht das Ansible-Modul-Quoting, (4) Mosquitto-Container-Crash-Loop durch zu strikte
+  Dateiberechtigungen (`chmod 600` statt `644` auf Bind-Mounts), (5) MQTT-Test-Passwort passte
+  nicht zum committeten `infrastructure/mosquitto/passwd`-Hash. Zusätzlich (kein Ansible-Bug):
+  lokal gebaute avoc-*-Images waren älter als der TLS-Client-Support aus Sprint 40 — neu gebaut.
+- LOCALVM-08c: Smoke-Test grün — alle 15 Container `Up`/`postgres healthy`, keine Restart-Loops,
+  Frontend (`:3000`) und Control-Server-API (`:8080/health`) beide HTTP 200 von der VM-IP aus.
+- LOCALVM-09: `docs/deployment/hetzner-setup.md` auf den Ansible-Workflow umgestellt (Schritt
+  1/3/4/6/7 durch Kurzbeschreibung + Ansible-/Skript-Verweis ersetzt, Rest unverändert für den
+  echten Server gültig); zwei Doku-Lücken aus Sprint 48 mitkorrigiert (MQTT-Port-Tabelle auf
+  TLS-8883 statt 1883, `docs/deployment/UEBERGABE-ABWEICHUNGEN.md` neu angelegt); `DECISIONS.MD`
+  + `tasks/backlog.md`-Status aktualisiert (EPIC komplett ✅).
+
+---
+
 ## Sprint 48 — Lokale Ansible-VM als Hetzner-Nachbildung, Teil A: Autorierung (LOCALVM-01..07) ✅
 2026-07-20 → [tasks/sprints/48-lokale-ansible-vm-teil-a.md](sprints/48-lokale-ansible-vm-teil-a.md)
 - Nutzerfreigabe 2026-07-20: AWS als lokale Test-/Referenzumgebung durch eine lokale,

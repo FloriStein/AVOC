@@ -907,9 +907,14 @@ diesem Scope).
 
 ## EPIC: Lokale Ansible-VM als Hetzner-Nachbildung (AWS-Ersatz für die Testumgebung)
 
-**Status:** Teil A (Autorierung, LOCALVM-01..07) ✅ abgeschlossen Sprint 48 — siehe
-[tasks/sprints/48-lokale-ansible-vm-teil-a.md](sprints/48-lokale-ansible-vm-teil-a.md). Teil B
-(Verifikation gegen die echte VM, LOCALVM-08/09) offen, 🔲 Sprint B.
+**Status:** ✅ EPIC vollständig abgeschlossen. Teil A (Autorierung, LOCALVM-01..07) Sprint 48 —
+siehe [tasks/sprints/48-lokale-ansible-vm-teil-a.md](sprints/48-lokale-ansible-vm-teil-a.md). Teil B
+(Verifikation gegen die echte VM, LOCALVM-08a/08b/08c/09) Sprint 49 — siehe
+[tasks/sprints/49-lokale-ansible-vm-teil-b.md](sprints/49-lokale-ansible-vm-teil-b.md). Kompletter
+Ansible-Lauf (`site.yml`+`deploy.yml`) real gegen eine lokale VM verifiziert, alle 15
+Stack-Container laufen stabil, Frontend/Control-Server-API HTTP-erreichbar; 5 reale, vorher
+unbekannte Bugs gefunden und behoben (siehe Sprint-49-Ergebnisse); `hetzner-setup.md` auf den
+Ansible-Workflow umgestellt.
 
 **Freigabe (2026-07-20):** Nutzer möchte AWS nicht länger als lokale Test-/Referenzumgebung
 nutzen, sondern stattdessen eine **lokale VM per Ansible** provisionieren, die den **zukünftigen
@@ -1002,8 +1007,10 @@ in diesem Projekt):
 | LOCALVM-05 | Ansible-Rolle `secrets`: `.env` aus fest hinterlegten Test-Dummy-Werten templaten (siehe Architektur-Entscheidung), SSL-Selfsigned-Zertifikat wie in `secrets-setup-hetzner.sh` beschrieben | S/M | ✅ Sprint 48 | LOCALVM-01 |
 | LOCALVM-06 | Materialisierung als echte Dateien: `infrastructure/compose/docker-compose.hetzner.yml` (aus `docker-compose.prod.yml` + den 5 dokumentierten Änderungen), `scripts/deploy-hetzner.sh`, `scripts/secrets-setup-hetzner.sh` (1:1 aus `hetzner-setup.md`-Codeblöcken übernommen) | M | ✅ Sprint 48 | — |
 | LOCALVM-07 | Ansible-Playbook `deploy.yml`: Config-Dateien (Mosquitto/MediaMTX/Loki/Promtail/Grafana) auf die VM bringen, lokal gebaute Images übertragen (kein Docker-Hub-Roundtrip, siehe Architektur-Entscheidung), `deploy-hetzner.sh` ausführen | M | ✅ Sprint 48 | LOCALVM-03..06 |
-| LOCALVM-08 | Verifikation Sprint B: echte lokale VM per `local-vm-create.sh` anlegen, kompletten Ansible-Lauf (`bootstrap`+`firewall`+`secrets`+`deploy.yml`) gegen sie fahren, Smoke-Test (Frontend/Control-Server erreichbar, `docker compose ps` healthy, analog Sprint-41-CI-Verifikationsmuster) | M | 🔲 Sprint B | LOCALVM-01..07 |
-| LOCALVM-09 | Doku: `docs/deployment/hetzner-setup.md` auf den Ansible-Workflow umstellen (Schritt 1/3/4/6/7 durch Verweis auf `local-vm-create.sh`+Ansible-Rollen ersetzen, Rest bleibt für den echten Server gültig), `DECISIONS.MD`, `tasks/backlog.md`-Status-Update | S | 🔲 Sprint B | LOCALVM-08 |
+| LOCALVM-08a | VM-Erzeugung: `scripts/local-vm-create.sh` real ausführen, Ansible-Inventory-Befüllung verifizieren | M | ✅ Sprint 49 | LOCALVM-01..07 |
+| LOCALVM-08b | Ansible-Lauf: `site.yml`+`deploy.yml` real gegen die VM ausführen, Fehler iterativ beheben | M | ✅ Sprint 49 | LOCALVM-08a |
+| LOCALVM-08c | Smoke-Test gegen den laufenden Stack (`docker compose ps`, Frontend :3000, Control-Server-API :8080) | S | ✅ Sprint 49 | LOCALVM-08b |
+| LOCALVM-09 | Doku: `docs/deployment/hetzner-setup.md` auf den Ansible-Workflow umstellen (Schritt 1/3/4/6/7 durch Verweis auf `local-vm-create.sh`+Ansible-Rollen ersetzt, Rest bleibt für den echten Server gültig), Mosquitto-Port/`UEBERGABE-ABWEICHUNGEN.md`-Lücken aus Sprint 48 mitkorrigiert, `DECISIONS.MD`, `tasks/backlog.md`-Status-Update | S | ✅ Sprint 49 | LOCALVM-08c |
 
 **Nicht Teil dieses Vorhabens:** ein echter, kostenpflichtiger Hetzner-Cloud-Server (bleibt
 Doku/manueller Schritt, keine automatisierte Bestellung — reale Cloud-Kosten sind keine

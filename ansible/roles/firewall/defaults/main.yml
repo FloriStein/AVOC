@@ -7,9 +7,15 @@
 # eingetragen und läuft daher auf keinem per dieser Anleitung aufgesetzten Server. Dieselbe
 # Lücke gilt unverändert für die Hetzner-Variante (kein neuer Befund dieses Sprints).
 
+# HINWEIS (Sprint 49, LOCALVM-08b, Erkenntnis aus dem ersten echten site.yml-Lauf): Der
+# ursprüngliche Kommentar zu Port 80 enthielt ein Apostroph ("Let's Encrypt"). Das
+# community.general.ufw-Modul baut daraus intern einen 'ufw ... comment "..."'-Aufruf, dessen
+# Quoting an dem eingebetteten Apostroph scheiterte ("No closing quotation") — realer, erst beim
+# echten Lauf sichtbarer Fehlschlag (Sprint 48 war reine Autorierung). Fix: Apostroph aus dem
+# Kommentartext entfernt, inhaltlich unverändert.
 firewall_allowed_ports:
   - { port: 22, proto: tcp, comment: "SSH" }
-  - { port: 80, proto: tcp, comment: "HTTP (Let's Encrypt Challenge, optional)" }
+  - { port: 80, proto: tcp, comment: "HTTP (ACME/Let-Encrypt-Challenge, optional)" }
   - { port: 443, proto: tcp, comment: "HTTPS" }
   - { port: 3000, proto: tcp, comment: "Operator UI (Frontend)" }
   - { port: 8080, proto: tcp, comment: "Control Server API" }

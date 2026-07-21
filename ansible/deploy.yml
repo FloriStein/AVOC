@@ -52,6 +52,16 @@
     # MQTTS-01/TLS). Diese Ergänzung (passwd + TLS-Zertifikate) schließt die Lücke zum
     # tatsächlichen Compose-Stand, ohne die Doku in diesem Sprint (Teil A) anzufassen — s.
     # Sprint-Ergebnisse und LOCALVM-09 (Doku-Update, Sprint B).
+    #
+    # HINWEIS (Sprint 49, LOCALVM-08b/c, Erkenntnis aus dem ersten echten deploy.yml-Lauf):
+    # passwd/key.pem ursprünglich mit mode 0600 (owner avoc) übertragen — der eclipse-mosquitto:2
+    # Container-Prozess konnte die Datei dann nicht öffnen ("Unable to open pwfile", Container in
+    # Crash-Loop, Folgefehler in allen MQTT-Clients: telemetry-service/fleet-service/
+    # vehicle-mock kamen nie über den Broker hinaus verbunden). Ursache: der Bind-Mount macht die
+    # Host-UID (avoc) maßgeblich, der Container-Prozess läuft aber nicht unter genau dieser UID —
+    # 0600 sperrt ihn aus. Fix: 0644 (weiterhin nicht world-writable; für reine Test-Dummy-Werte
+    # auf einer rein lokalen, nicht exponierten VM ausreichend, s. roles/secrets/defaults
+    # Kopfkommentar zum selben Trade-off).
     - name: Mosquitto-Config + TLS-Assets übertragen
       ansible.builtin.copy:
         src: "{{ repo_root }}/infrastructure/mosquitto/{{ item.src }}"
@@ -61,10 +71,10 @@
         mode: "{{ item.mode }}"
       loop:
         - { src: "mosquitto.conf", dest: "mosquitto.conf", mode: "0644" }
-        - { src: "passwd", dest: "passwd", mode: "0600" }
+        - { src: "passwd", dest: "passwd", mode: "0644" }
         - { src: "certs/ca.pem", dest: "ca.pem", mode: "0644" }
         - { src: "certs/cert.pem", dest: "cert.pem", mode: "0644" }
-        - { src: "certs/key.pem", dest: "key.pem", mode: "0600" }
+        - { src: "certs/key.pem", dest: "key.pem", mode: "0644" }
       loop_control:
         label: "{{ item.src }}"
 
