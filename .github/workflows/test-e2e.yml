@@ -2,16 +2,29 @@ name: Test E2E (Playwright)
 
 # ADR-006 WebRTC/E2E Non-Determinism Policy: E2E tests are informational, not a merge gate.
 # CIGATE-05 (tasks/backlog.md EPIC "CI-Gates einführen") wires the existing spec
-# (tests/e2e/dashboard.spec.ts) into CI as-is — deliberately not deepened here (Audit-Punkt D:
-# the spec stays superficial, expanding its coverage is its own follow-up task).
+# (frontend/tests/e2e/dashboard.spec.ts) into CI as-is — deliberately not deepened here
+# (Audit-Punkt D: the spec stays superficial, expanding its coverage is its own follow-up task).
 #
-# Known gap (found while wiring this job, 2026-07-19, not fixed here — same "no test-depth
-# work" boundary as above): manually verified via a live dashboard load that the app now shows
-# a login form first (Operator-ID/Passwort, likely ADR-024 authentication) — only the "AVOC
-# header" assertion matches that screen; the 4 assertions expecting IDLE state / Safety Panel /
-# Connection Panel / Emergency Stop button (post-login dashboard content) are expected to fail
-# until the spec is updated to log in first. Harmless because this job is non-blocking — the
-# report artifact makes the failures visible without blocking merges.
+# Real-CI-run fix (2026-07-20, first actual GitHub Actions execution of this job): the spec
+# originally lived at repo-root tests/e2e/, outside frontend/'s node_modules tree. Node resolves
+# bare imports (`from '@playwright/test'`) by walking up from the importing file's own path, not
+# from playwright.config.ts's location — a spec outside frontend/ can never see
+# frontend/node_modules/@playwright/test, no matter how correctly `npm ci` installs it. This was
+# never caught locally because manual verification only exercised the running app (Chrome
+# DevTools MCP), never `npm run test:e2e` itself. Moved the spec to frontend/tests/e2e/.
+#
+# Login-gap fix (2026-07-21): the spec now actually logs in before asserting on dashboard
+# content — since ADR-024 the app shows a LoginPanel first, and per App.tsx an operator lands on
+# FleetOverview (Sprint 22) after login, not the cockpit; only after picking a vehicle and
+# clicking Teleoperate/Beobachten does AppContent (Safety/Connection-Panel, Emergency-Stop)
+# render. Two real bugs surfaced only by running for real against the live stack (never caught by
+# the earlier "manual dashboard load" spot-check): (1) FleetOverview wires both the Teleoperate
+# and Beobachten buttons to the identical session.startSession call, but once the first test in a
+# run claims a vehicle's session the button label flips to "Beobachten" (ADR-028) — the spec
+# matches either label since both do the same thing; (2) systemState is rendered by two separate
+# badges (header SystemStateBadge + ConnectionPanel in main), so `text=IDLE` was a Playwright
+# strict-mode violation (2 matches) — scoped to the header badge instead. All 5 assertions now
+# pass for real, locally against the live stack and confirmed via GitHub Actions.
 
 on:
   push:
@@ -68,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: tests/e2e/reports/
+          path: frontend/tests/e2e/reports/
           retention-days: 14
 
       - name: Stop dev stack
