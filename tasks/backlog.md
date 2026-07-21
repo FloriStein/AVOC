@@ -1162,8 +1162,9 @@ Priorität laut CLAUDE.MD §0). Nächste freie Nummer nach Sprint 49 (Sprint 48/
 parallel geplante lokale Ansible-VM belegt) — Sprint 47 selbst referenziert intern noch "Sprint 48"
 als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht angefasster
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
-sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2–5 bleiben unnummerierte
-Backlog-Kandidaten für spätere Sprint-Kickoffs.
+sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
+umgesetzt (2026-07-21). Teil 3–5 bleiben unnummerierte Backlog-Kandidaten für spätere
+Sprint-Kickoffs.
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
@@ -1208,7 +1209,7 @@ Verhaltensänderung. Coverage-Diff (nur betroffene Funktionen, `-coverprofile` j
 vermutlich Port-/Ressourcenkonflikt unter Parallellast, nicht behoben da außerhalb des Scopes).
 Details `tasks/sprints/51-testabdeckung-safety-backend.md`.
 
-### Teil 2 — Fehlende Integrationstests zwischen Services
+### Teil 2 — Fehlende Integrationstests zwischen Services (Sprint 52, ✅ abgeschlossen)
 
 **Vorrecherche:** `tests/docker-compose.test.yml` baut aktuell `control-server`, `auth-service`,
 `safety-service`, `fleet-service`, `mosquitto`, `vehicle-mock`, `postgres` — **`telemetry-service`
@@ -1218,14 +1219,25 @@ die SFU — genau der Pfad, den `session/sfu_publisher.go`/`internal/mediamtx` b
 1) und jegliche Ende-zu-Ende-Verifikation der telemetry-service-MQTT-Ingestion gegen echte
 Downstream-Konsumenten.
 
+**Korrektur bei Sprint-52-Umsetzung:** `telemetry-service` war entgegen der Vorrecherche bereits
+seit Sprint 50 (TelemetryWatchdog) Teil des Teststacks — nur der direkte
+`GET /telemetry/latest`-Zugriff über die Prozessgrenze fehlte tatsächlich noch (INTTEST-02 darauf
+zugeschnitten, siehe `tasks/sprints/52-integrationstests-services.md`).
+
 | ID | Task | Typ | Abhängigkeiten |
 |----|------|-----|-----------------|
-| INTTEST-01 | `webrtc-sfu` + `internal/mediamtx`-Ziel in `tests/docker-compose.test.yml` ergänzen; neuer Integrationstest control-server→webrtc-sfu (SAFE_MODE löst echten Media-Kick/Session-Event aus, verifiziert über SFU-HTTP-Status). | M/L | — |
-| INTTEST-02 | `telemetry-service` in `tests/docker-compose.test.yml` ergänzen; Integrationstest MQTT-Publish (vehicle-mock) → telemetry-service-Ingestion → `GET /telemetry/latest`-Abfrage über Prozessgrenze. | M | — |
-| INTTEST-03 | Verifikation: `make test-integration` gegen erweiterten Stack, Laufzeit-Impact prüfen (CI-Timeout `test-go.yml` ggf. anpassen), Doku-Updates. | S | INTTEST-01, INTTEST-02 |
+| INTTEST-01 | `webrtc-sfu` + `internal/mediamtx`-Ziel in `tests/docker-compose.test.yml` ergänzen; neuer Integrationstest control-server→webrtc-sfu (SAFE_MODE löst echten Media-Kick/Session-Event aus, verifiziert über SFU-HTTP-Status). | M/L | ✅ Sprint 52 |
+| INTTEST-02 | `telemetry-service` in `tests/docker-compose.test.yml` ergänzen; Integrationstest MQTT-Publish (vehicle-mock) → telemetry-service-Ingestion → `GET /telemetry/latest`-Abfrage über Prozessgrenze. | M | ✅ Sprint 52 |
+| INTTEST-03 | Verifikation: `make test-integration` gegen erweiterten Stack, Laufzeit-Impact prüfen (CI-Timeout `test-go.yml` ggf. anpassen), Doku-Updates. | S | ✅ Sprint 52 |
 
 **Nicht Teil dieses Teils:** echte WebRTC-SDP/ICE-Negotiation im Integrationstest (bleibt Mock-/
 Status-Ebene, ADR-006-Policy).
+
+**Ergebnis (2026-07-21):** `webrtc-sfu` + echtes `bluenviron/mediamtx:latest` neu im Teststack;
+neuer `GET /session/{id}/state`-Status-Endpoint auf `webrtc-sfu`. Zwei neue Integrationstests
+(`webrtc_sfu_test.go`, `telemetry_service_test.go`). Nebenbefund: `make test-integration` lief
+ohne `-count=1`, wodurch wiederholte Läufe ohne Codeänderung gecachte statt echter Testergebnisse
+lieferten — behoben. Details `tasks/sprints/52-integrationstests-services.md`.
 
 ### Teil 3 — Frontend: Session-/Safety-kritische Hooks
 

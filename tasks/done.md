@@ -7,6 +7,31 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 52 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 2 (Fehlende Integrationstests zwischen Services) ✅
+2026-07-21 → [tasks/sprints/52-integrationstests-services.md](sprints/52-integrationstests-services.md)
+- `webrtc-sfu` + echtes `mediamtx` (`bluenviron/mediamtx:latest`) neu in
+  `tests/docker-compose.test.yml`; `control-server`s `SFU_SERVICE_URL`/`MEDIAMTX_API_URL` liefen
+  zuvor ins Leere. Neuer `GET /session/{id}/state`-Status-Endpoint auf `webrtc-sfu`
+  (`internal/webrtcsfu.GetSessionState`) macht den bislang nur intern geführten Session-Event-State
+  extern prüfbar.
+- Neuer Integrationstest `webrtc_sfu_test.go`: echter Emergency-Stop verifiziert realen HTTP-Push
+  `SESSION_SAFE_MODE`→`webrtc-sfu` sowie den realen `internal/mediamtx.Client.KickVehicle`-Aufruf
+  gegen die echte MediaMTX-Management-API.
+- Neuer Integrationstest `telemetry_service_test.go`: MQTT-Publish → `telemetry-service`s
+  `GET /telemetry/latest/{id}` direkt über die Prozessgrenze (bislang nur indirekt über
+  control-server/DegradeWatchdog getestet, seit Sprint 50).
+- Produktionsrelevanter Fund: Test-MediaMTX-Config scheiterte zunächst mit "authentication error"
+  (Default `authMethod: internal` beschränkt die Management-API auf `127.0.0.1`) — reale
+  Prod-/Dev-Config funktioniert nur, weil sie bereits `authMethod: http` setzt (MediaMTX'
+  Default-`authHTTPExclude` nimmt die `api`-Action davon aus). Testkonfiguration entsprechend
+  angepasst.
+- Nebenbefund behoben: `make test-integration` lief ohne `-count=1` — ein zweiter Lauf ohne
+  Codeänderung lieferte ein gecachtes statt eines echten Testergebnisses zurück (entwertete
+  bisherige "2× gegen Flakiness"-Verifikationen unbemerkt). Makefile korrigiert.
+- Verifikation: `go build`/`go vet` sauber, `make test-unit` grün, `make test-integration` echte
+  2× hintereinander grün (34 Tests, ~33-34s Go-Testzeit). CI-Timeout (20 min) hat weiterhin
+  großzügigen Puffer, keine Anpassung nötig.
+
 ## Sprint 51 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 1 (Safety-kritische Backend-Testlücken) ✅
 2026-07-21 → [tasks/sprints/51-testabdeckung-safety-backend.md](sprints/51-testabdeckung-safety-backend.md)
 - Reine Testabdeckung, kein Produktivcode-Verhalten geändert (Typ S/M je Task, kein Grill-Me nötig).
