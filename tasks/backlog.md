@@ -1164,8 +1164,8 @@ als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht a
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
 umgesetzt (2026-07-21). Teil 3 als **Sprint 53** umgesetzt (2026-07-21). Teil 4 als **Sprint 54**
-umgesetzt (2026-07-21), siehe `tasks/sprints/54-e2e-ausbau.md`.
-Teil 5 bleibt unnummerierter Backlog-Kandidat für einen späteren Sprint-Kickoff.
+umgesetzt (2026-07-21), siehe `tasks/sprints/54-e2e-ausbau.md`. Teil 5 als **Sprint 55** geplant
+(2026-07-21, noch nicht umgesetzt — Planungsstand, siehe `tasks/current-sprint.md`).
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
@@ -1308,7 +1308,7 @@ korrigiert: OBSERVER-Rollen-Gating existiert im Frontend real und wäre E2E-test
 `tasks/sprints/54-e2e-ausbau.md` — bewusst zurückgestellt, da ein zweiter Seed-User nötig wäre,
 Kandidat für einen künftigen Sprint statt "gibt es vermutlich nicht" wie ursprünglich vermutet).
 
-### Teil 5 — CI-Härtung (kein Testcode, aber Testinfrastruktur-Lücken)
+### Teil 5 — CI-Härtung (Sprint 55, 🔲 geplant)
 
 **Vorrecherche (CI-Agent, 2026-07-21):** Keiner der 5 Workflows scannt auf Sicherheitslücken
 (kein `gosec`/`npm audit`/Trivy/CodeQL). Kein Contract-Test für `proto/` (5 `.proto`-Dateien, keine
@@ -1316,16 +1316,28 @@ Kandidat für einen künftigen Sprint statt "gibt es vermutlich nicht" wie urspr
 manuell). `BenchmarkControlACKRoundtrip` (`tests/performance`) skipt seit Sprint 41 bekannt immer
 (fehlender `session_id`-Parameter) — bislang nur dokumentiert, nicht behoben.
 
+**Vorrecherche-Gegenprüfung (2026-07-21, bei Sprint-55-Planungsübernahme):** Der Skip-Bug in
+CIHARD-01 ist tiefer als vermerkt — `tests/performance/latency_test.go`s Benchmark ruft
+`/session/start` mit `vehicle_id: "bench-vehicle"` auf, aber `tests/docker-compose.test.yml`s
+einziger vehicle-mock läuft mit `VEHICLE_ID=vehicle-int-mock`. `handleSessionStart` prüft
+`vehicleRegistry.Connected(req.VehicleID)` vor dem eigentlichen `StartSession`-Aufruf und liefert
+für das nie verbundene `bench-vehicle` immer 409 — der fehlende `session_id`-Parameter ist also
+nur die zweite Bug-Hälfte. Details/Task-Verfeinerung in `tasks/current-sprint.md`. 8 konkrete
+Build-Targets für CIHARD-03 identifiziert: 6 Go-Services (`SERVICE_NAME`-Matrix über
+`go-service.Dockerfile`) + `frontend.Dockerfile` + `vehicle-mock.Dockerfile`.
+
 | ID | Task | Typ | Abhängigkeiten |
 |----|------|-----|-----------------|
-| CIHARD-01 | `BenchmarkControlACKRoundtrip`-Skip-Bug beheben (`session_id`-Query-Parameter ergänzen) — schließt DRIFT-K5/K6 endgültig ab. | S | — |
+| CIHARD-01 | `BenchmarkControlACKRoundtrip`-Skip-Bug beheben (`vehicle_id` korrigieren + `session_id`-Query-Parameter ergänzen) — schließt DRIFT-K5/K6 endgültig ab. | S | — |
 | CIHARD-02 | Neuer non-blocking CI-Job: `gosec` (Go) + `npm audit` (Frontend), analog `lint.yml`-Muster (`continue-on-error`, informational). | S/M | — |
 | CIHARD-03 | Container-Build-Verifikation als eigener CI-Job (`docker buildx build` je Service, kein Push) — verhindert "baut lokal, baut nicht in CI/Prod"-Drift. | S/M | — |
 | CIHARD-04 | *(Zur Diskussion, kein fester Task)* `buf breaking` für `proto/` — nur sinnvoll falls mehrere Konsumenten unabhängig deployt werden; bei aktuell monolithischem Deploy (`docker-compose`) ggf. verzichtbar. Entscheidungspunkt vor Umsetzung. | S/M | — |
+| CIHARD-05 | Verifikation: `make test-latency` läuft grün ohne Skip, neue Workflows so weit wie möglich lokal gegengeprüft, Doku-Update. | S | CIHARD-01..03 |
 
-**Nicht Teil dieses Teils:** Branch-Protection-Aktivierung (bereits als eigener, bewusst
-zurückgestellter Punkt seit Sprint 41 bekannt, CIGATE-06 — betrifft alle PRs, eigene
-Nutzerbestätigung nötig, unabhängig von diesem Testabdeckungs-Audit).
+**Nicht Teil dieses Teils:** CIHARD-04 bleibt Diskussionspunkt, kein umzusetzender Task;
+Branch-Protection-Aktivierung (bereits als eigener, bewusst zurückgestellter Punkt seit Sprint 41
+bekannt, CIGATE-06 — betrifft alle PRs, eigene Nutzerbestätigung nötig, unabhängig von diesem
+Testabdeckungs-Audit).
 
 ---
 
