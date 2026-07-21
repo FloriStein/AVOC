@@ -1085,7 +1085,7 @@ Typ S sind Fast-Track (reine Doku-Korrektur). Mittel Typ M/L durchlaufen die vol
 | DRIFT-K1 | ADR-009 „Auth Invalidation" (JWT-Widerruf→SAFE_MODE) ohne Produktivpfad — Grill-Me vor Fix | L | Kritisch | ✅ behoben (2026-07-17) | Grill-Me: implementieren statt Doku korrigieren. Neuer `AuthWatchdog` (`internal/controlserver/safety/auth_watchdog.go`), liest `users.is_active` direkt (`internal/controlserver/authcheck`), 5s×2-Poll wie `SafetyBusWatchdog`, feuert über `TransitionOperator(OpNoOperator)`. ADR-009 Update-Block |
 | DRIFT-K2 | ADR-009 „No Active Operator" ohne Produktivpfad — Grill-Me vor Fix | L | Kritisch | ✅ behoben (2026-07-17) | Grill-Me: implementieren statt Doku korrigieren (Redundanz allein wäre für zukünftige Pfade wie DRIFT-K1 nicht selbsttragend). WS-Disconnect-Handler ruft jetzt `TransitionOperator(OpNoOperator)`; Nebenbefund dabei behoben — `TransitionOperator`s SAFE_MODE-Zweig umging bislang den `validSystemTransitions`-Guard (`transitionSystemLocked`-Refactor). ADR-009 Update-Block |
 | DRIFT-K3 | DEGRADED-Tier (Media/Video/Telemetrie) komplett unverdrahtet — Grill-Me vor Fix | L | Kritisch | ✅ teilweise behoben (2026-07-17) | Grill-Me-Prämisse korrigiert: MEDIA_FAILED war bereits produktiv verdrahtet (`useWebRTC.ts`→`/media/event`), Audit hatte nur `internal/webrtcsfu`/`internal/mediamtx` geprüft. Neu: MEDIA_DEGRADED-Schwellwerte (`getStats()`, initiale unvalidierte Werte) + DEGRADED→CONNECTED-Recovery-Fix (vorher fehlte der Rückweg komplett). Partial Telemetry Loss bewusst zurückgestellt — siehe `DRIFT-K3-TELEMETRY` unten. ADR-009 Update-Block |
-| DRIFT-K3-TELEMETRY | Partial Telemetry Loss (MQTT) → DEGRADED ohne Produktivpfad | M/L | Kritisch | 🔲 Backlog | Neu aus DRIFT-K3-Umsetzung (2026-07-17): `telemetry-service` ist eigener Prozess ohne bestehende Kopplung zu `control-server` — bräuchte neuen Cross-Service-Watchdog (neuer HTTP-Client, neue `TELEMETRY_SERVICE_URL`, eigene Failure-Handling-Entscheidung für den Watchdog selbst), andere Risikoklasse als die Video-Änderung. Eigene Grill-Me vor Umsetzung (Typ L, sicherheitsnah) |
+| DRIFT-K3-TELEMETRY | Partial Telemetry Loss (MQTT) → DEGRADED ohne Produktivpfad | M/L | Kritisch | 🟡 teilweise behoben (Sprint 47, 2026-07-20) | Neu aus DRIFT-K3-Umsetzung (2026-07-17): `telemetry-service` ist eigener Prozess ohne bestehende Kopplung zu `control-server` — bräuchte neuen Cross-Service-Watchdog (neuer HTTP-Client, neue `TELEMETRY_SERVICE_URL`, eigene Failure-Handling-Entscheidung für den Watchdog selbst), andere Risikoklasse als die Video-Änderung. Zwei Grill-Me-Sessions (Typ L, sicherheitsnah), Sprint 47 baut nur das State-Machine-Fundament: `DegradedReason`-Set + `enterDegraded`/`exitDegraded` in `statemachine/state.go`, `TransitionMedia` darauf umgestellt (Single-Cause-Fall unverändert), SAFE_MODE leert das Set. Poll-Watchdog-Architektur + Sprint-48-Skizze in ADR-009 Update-Block dokumentiert. Der eigentliche `TelemetryWatchdog` (neues Paket, Verdrahtung, `TELEMETRY_SERVICE_URL`) ist Sprint 48 — siehe `tasks/sprints/47-multi-cause-degraded-fundament.md` |
 | DRIFT-K4 | „CI Build-Fail" bei >100ms existiert nicht als Pipeline — Grill-Me vor Fix | L | Kritisch | 🔲 Grill-Me ausstehend | Kein CI-System im Repo überhaupt |
 | DRIFT-K5 | WS-ACK-Roundtrip-Benchmark läuft im Standard-Testlauf nicht mit — Grill-Me vor Fix | M/L | Kritisch | 🔲 Grill-Me ausstehend | `b.Skip(...)` liefert zusätzlich stillen False-Positive |
 | DRIFT-K6 | `TestLatencyBudget_DocumentedRequirement` ist tautologisch — Grill-Me vor Fix | S/M | Kritisch | 🔲 Grill-Me ausstehend | Vermutlich zusammen mit K4/K5 zu klären |
@@ -1157,7 +1157,15 @@ Safety-Hooks (Teil 3) vor E2E-Flow-Ausbau (Teil 4) vor CI-Härtung (Teil 5). Jed
 in sich abgeschlossener Sprint (S/M-Tasks, ~200k-Token-Budget), Reihenfolge ist Empfehlung, kein
 Zwang — Nutzer entscheidet beim jeweiligen Sprint-Kickoff wie gewohnt.
 
-### Teil 1 — Safety-kritische Backend-Testlücken
+**Sprint-Zuweisung (2026-07-21):** Teil 1 als **Sprint 50** eingeplant (Nutzerentscheidung, höchste
+Priorität laut CLAUDE.MD §0). Nächste freie Nummer nach Sprint 49 (Sprint 48/49 bereits durch die
+parallel geplante lokale Ansible-VM belegt) — Sprint 47 selbst referenziert intern noch "Sprint 48"
+als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht angefasster
+Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 50 wird aktiv,
+sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2–5 bleiben unnummerierte
+Backlog-Kandidaten für spätere Sprint-Kickoffs.
+
+### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 50, geplant)
 
 **Vorrecherche (Go-Agent, 2026-07-21):** `go test ./... -cover` unterschätzt `control-server`s
 Safety-Layer strukturell (Tests liegen in `tests/unit`, externes Package) — korrekt gemessen via
@@ -1185,6 +1193,9 @@ wird geloggt und verschluckt, dieses Silent-Failure-Verhalten ist nie verifizier
 **Nicht Teil dieses Teils:** `internal/webrtcsfu`s `forwardTrack`/echte SDP-Negotiation (bewusster
 Nicht-Scope seit Sprint 39, ADR-006 "zu flaky in CI"), Load-/Stress-Test der Watchdogs unter
 gleichzeitiger Multi-Vehicle-Last (siehe Teil 5).
+
+**Geschätzter Umfang:** 7 Tasks (GOTEST-01..07), überwiegend S/M — innerhalb des
+~200k-Token-Sprintbudgets.
 
 ### Teil 2 — Fehlende Integrationstests zwischen Services
 

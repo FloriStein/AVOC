@@ -70,6 +70,17 @@ var validSystemTransitions = map[SystemState][]SystemState{
 	StateRecovering:    {StateAuthenticated, StateSafeMode},
 }
 
+// DegradedReason identifies an independent cause of SYSTEM DEGRADED (ADR-009 Update
+// 2026-07-20, DRIFT-K3-TELEMETRY). Multiple reasons can be active at once — SYSTEM only
+// returns to CONNECTED once all of them have cleared. DegradedReasonTelemetry is defined
+// now but only produced starting Sprint 48 (TelemetryWatchdog).
+type DegradedReason string
+
+const (
+	DegradedReasonMedia     DegradedReason = "media"
+	DegradedReasonTelemetry DegradedReason = "telemetry"
+)
+
 // Machine holds all 4 orthogonal state machines.
 type Machine struct {
 	mu       sync.RWMutex
@@ -77,14 +88,19 @@ type Machine struct {
 	Control  ControlState
 	Media    MediaState
 	Operator OperatorState
+
+	// degradedReasons is the set of currently active DEGRADED causes (ADR-009 Update
+	// 2026-07-20). Guarded by mu, same as the 4 state fields above.
+	degradedReasons map[DegradedReason]bool
 }
 
 func New() *Machine {
 	return &Machine{
-		System:   StateIdle,
-		Control:  ControlInit,
-		Media:    MediaInit,
-		Operator: OpNoOperator,
+		System:          StateIdle,
+		Control:         ControlInit,
+		Media:           MediaInit,
+		Operator:        OpNoOperator,
+		degradedReasons: make(map[DegradedReason]bool),
 	}
 }
 
@@ -144,6 +160,10 @@ func (m *Machine) transitionSystemLocked(next SystemState) bool {
 		m.Operator = OpNoOperator
 	case StateSafeMode:
 		m.Control = ControlBlocked
+		// SAFE_MODE is a full stop regardless of cause (ADR-009 Update 2026-07-20) — clear
+		// all active DEGRADED reasons. Each watchdog/media poll re-checks its own reason
+		// independently after recovery and re-enters DEGRADED if it still applies.
+		clear(m.degradedReasons)
 	case StateConnected:
 		m.Control = ControlActive
 	case StateAuthenticated:
@@ -156,6 +176,27 @@ func (m *Machine) transitionSystemLocked(next SystemState) bool {
 		// Control remains active during DEGRADED — video loss never blocks control (ADR-011)
 	}
 	return true
+}
+
+// enterDegraded adds reason to the active DEGRADED-reason set and transitions SYSTEM to
+// DEGRADED if it is currently CONNECTED (guard unchanged from the pre-multi-cause behavior,
+// ADR-009 Update 2026-07-20). Caller must already hold m.mu, analog transitionSystemLocked.
+func (m *Machine) enterDegraded(reason DegradedReason) {
+	m.degradedReasons[reason] = true
+	if m.System == StateConnected {
+		m.transitionSystemLocked(StateDegraded)
+	}
+}
+
+// exitDegraded removes reason from the active DEGRADED-reason set and transitions SYSTEM back
+// to CONNECTED only once the set is empty and SYSTEM is still DEGRADED — a still-active reason
+// (e.g. Telemetry, Sprint 48) must keep SYSTEM in DEGRADED even though reason itself recovered
+// (ADR-009 Update 2026-07-20). Caller must already hold m.mu, analog transitionSystemLocked.
+func (m *Machine) exitDegraded(reason DegradedReason) {
+	delete(m.degradedReasons, reason)
+	if len(m.degradedReasons) == 0 && m.System == StateDegraded {
+		m.transitionSystemLocked(StateConnected)
+	}
 }
 
 // TransitionToConnected atomically moves AUTHENTICATED → CONNECTED and activates control.
@@ -190,12 +231,12 @@ func (m *Machine) TransitionMedia(next MediaState) {
 		svcLog.Event(logger.EventMediaStateChange,
 			"media failure → SYSTEM DEGRADED (Invariant 1: never SAFE_MODE)",
 			"media_state", next)
-		m.transitionSystemLocked(StateDegraded)
+		m.enterDegraded(DegradedReasonMedia)
 	case next == MediaConnected && m.System == StateDegraded:
 		svcLog.Event(logger.EventMediaStateChange,
 			"media recovered → SYSTEM DEGRADED→CONNECTED",
 			"media_state", next)
-		m.transitionSystemLocked(StateConnected)
+		m.exitDegraded(DegradedReasonMedia)
 	}
 }
 

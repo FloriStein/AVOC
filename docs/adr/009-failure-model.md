@@ -281,3 +281,74 @@ echten Docker-Teststack: `TestIntegration_MediaDegraded_TriggersDegrade_ThenReco
 `TestIntegration_AuthWatchdog_DeletedAccount_TriggersSafeMode` — letzterer über eine echte
 Postgres-`DELETE`-Operation, nicht gemockt). Vollständige Ergebnisliste inkl. bewusst nicht
 abgedeckter Fälle: `tasks/current-sprint.md` Sprint-26-Nachtrag.
+
+---
+
+## Update (2026-07-20)
+
+Sprint 47 (`tasks/sprints/47-multi-cause-degraded-fundament.md`) legt das State-Machine-Fundament
+für die Telemetrie-Hälfte von DRIFT-K3 (Partial Telemetry Loss, siehe DRIFT-K3-Update oben und
+`tasks/backlog.md` `DRIFT-K3-TELEMETRY`, dort seit 2026-07-17 zurückgestellt). Vor der Umsetzung
+zwei Grill-Me-Sessions (§1.1/§5 CLAUDE.MD, Typ L — Kernsystem State Machine/Sicherheitsmodell):
+
+### DRIFT-K3-TELEMETRY: Watchdog-Architektur
+
+**Entscheidung:** Poll-basierter Watchdog in `control-server` (analog `SafetyBusWatchdog`/
+`AuthWatchdog` oben), nicht ein aktiver Meldemechanismus vom `telemetry-service` aus.
+`telemetry-service` bleibt vollständig unwissend über Sessions/Fahrzeuge — kein neuer
+Kontrollfluss, keine neue Kopplung in die Gegenrichtung. Begründung: konsistent mit dem
+bestehenden Watchdog-Muster dieses ADRs; ein meldender `telemetry-service` müsste Session-/
+Vehicle-Kontext kennen, den er heute nicht hat, und würde eine neue Abhängigkeit in einen Service
+einführen, der laut ADR-031 gerade erst hexagonal migriert wurde.
+
+**Architekturskizze für den TelemetryWatchdog-Folge-Sprint** (Nummer noch offen — Sprint 48/49
+wurden zwischenzeitlich durch die lokale Ansible-VM belegt, siehe `DECISIONS.MD`; damit dieser
+Folge-Sprint nicht erneut recherchieren muss):
+- Neues Paket `internal/controlserver/telemetrycheck`, `TelemetryWatchdog` analog
+  `SafetyBusWatchdog`/`AuthWatchdog` (Lifecycle `Start(sessionID, vehicleID)`/`Stop()`).
+  Per-`VehicleContext` wie `AuthWatchdog`, nicht global wie `SafetyBusWatchdog` — ein
+  Telemetrieausfall betrifft nur die DEGRADED-Ursache des eigenen Fahrzeugs (ADR-026).
+- Pollt `telemetry-service` per HTTP (neue `TELEMETRY_SERVICE_URL`-Env-Var). Genaue Schwellwerte
+  (Poll-Interval/Fail-Threshold/"noch nie empfangen"-Handling) bewusst nicht hier vorentschieden —
+  eigene Grill-Me-Session zu Beginn des Folge-Sprints, siehe Nicht-Scope unten.
+- Feuert über die neuen `enterDegraded(DegradedReasonTelemetry)`/`exitDegraded(...)`-Helper (siehe
+  Multi-Cause-Update unten) — nicht über einen zweiten, parallelen `transitionSystemLocked`-Aufruf,
+  aus demselben Konsistenzgrund wie DRIFT-K1/K2 oben.
+
+### DRIFT-K3-TELEMETRY: Multi-Cause-DEGRADED
+
+**Befund:** `statemachine.Machine` trackte DEGRADED bislang als einzelnen Zustand ohne Ursache.
+`TransitionMedia`s Recovery-Zweig (`MediaConnected` während `StateDegraded` → `StateConnected`,
+siehe DRIFT-K3 oben) würde einen zweiten, unabhängigen DEGRADED-Trigger (Telemetrie) fälschlich
+mit aufheben, sobald sich nur das Video erholt, obwohl Telemetrie noch gestört ist. Bislang rein
+hypothetisch (nur eine DEGRADED-Quelle existierte produktiv), wird mit dem neuen
+`TelemetryWatchdog` (eigener Folge-Sprint, Nummer noch offen) real.
+
+**Entscheidung:** Multi-Cause jetzt beheben (Sprint 47), nicht zurückstellen bis der Folge-Sprint
+den Watchdog verdrahtet — sonst müsste dieser dieselbe sicherheitskritische State-Machine-Änderung
+zusammen mit der Watchdog-Einführung verifizieren, statt beides isoliert zu testen (analog zur
+Praxis, DRIFT-Themenblöcke einzeln statt vermischt zu behandeln). Fix: Set aktiver
+Degraded-Gründe (`degradedReasons map[DegradedReason]bool` auf `Machine`) statt Einzelzustand,
+Rückkehr zu CONNECTED nur wenn das Set danach leer ist. Neue private Helper
+`enterDegraded(reason)`/`exitDegraded(reason)` in `statemachine/state.go` (Caller muss `m.mu`
+bereits halten, analog `transitionSystemLocked`); `TransitionMedia` auf die Helper umgestellt —
+Verhalten für den bestehenden Single-Cause-Fall (nur Media) bit-identisch zu vorher, reine interne
+Umleitung. SAFE_MODE-Eintritt (`transitionSystemLocked`s `StateSafeMode`-Zweig) leert zusätzlich
+das Set: SAFE_MODE ist ein vollständiger Stopp unabhängig von der Ursache, Invariante 1/2 oben
+bleiben unberührt — Media/Telemetrie lösen SAFE_MODE weiterhin nie aus und heben es nie auf. Nach
+Recovery aus SAFE_MODE prüft jeder Watchdog/Media-Poll unabhängig neu, ob sein Grund noch
+besteht, und tritt bei Bedarf erneut in DEGRADED ein — kein Datenverlust, nur kein Vorgriff auf
+einen möglicherweise inzwischen behobenen Zustand.
+
+**Nicht Teil von Sprint 47:** der `TelemetryWatchdog` selbst, `internal/controlserver/telemetrycheck`,
+Verdrahtung in `vehiclecontext.Registry`/`cmd/control-server/main.go`, `TELEMETRY_SERVICE_URL`,
+Schwellwert-Entscheidungen — alles Teil des TelemetryWatchdog-Folge-Sprints, siehe Architekturskizze
+oben.
+
+**Teststandard (§17):** neue `internal/controlserver/statemachine/state_test.go` (bisher kein
+eigenes internes Testfile für dieses Paket) — Media-DEGRADED→CONNECTED unverändert
+(Regressionsschutz), Multi-Cause-Szenario (zwei Gründe aktiv, Entfernen nur eines Grundes bleibt
+DEGRADED, Entfernen des zweiten wechselt zu CONNECTED), SAFE_MODE leert das Set. Bestehende
+`tests/unit`-Suite (`statemachine`/`safety`/`session`) bleibt unverändert grün — reines internes
+Umrouten, keine Verhaltensänderung für den Single-Cause-Fall. Details:
+`tasks/sprints/47-multi-cause-degraded-fundament.md`.

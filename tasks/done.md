@@ -7,6 +7,28 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 47 — Multi-Cause-DEGRADED-Fundament in der State Machine (DRIFT-K3-TELEMETRY Teil 1) ✅
+2026-07-21 → [tasks/sprints/47-multi-cause-degraded-fundament.md](sprints/47-multi-cause-degraded-fundament.md)
+- Zwei Grill-Me-Entscheidungen (Typ L, Kernsystem State Machine/Sicherheitsmodell): Poll-basierter
+  `TelemetryWatchdog` (analog `SafetyBusWatchdog`/`AuthWatchdog`, Sprint 48) statt aktiver Meldung
+  vom `telemetry-service`; Multi-Cause-DEGRADED jetzt beheben statt zurückstellen, da sonst
+  `TransitionMedia`s Recovery-Zweig einen unabhängigen Telemetrie-DEGRADED-Trigger fälschlich mit
+  aufheben würde, sobald nur das Video sich erholt.
+- `internal/controlserver/statemachine/state.go`: neuer Typ `DegradedReason`
+  (`DegradedReasonMedia`/`DegradedReasonTelemetry`), Feld `degradedReasons
+  map[DegradedReason]bool` auf `Machine`, private Helper `enterDegraded`/`exitDegraded`.
+  `TransitionMedia` darauf umgestellt — Single-Cause-Fall (nur Media) bit-identisch zu vorher.
+  `transitionSystemLocked`s SAFE_MODE-Zweig leert das Set zusätzlich.
+- Neue `internal/controlserver/statemachine/state_test.go` (bisher kein eigenes internes
+  Testfile) — Regressionsschutz Media-Fall, Multi-Cause-Szenario (zwei Gründe aktiv, nur beide
+  Recovery führt zurück zu CONNECTED), SAFE_MODE-Reset-Verhalten. `go build`/`go vet`/
+  `go test ./internal/controlserver/... ./tests/unit/... -race -count=2` grün.
+- ADR-009 Update-Block dokumentiert beide Entscheidungen + vollständige Architekturskizze für
+  Sprint 48 (`TelemetryWatchdog`-Paket, Lifecycle, `TELEMETRY_SERVICE_URL`), damit Sprint 48 nicht
+  erneut recherchieren muss. Der Watchdog selbst ist explizit nicht Teil dieses Sprints.
+
+---
+
 ## Sprint 49 — Lokale Ansible-VM als Hetzner-Nachbildung, Teil B: Verifikation (LOCALVM-08a/08b/08c/09) ✅
 2026-07-21 → [tasks/sprints/49-lokale-ansible-vm-teil-b.md](sprints/49-lokale-ansible-vm-teil-b.md)
 - Fortsetzung von Sprint 48 (reine Autorierung) — jetzt real gegen eine laufende lokale VM
