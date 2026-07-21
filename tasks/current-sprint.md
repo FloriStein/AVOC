@@ -6,53 +6,14 @@
 
 ---
 
-## Sprint 53 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 3 (Frontend: Session-/Safety-kritische Hooks)
+# Kein aktiver Sprint
 
-**Kickoff (2026-07-21):** Nächster Teil nach der in `tasks/backlog.md` festgelegten
-Priorisierung ("Risiko vor Aufwand", CLAUDE.MD §0) — Teil 1 (Sprint 51) und Teil 2 (Sprint 52)
-sind abgeschlossen, Teil 3 (Frontend-Hooks) ist laut EPIC der nächste Kandidat vor Teil 4
-(E2E-Ausbau) und Teil 5 (CI-Härtung). Reine Sprint-Planung in diesem Commit — Umsetzung folgt in
-einer eigenen Session/einem eigenen Worktree, analog Sprint 51/52.
+Sprint 53 (Testabdeckungs-Gesamtaudit 2026-07-21, Teil 3 — Frontend Session-/Safety-kritische
+Hooks) ist abgeschlossen — Volltext in
+[tasks/sprints/53-frontend-hooks.md](sprints/53-frontend-hooks.md).
 
-**Vorrecherche-Gegenprüfung (2026-07-21, vor Planungs-Übernahme):** Die ursprüngliche
-Frontend-Agent-Recherche vom EPIC-Anlegen (`tasks/backlog.md` Teil 3) wurde gegen den aktuellen
-`main`-Stand verifiziert (nach der Sprint-52-Erfahrung, dass Vorrecherche zwischenzeitlich veralten
-kann — dort war `telemetry-service` fälschlich als komplett fehlend im Teststack gelistet).
-Ergebnis: weiterhin akkurat. `useSession.ts` (190 Zeilen), `useControls.ts` (195 Zeilen),
-`ws-client.ts` (87 Zeilen) und `fleet-ws-client.ts` (85 Zeilen) haben **keine** eigene Testdatei.
-`SafetyPanel.test.tsx` und `useWebRTC.test.ts` existieren bereits (Tasks unten sind entsprechend
-als "erweitern" markiert, nicht als Neuanlage).
-
-**Vorrecherche (Frontend-Agent, 2026-07-21, aus dem EPIC übernommen):** Gesamt-Coverage 52,2 %
-Stmts, aber die sicherheitsrelevantesten Hooks liegen weit darunter: `useSession.ts`
-(Login/Logout/`startSession` — genau der ADR-028-Teleoperate/Beobachten-Mechanismus) nur **2,6 %**,
-bislang ausschließlich indirekt über gemockte Props in
-`FleetVehicleDetail.test.tsx`/`FleetOverview.test.tsx` berührt, nie als eigene State-Machine
-getestet. `SafetyPanel.test.tsx` prüft beim Emergency-Stop-Button nur Sichtbarkeit/Disabled-State
-— der vorhandene Mock wird nie auf tatsächlichen Aufruf assertiert, kein Test simuliert den Klick.
-`useControls.ts` 36 % (Keyboard-/E-Stop-Wiring bei Zeile 66-191 größtenteils ungetestet).
-`ws-client.ts` 10,5 % / `fleet-ws-client.ts` 2,2 % (Connect/Reconnect/Close-Logik ohne Testdatei).
-`useWebRTC.ts` 29 % (Connection-State-Übergänge Zeile 206-265 ungetestet).
-
-| ID | Task | Typ | Status | Abhängigkeiten |
-|----|------|-----|--------|-----------------|
-| FETEST-01 | `frontend/src/hooks/useSession.test.ts` — `login`/`logout`/`startSession`/`endSession` als eigene State-Machine (nicht nur über gemockte Props), inkl. ADR-028-Fall (Vehicle bereits belegt → "Beobachten"). | M | 🔲 Backlog | — |
-| FETEST-02 | `SafetyPanel.test.tsx` erweitern — echter Klick auf Emergency-Stop, Assertion dass `emergencyStop()` aufgerufen wurde, Disabled-State danach. | S | 🔲 Backlog | — |
-| FETEST-03 | `useControls.test.ts` — Keyboard-Wiring inkl. Emergency-Stop-Taste (Zeile 66-191). | S/M | 🔲 Backlog | — |
-| FETEST-04 | `frontend/src/lib/ws-client.test.ts` + `fleet-ws-client.test.ts` — Connect/Reconnect/Close, insbesondere die von Sprint-14 bekannte Race-Condition-Fixstelle (`onclose = null` vor `close()`) als Regressionsschutz. | M | 🔲 Backlog | — |
-| FETEST-05 | `useWebRTC.test.ts` erweitern — Connection-State-Übergänge (Zeile 206-265). | S/M | 🔲 Backlog | — |
-| FETEST-06 | Verifikation: `npm run test:coverage` (`vitest run --coverage`), Coverage-Diff dokumentieren, `tasks/backlog.md`-Update. | S | 🔲 Backlog | FETEST-01..05 |
-
-**Nicht Teil dieses Sprints:** `useWHIPSender.ts`/`useTelemetry.ts`/`useVehicleAck.ts` (niedrige
-Coverage, aber nicht sicherheitskritisch — reiner Datenfluss, kein Steuerpfad), `api-client.ts`-
-Fehlerpfade (Teil 5), ErrorBoundary (existiert aktuell nicht im Codebase — eigener
-Architektur-Entscheidungspunkt, kein Test-Task).
-
-**Geschätzter Umfang:** 6 Tasks (FETEST-01..06), überwiegend S/M — innerhalb des
-~200k-Token-Sprintbudgets.
-
----
-
-Vorgänger: Sprint 52 ✅ (Testabdeckungs-Gesamtaudit 2026-07-21, Teil 2 — Fehlende
-Integrationstests zwischen Services), siehe
-[tasks/sprints/52-integrationstests-services.md](sprints/52-integrationstests-services.md).
+Mögliche nächste Sprints (Nummer jeweils erst bei Kickoff vergeben, siehe [tasks/backlog.md](backlog.md)):
+- **Testabdeckungs-Gesamtaudit 2026-07-21, Teil 4** — E2E-Flow-Ausbau (Login-Fehlerfall,
+  Session-Konflikt/ADR-028 real gegen Backend, Emergency-Stop-Klick-Flow, Logout-Flow).
+- Teil 5 (CI-Härtung) desselben EPICs.
+- oder ein anderer Backlog-Punkt nach Nutzerfreigabe.

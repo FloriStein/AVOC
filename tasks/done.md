@@ -7,6 +7,34 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 53 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 3 (Frontend: Session-/Safety-kritische Hooks) ✅
+2026-07-21 → [tasks/sprints/53-frontend-hooks.md](sprints/53-frontend-hooks.md)
+- 6 Tasks (FETEST-01..06): 4 neue Testdateien (`useSession.test.ts`, `useControls.test.ts`,
+  `ws-client.test.ts`, `fleet-ws-client.test.ts`) + 2 erweiterte (`SafetyPanel.test.tsx`,
+  `useWebRTC.test.ts`) — 60 neue Tests, 88 Tests gesamt in den betroffenen Dateien. Zwei neue
+  Test-Infra-Helfer (`src/test/mock-websocket.ts`, `src/test/mock-rtc-peer-connection.ts`), da
+  weder WebSocket noch RTCPeerConnection in jsdom existieren.
+- Coverage-Sprünge: `useSession.ts` 2,6→89,56 %, `useControls.ts` 36→89,58 %, `ws-client.ts`
+  10,5→100 %, `fleet-ws-client.ts` 2,2→95,65 %, `useWebRTC.ts` 29→82,63 %, Frontend gesamt
+  52,2→73,85 % Stmts.
+- `useSession.test.ts` testet Login/Logout/StartSession/EndSession als eigene State-Machine
+  (bislang nur indirekt über gemockte Props berührt), inkl. ADR-028-Fall (Fahrzeug bereits belegt
+  → Rolle `OBSERVER` statt `ACTIVE_OPERATOR`).
+- `SafetyPanel.test.tsx` simuliert jetzt einen echten Klick auf den Emergency-Stop-Button mit
+  Assertion auf `emergencyStop(sessionId, vehicleId, token)` statt nur Sichtbarkeit/Disabled-State.
+- Beide WebSocket-Clients haben einen dedizierten Regressionstest für die seit Sprint 14 bekannte
+  Race-Condition-Fixstelle (`ws.onclose = null` **bevor** `close()` aufgerufen wird) — verifiziert
+  über die exakte Aufrufreihenfolge am Mock, nicht nur den beobachtbaren Effekt.
+- `useWebRTC.test.ts` erweitert um echte Connection-State-Übergänge (MEDIA_CONNECTED↔
+  MEDIA_DEGRADED über die 3-Sample-Hysterese, Auto-Retry nach MEDIA_FAILED inkl. Retry-Cancel).
+- Verifikation: `npm run lint`/`npx tsc -b` sauber, `test:coverage` 2× hintereinander identisch
+  grün (370/370 Tests, 34 Testdateien, keine Flakiness). `src/gen/*.ts` musste einmalig via
+  `make proto-gen-ts` erzeugt werden (im frischen Worktree fehlend, gitignored Build-Artefakt).
+- Bewusst nicht vertieft: `useSession.ts`s Backoff-Reconnect-Zusammenspiel mit dem echten
+  `WSClient` (hier gemockt), Gamepad-Neutral-Reset/Brake-Only in `useControls.ts`, die
+  Bitrate-basierte MEDIA_DEGRADED-Erkennung in `useWebRTC.ts` (bräuchte `performance.now()`-
+  Mocking, nicht Teil der bestehenden Testinfrastruktur).
+
 ## Sprint 52 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 2 (Fehlende Integrationstests zwischen Services) ✅
 2026-07-21 → [tasks/sprints/52-integrationstests-services.md](sprints/52-integrationstests-services.md)
 - `webrtc-sfu` + echtes `mediamtx` (`bluenviron/mediamtx:latest`) neu in

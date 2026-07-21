@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { SafetyPanel } from './SafetyPanel'
+import { emergencyStop } from '@/lib/api-client'
 
 // Mock api-client to prevent real HTTP calls
 vi.mock('@/lib/api-client', () => ({
@@ -50,5 +51,77 @@ describe('SafetyPanel', () => {
   it('zeigt DEGRADED-Warnung wenn DEGRADED', () => {
     render(<SafetyPanel systemState="DEGRADED" sessionId="sess-1" vehicleId={null} operatorId={null} wsClient={null} token={null} />)
     expect(screen.getByText(/DEGRADED/i)).toBeInTheDocument()
+  })
+
+  describe('Emergency Stop — echter Klick', () => {
+    it('ruft emergencyStop() mit session/vehicle/token auf, wenn der Button geklickt wird', () => {
+      render(
+        <SafetyPanel
+          systemState="CONNECTED"
+          sessionId="sess-1"
+          vehicleId="veh-1"
+          operatorId="op-1"
+          wsClient={null}
+          token="tok-123"
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: /emergency stop/i }))
+
+      expect(emergencyStop).toHaveBeenCalledTimes(1)
+      expect(emergencyStop).toHaveBeenCalledWith('sess-1', 'veh-1', 'tok-123')
+    })
+
+    it('ruft emergencyStop() NICHT auf, wenn kein Token vorhanden ist (Guard greift trotz aktivem Button)', () => {
+      render(
+        <SafetyPanel
+          systemState="CONNECTED"
+          sessionId="sess-1"
+          vehicleId="veh-1"
+          operatorId="op-1"
+          wsClient={null}
+          token={null}
+        />,
+      )
+
+      const button = screen.getByRole('button', { name: /emergency stop/i })
+      expect(button).not.toBeDisabled()
+      fireEvent.click(button)
+
+      expect(emergencyStop).not.toHaveBeenCalled()
+    })
+
+    it('Button ist nach dem Klick disabled, sobald State-Polling SAFE_MODE zurückmeldet', () => {
+      const { rerender } = render(
+        <SafetyPanel
+          systemState="CONNECTED"
+          sessionId="sess-1"
+          vehicleId="veh-1"
+          operatorId="op-1"
+          wsClient={null}
+          token="tok-123"
+        />,
+      )
+      const button = screen.getByRole('button', { name: /emergency stop/i })
+      expect(button).not.toBeDisabled()
+
+      fireEvent.click(button)
+      expect(emergencyStop).toHaveBeenCalledTimes(1)
+
+      // Server transitions to SAFE_MODE as a result of the Emergency Stop; App polls system
+      // state and passes the new systemState down as a prop re-render.
+      rerender(
+        <SafetyPanel
+          systemState="SAFE_MODE"
+          sessionId="sess-1"
+          vehicleId="veh-1"
+          operatorId="op-1"
+          wsClient={null}
+          token="tok-123"
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: /emergency stop/i })).toBeDisabled()
+    })
   })
 })

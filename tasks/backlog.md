@@ -1163,9 +1163,8 @@ parallel geplante lokale Ansible-VM belegt) — Sprint 47 selbst referenziert in
 als Telemetry-Watchdog-Folge-Sprint, das ist ein bekannter, hier bewusst nicht angefasster
 Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sprint 51 wird aktiv,
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2 als **Sprint 52**
-umgesetzt (2026-07-21). Teil 3 als **Sprint 53** geplant (2026-07-21, noch nicht umgesetzt —
-Planungs-Stand, siehe `tasks/current-sprint.md`). Teil 4–5 bleiben unnummerierte
-Backlog-Kandidaten für spätere Sprint-Kickoffs.
+umgesetzt (2026-07-21). Teil 3 als **Sprint 53** umgesetzt (2026-07-21). Teil 4–5 bleiben
+unnummerierte Backlog-Kandidaten für spätere Sprint-Kickoffs.
 
 ### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
@@ -1240,7 +1239,7 @@ neuer `GET /session/{id}/state`-Status-Endpoint auf `webrtc-sfu`. Zwei neue Inte
 ohne `-count=1`, wodurch wiederholte Läufe ohne Codeänderung gecachte statt echter Testergebnisse
 lieferten — behoben. Details `tasks/sprints/52-integrationstests-services.md`.
 
-### Teil 3 — Frontend: Session-/Safety-kritische Hooks (Sprint 53, 🔲 geplant)
+### Teil 3 — Frontend: Session-/Safety-kritische Hooks (Sprint 53, ✅ abgeschlossen)
 
 **Vorrecherche (Frontend-Agent, 2026-07-21):** Gesamt-Coverage 52,2 % Stmts, aber die
 sicherheitsrelevantesten Hooks liegen weit darunter: `useSession.ts` (Login/Logout/`startSession`
@@ -1255,17 +1254,30 @@ ungetestet).
 
 | ID | Task | Typ | Abhängigkeiten |
 |----|------|-----|-----------------|
-| FETEST-01 | `frontend/src/hooks/useSession.test.ts` — `login`/`logout`/`startSession`/`endSession` als eigene State-Machine (nicht nur über gemockte Props), inkl. ADR-028-Fall (Vehicle bereits belegt → "Beobachten"). | M | — |
-| FETEST-02 | `SafetyPanel.test.tsx` erweitern — echter Klick auf Emergency-Stop, Assertion dass `emergencyStop()` aufgerufen wurde, Disabled-State danach. | S | — |
-| FETEST-03 | `useControls.test.ts` — Keyboard-Wiring inkl. Emergency-Stop-Taste (Zeile 66-191). | S/M | — |
-| FETEST-04 | `frontend/src/lib/ws-client.test.ts` + `fleet-ws-client.test.ts` — Connect/Reconnect/Close, insbesondere die von Sprint-14 bekannte Race-Condition-Fixstelle (`onclose = null` vor `close()`) als Regressionsschutz. | M | — |
-| FETEST-05 | `useWebRTC.test.ts` erweitern — Connection-State-Übergänge (Zeile 206-265). | S/M | — |
-| FETEST-06 | Verifikation: `npx vitest run --coverage`, Coverage-Diff dokumentieren, `tasks/backlog.md`-Update. | S | FETEST-01..05 |
+| FETEST-01 | `frontend/src/hooks/useSession.test.ts` — `login`/`logout`/`startSession`/`endSession` als eigene State-Machine (nicht nur über gemockte Props), inkl. ADR-028-Fall (Vehicle bereits belegt → "Beobachten"). | M | ✅ Sprint 53 |
+| FETEST-02 | `SafetyPanel.test.tsx` erweitern — echter Klick auf Emergency-Stop, Assertion dass `emergencyStop()` aufgerufen wurde, Disabled-State danach. | S | ✅ Sprint 53 |
+| FETEST-03 | `useControls.test.ts` — Keyboard-Wiring inkl. Emergency-Stop-Taste (Zeile 66-191). | S/M | ✅ Sprint 53 |
+| FETEST-04 | `frontend/src/lib/ws-client.test.ts` + `fleet-ws-client.test.ts` — Connect/Reconnect/Close, insbesondere die von Sprint-14 bekannte Race-Condition-Fixstelle (`onclose = null` vor `close()`) als Regressionsschutz. | M | ✅ Sprint 53 |
+| FETEST-05 | `useWebRTC.test.ts` erweitern — Connection-State-Übergänge (Zeile 206-265). | S/M | ✅ Sprint 53 |
+| FETEST-06 | Verifikation: `npx vitest run --coverage`, Coverage-Diff dokumentieren, `tasks/backlog.md`-Update. | S | ✅ Sprint 53 |
 
 **Nicht Teil dieses Teils:** `useWHIPSender.ts`/`useTelemetry.ts`/`useVehicleAck.ts` (niedrige
 Coverage, aber nicht sicherheitskritisch — reiner Datenfluss, kein Steuerpfad), `api-client.ts`-
 Fehlerpfade (Teil 5), ErrorBoundary (existiert aktuell nicht im Codebase — eigener
 Architektur-Entscheidungspunkt, kein Test-Task).
+
+**Ergebnis (2026-07-21):** Alle 6 Tasks umgesetzt, 60 neue Tests in 4 neuen + 2 erweiterten
+Testdateien (88 Tests gesamt in den betroffenen Dateien). Coverage-Sprünge: `useSession.ts`
+2,6→89,56 %, `useControls.ts` 36→89,58 %, `ws-client.ts` 10,5→100 %, `fleet-ws-client.ts`
+2,2→95,65 %, `useWebRTC.ts` 29→82,63 %, Frontend gesamt 52,2→73,85 % Stmts. `SafetyPanel.test.tsx`
+testet jetzt einen echten Klick mit Assertion auf `emergencyStop()` statt nur Sichtbarkeit/
+Disabled-State. Beide WS-Clients haben einen dedizierten Regressionstest für die Sprint-14-Fixstelle
+(`onclose = null` **vor** `close()`). `npm run lint`/`npx tsc -b` sauber, `test:coverage` 2×
+hintereinander identisch grün (370/370 Tests). Bewusst nicht vertieft: `useSession.ts`s
+Backoff-Reconnect-Zusammenspiel mit dem echten `WSClient` (hier gemockt), Gamepad-Neutral-Reset in
+`useControls.ts`, die Bitrate-basierte MEDIA_DEGRADED-Erkennung in `useWebRTC.ts` (bräuchte
+`performance.now()`-Mocking, nicht Teil der bestehenden Testinfrastruktur). Details
+`tasks/sprints/53-frontend-hooks.md`.
 
 ### Teil 4 — E2E-Flow-Ausbau (auf `origin/main`-Stand, siehe Branch-Divergenz-Hinweis oben)
 
