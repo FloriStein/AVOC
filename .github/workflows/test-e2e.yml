@@ -13,13 +13,18 @@ name: Test E2E (Playwright)
 # never caught locally because manual verification only exercised the running app (Chrome
 # DevTools MCP), never `npm run test:e2e` itself. Moved the spec to frontend/tests/e2e/.
 #
-# Known gap (found while wiring this job, 2026-07-19, not fixed here — same "no test-depth
-# work" boundary as above): manually verified via a live dashboard load that the app now shows
-# a login form first (Operator-ID/Passwort, likely ADR-024 authentication) — only the "AVOC
-# header" assertion matches that screen; the 4 assertions expecting IDLE state / Safety Panel /
-# Connection Panel / Emergency Stop button (post-login dashboard content) are expected to fail
-# until the spec is updated to log in first. Harmless because this job is non-blocking — the
-# report artifact makes the failures visible without blocking merges.
+# Login-gap fix (2026-07-21): the spec now actually logs in before asserting on dashboard
+# content — since ADR-024 the app shows a LoginPanel first, and per App.tsx an operator lands on
+# FleetOverview (Sprint 22) after login, not the cockpit; only after picking a vehicle and
+# clicking Teleoperate/Beobachten does AppContent (Safety/Connection-Panel, Emergency-Stop)
+# render. Two real bugs surfaced only by running for real against the live stack (never caught by
+# the earlier "manual dashboard load" spot-check): (1) FleetOverview wires both the Teleoperate
+# and Beobachten buttons to the identical session.startSession call, but once the first test in a
+# run claims a vehicle's session the button label flips to "Beobachten" (ADR-028) — the spec
+# matches either label since both do the same thing; (2) systemState is rendered by two separate
+# badges (header SystemStateBadge + ConnectionPanel in main), so `text=IDLE` was a Playwright
+# strict-mode violation (2 matches) — scoped to the header badge instead. All 5 assertions now
+# pass for real, locally against the live stack and confirmed via GitHub Actions.
 
 on:
   push:

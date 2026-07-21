@@ -702,6 +702,24 @@ der bereits in Sprint 41 dokumentierten, bewusst nicht behobenen Lücke (App zei
 zuerst ein Login-Formular, 4 von 5 Assertions erwarten Post-Login-Inhalt). Kein neuer Befund, nur
 jetzt erstmals real bestätigt statt nur vermutet.
 
+**Nachtrag (2026-07-21) — Login-Lücke geschlossen, alle 5 E2E-Tests laufen jetzt echt grün:**
+`frontend/tests/e2e/dashboard.spec.ts` loggt sich jetzt vor den Dashboard-Assertions selbst ein
+(Seed-Admin `admin`/`ADMIN_PASSWORD`, Default `admin_dev_secret` aus `docker-compose.yml`) und
+bildet den vollen Weg nach: Login → `FleetOverview` (Sprint 22, Landing-View nach Login) →
+Fahrzeug auswählen (`vehicle-mock`/`vehicle-mock-2` sind in der Compose-Datei immer vorhanden) →
+Teleoperate. Dabei zwei weitere reale, vorher unbekannte Bugs gefunden (nur beim echten Lauf gegen
+den laufenden Stack sichtbar, nicht durch statische Prüfung): (1) `FleetVehicleDetail.tsx`
+verdrahtet sowohl den „Teleoperate"- als auch den „Beobachten"-Button auf denselben
+`session.startSession`-Aufruf; sobald ein Test in einem Lauf die Session eines Fahrzeugs belegt,
+zeigt `FleetOverview` für dieses Fahrzeug ab dem nächsten Test „Beobachten" statt „Teleoperate"
+(ADR-028) — der Test akzeptiert jetzt bewusst beide Label. (2) `text=IDLE` matchte zwei
+Elemente (Header-`SystemStateBadge` und `ConnectionPanel` im `main`-Bereich rendern denselben
+State getrennt) — Playwright-Strict-Mode-Violation, behoben durch Eingrenzung auf den
+Header-Badge. Lokal gegen den echten Docker-Stack verifiziert (5/5 grün, `npm run test:e2e`) und
+per echtem GitHub-Actions-Lauf bestätigt. Damit läuft `test-e2e.yml` jetzt vollständig grün
+(weiterhin `continue-on-error: true`, non-blocking per ADR-006 — das war eine bewusste
+WebRTC-Nichtdeterminismus-Entscheidung, keine Kompensation für die jetzt geschlossene Login-Lücke).
+
 **Nicht Teil dieses Sprints:** Latenz-Gate als hartes Blocking-Gate (siehe Architektur-
 Entscheidung oben), Vertiefung der Playwright-E2E-Tests bzw. echte WebRTC-SDP/ICE-E2E-Automatisierung
 (Audit-Punkt F — WebRTC bleibt bewusster Nicht-Scope, analog `WEBRTC-10`), Concurrency-Test-Lücke
@@ -709,9 +727,9 @@ in `internal/webrtcsfu/sfu_test.go` und weiteren Packages (eigener, kleinerer Fo
 Test Suite inhaltlich auf den echten `safetyservice.Bus` ausrichten (separater Folge-Task).
 
 **Bei der Umsetzung gefunden, nicht Teil dieses Sprints (siehe `DECISIONS.MD`):**
-`BenchmarkControlACKRoundtrip` skipt immer (fehlender `session_id`-Query-Parameter, ADR-025-Drift),
-`tests/e2e/dashboard.spec.ts` erwartet Dashboard-Inhalt ohne vorherigen Login — beide unkritisch
-(non-blocking Gates), aber als offene Folgepunkte dokumentiert.
+`BenchmarkControlACKRoundtrip` skipt immer (fehlender `session_id`-Query-Parameter, ADR-025-Drift)
+— weiterhin offen, unkritisch (non-blocking Gate). Die zweite Lücke (`dashboard.spec.ts` erwartete
+Dashboard-Inhalt ohne Login) wurde am 2026-07-21 geschlossen, siehe Nachtrag oben.
 
 ---
 
