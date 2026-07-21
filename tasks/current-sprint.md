@@ -8,10 +8,14 @@
 
 # Kein aktiver Sprint
 
-Sprint 50 (TelemetryWatchdog, DRIFT-K3-TELEMETRY Teil 2) ist abgeschlossen — Volltext in
-[tasks/sprints/50-telemetry-watchdog.md](sprints/50-telemetry-watchdog.md). DRIFT-K3-TELEMETRY ist
-damit vollständig behoben (`tasks/backlog.md`).
+Sprint 51 (Testabdeckungs-Gesamtaudit 2026-07-21, Teil 1 — Safety-kritische Backend-Testlücken) ist
+abgeschlossen — Volltext in
+[tasks/sprints/51-testabdeckung-safety-backend.md](sprints/51-testabdeckung-safety-backend.md).
 
-Nächster Kandidat: **Testabdeckungs-Gesamtaudit 2026-07-21, Teil 1** (Sprint 51, bereits vollständig
-geplant, siehe EPIC in [tasks/backlog.md](backlog.md)) — Safety-kritische Backend-Testlücken
-(`internal/mediamtx`, `internal/vehicleregistry`, u. a.).
+Mögliche nächste Sprints (Nummer jeweils erst bei Kickoff vergeben, siehe [tasks/backlog.md](backlog.md)):
+- **Testabdeckungs-Gesamtaudit 2026-07-21, Teil 2** — Fehlende Integrationstests zwischen Services
+  (`webrtc-sfu`/`internal/mediamtx` und `telemetry-service` fehlen im Docker-Teststack).
+- **Testabdeckungs-Gesamtaudit 2026-07-21, Teil 3** — Frontend Session-/Safety-kritische Hooks
+  (`useSession.ts`, `SafetyPanel.test.tsx`, `useControls.ts`, `ws-client.ts`).
+- Teil 4 (E2E-Flow-Ausbau) und Teil 5 (CI-Härtung) desselben EPICs.
+- oder ein anderer Backlog-Punkt nach Nutzerfreigabe.

@@ -7,6 +7,23 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 51 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 1 (Safety-kritische Backend-Testlücken) ✅
+2026-07-21 → [tasks/sprints/51-testabdeckung-safety-backend.md](sprints/51-testabdeckung-safety-backend.md)
+- Reine Testabdeckung, kein Produktivcode-Verhalten geändert (Typ S/M je Task, kein Grill-Me nötig).
+  Sechs zuvor ungetestete/lückenhafte Dateien: `internal/mediamtx/client.go` (0→97,0 %),
+  `internal/vehicleregistry` (0→97,4 %), `safety/http_publisher.go:TriggerEmergencyStop`+
+  `PublishEvent` (0→100 %), `command/engine.go:handleEmergencyStop`+`forwardMovementCommand`
+  (Audit-Write-Fehlerpfad, 0→100 %), `session/sfu_publisher.go` (0→100 %),
+  `session/manager.go:ListSessions` (0→100 %), `session/handover.go:issueHandoverToken`
+  (20→100 %) — je gegen simulierte HTTP-/Netzwerkfehler (`httptest.Server`), nicht nur Happy Path.
+- Neue Test-Dependency `github.com/DATA-DOG/go-sqlmock` (nur Test-Scope) ermöglicht
+  Fehlerpfad-Tests gegen `PostgresVehicleStore` (`*sql.DB`) ohne echten Postgres.
+- Verifikation: `go build`/`go vet`/`gofmt -l` sauber, `make test-unit`-Umfang 2× hintereinander
+  `-race`-grün. Ein einmaliger, unabhängiger Flake in `internal/fleetgateway` beobachtet (Paket in
+  diesem Sprint nicht angefasst, isoliert reproduzierbar grün) — nicht behoben, außerhalb des Scopes.
+- EPIC "Testabdeckungs-Gesamtaudit 2026-07-21" Teil 2–5 bleiben unnummerierte Backlog-Kandidaten
+  (`tasks/backlog.md`).
+
 ## Sprint 50 — TelemetryWatchdog (DRIFT-K3-TELEMETRY Teil 2) ✅
 2026-07-21 → [tasks/sprints/50-telemetry-watchdog.md](sprints/50-telemetry-watchdog.md)
 - Grill-Me-Session (Typ L) klärt die vier in Sprint 47 offen gelassenen Schwellwerte: 2s

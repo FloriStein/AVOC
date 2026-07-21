@@ -1165,7 +1165,7 @@ Nummern-Konflikt (Sprint 47 läuft bereits, siehe `tasks/current-sprint.md`). Sp
 sobald `tasks/current-sprint.md` nach Sprint 47 wieder frei ist. Teil 2–5 bleiben unnummerierte
 Backlog-Kandidaten für spätere Sprint-Kickoffs.
 
-### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, geplant)
+### Teil 1 — Safety-kritische Backend-Testlücken (Sprint 51, ✅ abgeschlossen)
 
 **Vorrecherche (Go-Agent, 2026-07-21):** `go test ./... -cover` unterschätzt `control-server`s
 Safety-Layer strukturell (Tests liegen in `tests/unit`, externes Package) — korrekt gemessen via
@@ -1196,6 +1196,17 @@ gleichzeitiger Multi-Vehicle-Last (siehe Teil 5).
 
 **Geschätzter Umfang:** 7 Tasks (GOTEST-01..07), überwiegend S/M — innerhalb des
 ~200k-Token-Sprintbudgets.
+
+**Ergebnis (2026-07-21):** Alle 7 Tasks umgesetzt, reine Testabdeckung ohne Produktivcode-
+Verhaltensänderung. Coverage-Diff (nur betroffene Funktionen, `-coverprofile` je Paket): `internal/mediamtx`
+0→97,0 %, `internal/vehicleregistry` 0→97,4 %, `safety/http_publisher.go:TriggerEmergencyStop`+`PublishEvent`
+0→100 %, `command/engine.go:handleEmergencyStop`+`forwardMovementCommand` 0→100 %,
+`session/sfu_publisher.go` 0→100 %, `session/manager.go:ListSessions` 0→100 %,
+`session/handover.go:issueHandoverToken` 20→100 %. `go build`/`go vet`/`gofmt -l` sauber,
+`make test-unit -race` 2× hintereinander grün (ein einmaliger, unabhängiger Flake in
+`internal/fleetgateway` beobachtet — Paket in diesem Sprint nicht angefasst, in 3 von 4 Läufen grün,
+vermutlich Port-/Ressourcenkonflikt unter Parallellast, nicht behoben da außerhalb des Scopes).
+Details `tasks/sprints/51-testabdeckung-safety-backend.md`.
 
 ### Teil 2 — Fehlende Integrationstests zwischen Services
 
