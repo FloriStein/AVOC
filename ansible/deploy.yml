@@ -18,6 +18,13 @@
 # optionalen SKIP_REGISTRY_PULL-Zweig 1:1 aus docs/deployment/hetzner-setup.md Schritt 7
 # übernommen — s. Kommentar dort.
 #
+# Seit Sprint 56 (EPIC "CI-Image-Publishing nach GHCR", CIPUB-01) baut/pusht
+# .github/workflows/docker-build.yml die avoc-*-Images bei jedem Push auf main zusätzlich nach
+# ghcr.io. Das ändert NICHTS an diesem Playbook: der obige lokale Build+docker save/load-Weg
+# bleibt der einzige Transferweg auf die VM. GHCR-Pull hier einzubauen wäre eine eigene,
+# größere Architektur-Entscheidung (s. "Nicht Teil dieses Sprints" in tasks/backlog.md EPIC
+# "CI-Image-Publishing nach GHCR") und ist bewusst nicht Teil von Sprint 56.
+#
 # Aufruf: ansible-playbook deploy.yml   (aus dem Verzeichnis ansible/)
 # Syntax-Check ohne Zielmaschine: ansible-playbook deploy.yml --syntax-check
 

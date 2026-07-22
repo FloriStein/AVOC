@@ -666,7 +666,7 @@ Reihenfolgen-Prämisse oben traf real nicht zu, alle fünf Sprints sind inzwisch
 | CIGATE-03 | `.github/workflows/test-frontend.yml`: Vitest-Unit-Tests blockierend (`npm ci && npm run test`) | S | ✅ Sprint 41 | — |
 | CIGATE-04 | `.github/workflows/test-latency.yml`: Go-Benchmark + k6, bewusst non-blocking (`continue-on-error: true`, begründeter Kommentar analog `lint.yml`) | S/M | ✅ Sprint 41 | CIGATE-01 |
 | CIGATE-05 | Bestehenden Playwright-Spec als non-blocking Informational-Job einbinden (kein Ausbau der Testtiefe) | S | ✅ Sprint 41 | — |
-| CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | ✅ Vorbereitung Sprint 41, Aktivierung 🔲 geplant Sprint 56 | CIGATE-02, CIGATE-03 |
+| CIGATE-06 | Branch-Protection: Required-Status-Checks vorbereiten/dokumentieren (welche 4 Jobs), Aktivierung selbst erst nach expliziter Nutzerbestätigung (Repo-Setting, betrifft alle PRs) | S | ✅ Vorbereitung Sprint 41, Aktivierung 🔲 blockiert (CIPUB-04, Sprint 56: verfügbares GitHub-Token hat keine `Administration`-Berechtigung) | CIGATE-02, CIGATE-03 |
 | CIGATE-07 | Verifikation: mind. 2 aufeinanderfolgende grüne CI-Läufe (Flakiness-Ausschluss, CLAUDE.MD §17), Timeout-/Resourcen-Anpassung falls nötig, Doku-Updates (`DECISIONS.MD`, ADR-006-Update-Absatz, `tasks/backlog.md`) | S | ✅ (Sprint 41 lokal + Nachtrag 2026-07-20 echte Actions-Läufe) | CIGATE-01..06 |
 
 **Hinweis zu CIGATE-07:** "2 aufeinanderfolgende grüne CI-Läufe" im Sinne von echten GitHub-Actions-
@@ -1064,7 +1064,7 @@ echten Server in `hetzner-setup.md` dokumentiert).
 
 ---
 
-## EPIC: CI-Image-Publishing nach GHCR (Sprint 56, 🔲 geplant)
+## EPIC: CI-Image-Publishing nach GHCR (Sprint 56, ✅ CIPUB-01..03 umgesetzt, CIPUB-04 offen)
 
 **Auftrag (2026-07-22):** Nutzer möchte die `avoc-*`-Images zusätzlich in GitHub Actions bauen
 lassen — bisher werden sie ausschließlich lokal gebaut (Voraussetzung für `ansible/deploy.yml`,
@@ -1080,10 +1080,10 @@ Build-Verifikation für alle 8 Targets existiert bereits, nur noch ohne Push
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| CIPUB-01 | `.github/workflows/docker-build.yml` erweitern: `docker/login-action` gegen `ghcr.io` (`GITHUB_TOKEN`), `permissions: packages: write` auf Job-Ebene, `push: true` nur bei `push`-Event auf `main` (bei `pull_request` weiterhin `push: false` — keine Images von unverifizierten PR-Branches veröffentlichen). Tag-Schema festlegen (z. B. `ghcr.io/<owner>/avoc-<service>:latest` + `:<git-sha>`). | M | 🔲 | CIHARD-03 (Sprint 55) |
-| CIPUB-02 | Kurzer Hinweis-Kommentar in `ansible/deploy.yml`-Kopf und/oder `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, dass GHCR-Images jetzt existieren, **ohne** den bestehenden lokalen Build+`docker save`/`load`-Weg in diesem Sprint umzustellen (reine Doku-Ergänzung, kein Funktionsumbau). | S | 🔲 | CIPUB-01 |
-| CIPUB-03 | Verifikation: `actionlint` gegen die geänderte Workflow-Datei, nach echtem Push auf `main` prüfen, dass die Packages tatsächlich unter GHCR erscheinen (Sichtbarkeit public/private je nach Repo-Einstellung explizit dokumentieren), Doku-/Backlog-Status-Update. | S | 🔲 | CIPUB-01 |
-| CIPUB-04 | **CIGATE-06 abschließen** (seit Sprint 41 vorbereitet, nie aktiviert): Branch-Protection/Required-Status-Checks für die 4 blockierenden Jobs real im GitHub-Repo-Setting einschalten — nur nach nochmaliger expliziter Nutzerbestätigung unmittelbar vor der Aktivierung (betrifft alle künftigen PRs). Auf Nutzerwunsch (2026-07-22) in diesen Sprint mitaufgenommen, thematisch unabhängig von CIPUB-01..03. | S | 🔲 | CIGATE-06 (Vorbereitung Sprint 41) |
+| CIPUB-01 | `.github/workflows/docker-build.yml` erweitern: `docker/login-action` gegen `ghcr.io` (`GITHUB_TOKEN`), `permissions: packages: write` auf Job-Ebene, `push: true` nur bei `push`-Event auf `main` (bei `pull_request` weiterhin `push: false` — keine Images von unverifizierten PR-Branches veröffentlichen). Tag-Schema festlegen (z. B. `ghcr.io/<owner>/avoc-<service>:latest` + `:<git-sha>`). | M | ✅ Sprint 56 | CIHARD-03 (Sprint 55) |
+| CIPUB-02 | Kurzer Hinweis-Kommentar in `ansible/deploy.yml`-Kopf und/oder `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, dass GHCR-Images jetzt existieren, **ohne** den bestehenden lokalen Build+`docker save`/`load`-Weg in diesem Sprint umzustellen (reine Doku-Ergänzung, kein Funktionsumbau). | S | ✅ Sprint 56 | CIPUB-01 |
+| CIPUB-03 | Verifikation: `actionlint` gegen die geänderte Workflow-Datei, nach echtem Push auf `main` prüfen, dass die Packages tatsächlich unter GHCR erscheinen (Sichtbarkeit public/private je nach Repo-Einstellung explizit dokumentieren), Doku-/Backlog-Status-Update. | S | ✅ Sprint 56 (lokaler Teil: `actionlint` 0 Findings; Post-Merge-GHCR-Check bleibt offener Schritt, s. `tasks/sprints/56-ci-image-publishing.md`) | CIPUB-01 |
+| CIPUB-04 | **CIGATE-06 abschließen** (seit Sprint 41 vorbereitet, nie aktiviert): Branch-Protection/Required-Status-Checks für die 4 blockierenden Jobs real im GitHub-Repo-Setting einschalten — nur nach nochmaliger expliziter Nutzerbestätigung unmittelbar vor der Aktivierung (betrifft alle künftigen PRs). Auf Nutzerwunsch (2026-07-22) in diesen Sprint mitaufgenommen, thematisch unabhängig von CIPUB-01..03. | S | 🔲 blockiert — verfügbares github-MCP-Token hat keine `Administration: Read and write`-Berechtigung (bewusst so eingerichtet), `gh`-CLI nicht installiert; nicht eigenmächtig erweitert/umgangen | CIGATE-06 (Vorbereitung Sprint 41) |
 
 **Nicht Teil dieses Sprints:** Umstellung von `ansible/deploy.yml` auf GHCR-Pull statt lokalem
 Build+Transfer (separate, größere Architektur-Entscheidung — betrifft die "Kein automatischer

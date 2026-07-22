@@ -7,6 +7,20 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 56 — CI-Image-Publishing nach GHCR ✅ (CIPUB-04 offen)
+2026-07-22 → [tasks/sprints/56-ci-image-publishing.md](sprints/56-ci-image-publishing.md)
+- `.github/workflows/docker-build.yml`: `docker/login-action` gegen `ghcr.io` (`GITHUB_TOKEN`,
+  kein neues Secret), `push: true` nur bei echtem `push` auf `main`, Tag-Schema
+  `ghcr.io/<owner>/avoc-<service>:latest`+`:<sha>` für alle 8 Targets. Dabei gefunden: `github.
+  repository_owner` ist gemischt-case (`FloriStein`) — GHCR braucht lowercase, Actions-Ausdrücke
+  kennen kein `toLower()`, daher expliziter `${GITHUB_REPOSITORY_OWNER,,}`-Schritt.
+- `ansible/deploy.yml`/`docs/deployment/UEBERGABE-ABWEICHUNGEN.md`: dokumentiert, dass GHCR-Images
+  jetzt zusätzlich existieren, der lokale Save/Load-Deploy-Weg aber unverändert bleibt.
+- `actionlint` (0 Findings) lokal verifiziert; realer GHCR-Push erst nach Merge prüfbar (offener
+  Schritt, dokumentiert statt simuliert).
+- CIPUB-04 (Branch-Protection-Aktivierung) blockiert: github-MCP-Token hat keine
+  `Administration`-Berechtigung, bewusst nicht erweitert/umgangen — bleibt offen in `backlog.md`.
+
 ## Sprint 55 — Testabdeckungs-Gesamtaudit 2026-07-21, Teil 5 (CI-Härtung) ✅
 2026-07-21 → [tasks/sprints/55-ci-haertung.md](sprints/55-ci-haertung.md)
 - `BenchmarkControlACKRoundtrip`-Skip-Bug (`tests/performance/latency_test.go`) endgültig behoben
