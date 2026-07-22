@@ -1159,6 +1159,54 @@ Registry-Präfigierung (GHCRPULL-03) nicht mehr — Images heißen jetzt `<regis
 
 ---
 
+## EPIC: Continuous Deployment für die lokale VM (Sprint 58, 🔲 geplant)
+
+**Auftrag (2026-07-22):** Nutzer möchte, dass neu in GHCR gebaute Images automatisch auf
+`avoc-local-vm` landen — aktuell (nach Sprint 57) muss `ansible-playbook deploy.yml` nach jedem
+Merge manuell angestoßen werden. Ziel: `push nach main → CI baut+pusht Images (Sprint 56) →
+automatischer Deploy auf avoc-local-vm`, ohne manuellen Schritt.
+
+**Kritische Randbedingung:** Das AVOC-Repo ist **public**. GitHub-gehostete Runner haben keinen
+Netzwerkzugriff auf `avoc-local-vm` (kein öffentliches IP, bewusst keine Portweiterleitung, s.
+`ansible/roles/firewall`) — ein Deploy-Schritt muss also auf einem **Self-hosted Runner** auf dem
+Dev-Rechner laufen. Self-hosted Runner + public Repo ist ein bekanntes Sicherheitsrisiko (beliebige
+PR-Autoren könnten sonst Code auf dem Runner — und damit potenziell gegen `avoc-local-vm` —
+ausführen). Zwingende Mitigation, nicht optional:
+- Der Deploy-Job läuft **ausschließlich** auf `push`-Events nach `main` (niemals auf
+  `pull_request`, auch nicht `pull_request_target`) — durch Branch-Protection (CIPUB-04) kann dort
+  nur landen, was den Nutzer-Merge durchlaufen hat.
+- Repo-Setting "Require approval for all outside collaborators" (GitHub → Settings → Actions →
+  Fork pull request workflows) muss aktiv sein/bleiben, bevor der Runner registriert wird.
+- Der Deploy-Job bleibt ein **separater Job/Workflow**, getrennt von den GitHub-gehosteten
+  Build-/Test-Jobs, die weiterhin auch auf `pull_request` laufen — keine Vermischung von
+  Runner-Typen in einem Job.
+
+**Nutzerentscheidungen (Rückfrage 2026-07-22):**
+- **CD-Ziel:** Nur die lokale Test-VM (`avoc-local-vm`). Kein echter Hetzner-Server in diesem
+  Sprint — der existiert noch nicht und wäre ein eigenes, größeres Vorhaben (Kosten, DNS, TLS).
+- **Mechanismus:** Self-hosted GitHub Actions Runner auf dem Dev-Rechner (native
+  Actions-Integration, Logs/Historie in der GitHub-UI) statt eines von GitHub Actions losgelösten
+  lokalen Poll-/Cron-Skripts.
+- **Trigger:** Automatisches Deployment bei jedem Push nach `main` (echtes Continuous Deployment,
+  kein manuelles Freigabe-Gate über GitHub Environments — angemessen für eine Test-/Staging-VM).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| CD-01 | **Nutzeraktion (mit Anleitung):** Self-hosted Runner auf dem Dev-Rechner registrieren und als systemd-Service einrichten (dauerhaft verfügbar, nicht nur für eine interaktive Sitzung). Vorher prüfen/sicherstellen: Repo-Setting "Require approval for all outside collaborators" aktiv. Runner-Scope: nur dieses Repo, kein Org-weiter Runner. | M | 🔲 | — |
+| CD-02 | Neuer Workflow-Job `deploy-local-vm` (eigene Datei, z. B. `.github/workflows/deploy-local-vm.yml`): `runs-on: self-hosted`, Trigger **nur** `push: branches: [main]` (kein `pull_request`), `needs:` die Build-Jobs aus `docker-build.yml` (oder `workflow_run` nach dessen Erfolg), `concurrency`-Gruppe gegen überlappende Deploys. | M | 🔲 | CD-01 |
+| CD-03 | GHCR-Login im Deploy-Job über `secrets.GITHUB_TOKEN` + `github.actor` statt der persönlichen `GHCR_USERNAME`/`GHCR_TOKEN` des Nutzers (ephemer pro Run, kein langlebiger PAT im CD-Pfad nötig) — Workflow setzt diese als Env-Var für `ansible-playbook deploy.yml`, `ansible/roles/secrets/defaults/main.yml` (GHCRPULL-04) bleibt unverändert (liest weiterhin `GHCR_USERNAME`/`GHCR_TOKEN` aus der Umgebung, unabhängig von deren Herkunft). | S | 🔲 | CD-02 |
+| CD-04 | Post-Deploy Health-Check-Step im Workflow (Frontend HTTPS + Control-Server `/health`, analog der manuellen Sprint-57-Verifikation) — Job schlägt sichtbar fehl (roter Status in der Actions-UI/PR), wenn der Stack nach dem Deploy nicht gesund ist. Bewusst **kein** automatischer Rollback (s. "Nicht Teil dieses Sprints"). | S | 🔲 | CD-02 |
+| CD-05 | Verifikation real: einen harmlosen Commit nach `main` mergen, beobachten dass der Self-hosted-Runner-Job automatisch anspringt, Images pullt, den Stack neu deployt und der Health-Check grün wird — ohne manuellen `ansible-playbook`-Aufruf. | S | 🔲 | CD-03, CD-04 |
+| CD-06 | Doku-Update: README.md CI/CD-Abschnitt, `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, `DECISIONS.MD`, Backlog-Status. Insbesondere den Self-hosted-Runner-Sicherheitshinweis (s. oben) dauerhaft dokumentieren, nicht nur im Sprint-Auftrag. | S | 🔲 | CD-05 |
+
+**Nicht Teil dieses Sprints:** Automatischer Rollback bei fehlgeschlagenem Health-Check (Stack
+bleibt im fehlgeschlagenen Zustand stehen, manueller Eingriff nötig — Rollback-Automatisierung
+wäre ein eigener, größerer Folge-Task); echter Hetzner-Server/Produktivumgebung (s. oben);
+manuelles Freigabe-Gate (GitHub Environments, Nutzerentscheidung: kein Gate); Multi-Environment-
+Pipeline (Staging/Prod-Trennung — es gibt nur eine VM).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
