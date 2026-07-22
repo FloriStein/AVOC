@@ -298,12 +298,13 @@ make proto-gen-ts    # TypeScript → frontend/src/gen/
 | `test-latency.yml` | `go-benchmark` (`make test-latency`), `k6` (`make test-k6`) | Nein — bewusste Abweichung von ADR-006 ("BLOCKING"), siehe Begründung dort und in `tasks/sprints/41-ci-gates-einfuehren.md` (Shared-Runner-Rauschen) |
 | `test-e2e.yml` | `playwright` (`npm run test:e2e`) | Nein (ADR-006 WebRTC/E2E Non-Determinism Policy) |
 
-**Required Status Checks — vorbereitet, NICHT aktiviert:** Branch-Protection ist eine geteilte
-Repo-Einstellung (betrifft alle künftigen PRs) und wurde in Sprint 41 bewusst nicht scharf
-geschaltet — das erfordert explizite Nutzerbestätigung (MB-Regeln zu risikoreichen/schwer
-umkehrbaren Aktionen). Bei Aktivierung sind genau diese 4 Checks als "Required" einzutragen
-(GitHub → Settings → Branches → Branch protection rule für `main` → "Require status checks to
-pass before merging"):
+**Required Status Checks — aktiv seit 2026-07-22 (CIPUB-04, Nachtrag zu Sprint 56):** Branch-
+Protection ist eine geteilte Repo-Einstellung (betrifft alle künftigen PRs) und wurde in Sprint 41
+bewusst vorbereitet, aber nicht scharf geschaltet — Aktivierung erforderte explizite
+Nutzerbestätigung (MB-Regeln zu risikoreichen/schwer umkehrbaren Aktionen). Diese liegt seit
+2026-07-22 vor; `main` verlangt jetzt genau diese 4 Checks als "Required" (GitHub → Settings →
+Branches → Branch protection rule für `main` → "Require status checks to pass before merging"),
+inkl. `enforce_admins=true` (gilt auch für Admin-Accounts, kein Bypass):
 
 ```
 Unit Tests            (test-go.yml       / job: unit)
@@ -313,15 +314,25 @@ Vitest Unit Tests      (test-frontend.yml / job: vitest)
 ```
 
 `golangci-lint`, `go-benchmark`, `k6` und `playwright` bleiben absichtlich außen vor (non-blocking
-per Design, siehe Tabelle oben). Äquivalenter `gh`-Befehl (zur Referenz, nicht ausgeführt):
+per Design, siehe Tabelle oben). Tatsächlich verwendeter `gh`-Befehl (die ursprünglich hier
+dokumentierte `-f`-Variante scheitert an der GitHub-API mit `422`, da `strict`/`enforce_admins`
+als echte Booleans statt Strings erwartet werden und `required_pull_request_reviews`/
+`restrictions` explizit als `null` mitgeschickt werden müssen — daher roher JSON-Body):
 
 ```bash
-gh api repos/:owner/:repo/branches/main/protection \
-  --method PUT \
-  -f "required_status_checks[strict]=true" \
-  -f "required_status_checks[contexts][]=Unit Tests" \
-  -f "required_status_checks[contexts][]=Safety Test Suite" \
-  -f "required_status_checks[contexts][]=Integration Tests (Docker)" \
-  -f "required_status_checks[contexts][]=Vitest Unit Tests" \
-  -f "enforce_admins=true"
+gh api repos/:owner/:repo/branches/main/protection --method PUT --input - <<'EOF'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["Unit Tests", "Safety Test Suite", "Integration Tests (Docker)", "Vitest Unit Tests"]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+EOF
 ```
+
+Benötigt ein Token mit `Administration: Read and write` (Fine-Grained PAT) bzw. `repo`-Scope
+(Classic PAT) — ohne Write-Anteil scheitert der PUT mit `403 Resource not accessible`, auch wenn
+`GET .../protection` und die allgemeine Repo-Permission-Abfrage bereits erfolgreich sind.
