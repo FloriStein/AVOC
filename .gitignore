@@ -30,3 +30,6 @@ Thumbs.db
 # Go test cache
 *.test
 *.out
+
+# Playwright report output when run from repo root (spec source lives in frontend/tests/e2e/)
+/tests/e2e/
