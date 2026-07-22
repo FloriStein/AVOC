@@ -1110,6 +1110,46 @@ scharf geschaltet: `main` verlangt jetzt die 4 Required Status Checks (`Unit Tes
 
 ---
 
+## EPIC: GHCR-Pull-Deployment (Sprint 57, 🔲 geplant)
+
+**Auftrag (2026-07-22):** Nutzer möchte den bestehenden lokalen Build+`docker save`/`load`-Weg
+(`ansible/deploy.yml`, EPIC "Lokale Ansible-VM als Hetzner-Nachbildung" oben) auf einen
+GHCR-Pull-basierten Weg umstellen — Sprint 56 baut/pusht die `avoc-*`-Images bereits nach GHCR,
+das VM-Deployment nutzt sie bisher aber nicht (bewusst so entschieden, s. "Nicht Teil dieses
+Sprints" in der EPIC "CI-Image-Publishing nach GHCR" oben). `scripts/deploy-hetzner.sh` hat
+bereits einen Registry-Pull-Pfad (ursprünglich für Docker Hub, ADR-019) inkl.
+`SKIP_REGISTRY_PULL`-Flag und `REGISTRY`/`DOCKER_USERNAME`/`DOCKER_PASSWORD`-Variablen in
+`ansible/roles/secrets` (aktuell Dummy-Werte, da Pull bei der lokalen VM bislang übersprungen
+wird) — die Plumbing existiert also größtenteils schon, es fehlt die GHCR-Anbindung.
+
+**Nutzerentscheidungen (Rückfrage 2026-07-22):**
+- **Fallback bleibt erhalten:** Der lokale Build+save/load-Weg wird nicht entfernt, sondern bleibt
+  über den bestehenden `SKIP_REGISTRY_PULL`-Mechanismus als Opt-out erreichbar. Nur der
+  Default dreht sich um (GHCR-Pull wird der neue Normalfall für die lokale Test-VM).
+- **Versions-Tags werden mit eingeführt:** Zusätzlich zu `:latest`/`:<git-sha>` (Sprint 56) soll
+  die CI bei echten Git-Tag-Pushes (z. B. `v1.2.3`) einen entsprechenden Versions-Tag nach GHCR
+  pushen, damit `docker-compose.hetzner.yml`s `${VERSION}` auch auf reale Releases zeigen kann,
+  nicht nur auf `latest`.
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| GHCRPULL-01 | **Nutzeraktion:** Least-Privilege GHCR-PAT anlegen — Classic PAT nur mit `read:packages`-Scope (Fine-grained-PATs unterstützen die Packages-API/GHCR-Login nachweislich nicht zuverlässig, s. Diskussion 2026-07-22). Ausdrücklich NICHT den `Administration`-Token aus CIPUB-04 wiederverwenden (falsches Least-Privilege-Prinzip, dieser Token braucht nur Lesezugriff auf Packages). | S | 🔲 | — |
+| GHCRPULL-02 | `.github/workflows/docker-build.yml`: Tag-Push-Trigger ergänzen (`on.push.tags: ['v*']`), bei echtem Tag-Push zusätzlichen Tag `ghcr.io/<owner>/avoc-<service>:<git-tag>` neben `:latest`/`:<sha>` pushen. `pull_request` bleibt unverändert `push: false`. | M | 🔲 | CIPUB-01 (Sprint 56) |
+| GHCRPULL-03 | `infrastructure/compose/docker-compose.hetzner.yml`: die 8 `avoc-*`-Image-Referenzen auf `ghcr.io/<owner-lowercase>/avoc-<service>:${VERSION}` umstellen (Drittanbieter-Images wie `postgres`/`mosquitto`/`mediamtx`/`grafana` bleiben unverändert). | S | 🔲 | GHCRPULL-02 |
+| GHCRPULL-04 | `ansible/roles/secrets` (echten PAT aus GHCRPULL-01 einbinden, NICHT im Repo committen — ansible-vault oder externe, gitignorte Var-Datei) + `ansible/deploy.yml`/`scripts/deploy-hetzner.sh`: `SKIP_REGISTRY_PULL`-Default umdrehen (GHCR-Pull wird Standard für die lokale VM), `REGISTRY`/`DOCKER_USERNAME`/`DOCKER_PASSWORD` real befüllen. Lokaler Fallback-Pfad bleibt über das Flag erreichbar (Nutzerentscheidung oben). | M | 🔲 | GHCRPULL-01, GHCRPULL-03 |
+| GHCRPULL-05 | Verifikation real gegen die laufende lokale VM (`avoc-local-vm`, libvirt/KVM, analog Sprint 49): Internet-Konnektivität VM→`ghcr.io` prüfen, GHCR-Pull-Weg UND Fallback-Weg (`SKIP_REGISTRY_PULL=true`) je einmal real durchspielen, Doku-Updates (`ansible/deploy.yml`-Kopf-Kommentar, `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, README.md CI-Abschnitt, Backlog-/DECISIONS.MD-Status). | M | 🔲 | GHCRPULL-04 |
+
+**Nicht Teil dieses Sprints:** Umbenennung der Docker-Hub-artigen Variablennamen
+`DOCKER_USERNAME`/`DOCKER_PASSWORD` auf generische Registry-Namen (kosmetisch, würde zusätzlich
+`scripts/secrets-setup-hetzner.sh` und `docs/deployment/hetzner-setup.md` anfassen — eigener
+Task falls gewünscht); Umstellung des echten Hetzner-Produktivservers (existiert noch nicht,
+Verifikation daher nur gegen die lokale Test-VM möglich — `docker-compose.hetzner.yml` und
+`deploy-hetzner.sh` werden aber von beiden genutzt, profitieren also indirekt mit); automatisches
+Rollback bei fehlgeschlagenem Pull (bleibt manueller Eingriff wie bisher); Image-Retention-/
+Cleanup-Policies in GHCR (bereits in Sprint 56 als offen vermerkt).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
