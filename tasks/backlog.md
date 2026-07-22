@@ -1207,6 +1207,57 @@ Pipeline (Staging/Prod-Trennung — es gibt nur eine VM).
 
 ---
 
+## EPIC: CI-Sicherheits-Findings beheben — gosec + npm audit (Sprint 59, 🔲 geplant)
+
+**Auftrag (2026-07-22):** `gosec` (Go) und `npm audit` (Frontend) laufen seit Sprint 55 (CIHARD-02,
+`security-scan.yml`) als bewusst nicht-blockierende, informational Checks mit — seitdem laufen sie
+aber bei praktisch jedem PR rot mit, ohne dass die Findings je behoben wurden. Nutzer möchte das
+jetzt beheben (Ziel laut Rückfrage-Kontext dieses Sprints: "möglichst professionelles CI/CD").
+
+**Findings-Snapshot (PR #9, Job-Logs vom 2026-07-22 — als Ausgangspunkt, keine Garantie dass bei
+Sprint-Start identisch, da laufend neuer Code/neue Dependencies dazukommen):**
+
+`gosec` — 44 Issues gesamt:
+- 32× `G104` (CWE-703) "Errors unhandled", Severity LOW, Confidence HIGH — fast ausschließlich
+  `json.NewEncoder(w).Encode(...)` in HTTP-Handlern über `control-server`, `safety-service` u. a.
+  (Encode-Fehler nach bereits gesendetem `Content-Type`-Header ohnehin nicht mehr sinnvoll per
+  HTTP-Response behandelbar — Kandidat: Fehler loggen statt stillschweigend ignorieren).
+- 6× `G114` (CWE-676) "Use of net/http serve function that has no support for setting timeouts",
+  Severity MEDIUM — nacktes `http.ListenAndServe(...)` ohne `ReadHeaderTimeout`/`ReadTimeout`/
+  `WriteTimeout` in `cmd/auth-service`, `cmd/safety-service`, `cmd/webrtc-sfu`,
+  `cmd/control-server`, `cmd/telemetry-service`, `cmd/fleet-service/main.go` (alle 6 Go-Services
+  betroffen — ein `http.Server{}`-Umbau-Muster für alle sechs).
+- 1× `G304` (CWE-22) "Potential file inclusion via variable", Severity MEDIUM — genaue Fundstelle
+  noch nicht lokalisiert, braucht eigene Analyse (echter Path-Traversal-Kandidat oder False
+  Positive mit begründetem `#nosec`-Kommentar).
+
+`npm audit` (`frontend/`) — 4 Vulnerabilities (3 high, 1 low), alle transitiv, alle laut Tool-Output
+mit "fix available via `npm audit fix`":
+- `brace-expansion` (via `@typescript-eslint/typescript-estree`, vermutlich Dev-Dependency) — DoS
+  durch exponentielle `{}`-Expansion (GHSA-3jxr-9vmj-r5cp).
+- `esbuild` 0.27.3–0.28.0 — Arbitrary File Read über den Dev-Server unter Windows
+  (GHSA-g7r4-m6w7-qqqr) — reines Dev-Tooling-Risiko, kein Produktivpfad.
+- `js-yaml` 4.0.0–4.2.0 — quadratischer CPU-Verbrauch durch YAML-Merge-Key-Ketten
+  (GHSA-52cp-r559-cp3m).
+- `undici` 7.0.0–7.27.2 — mehrere CVEs (TLS-Zertifikatsvalidierung umgehbar, HTTP-Header-Injection,
+  WebSocket-DoS, SOCKS5-Proxy-Pool-Reuse u. a.).
+
+| ID | Task | Typ | Status | Abhängigkeiten |
+|----|------|-----|--------|-----------------|
+| SEC-CI-01 | `G104`-Findings beheben: alle `json.NewEncoder(w).Encode(...)`-Aufrufe in HTTP-Handlern — Encode-Fehler statt Ignorieren strukturiert loggen (Response ist zu dem Zeitpunkt bereits committet, kann nicht mehr sinnvoll per HTTP-Statuscode reagiert werden). | M | 🔲 | — |
+| SEC-CI-02 | `G114`-Findings beheben: alle 6 `http.ListenAndServe(...)`-Aufrufe (`cmd/*/main.go`) auf explizites `http.Server{Addr:, Handler:, ReadHeaderTimeout:, ReadTimeout:, WriteTimeout:}` + `.ListenAndServe()` umstellen. Timeout-Werte einheitlich wählen (Vorschlag: 10s ReadHeaderTimeout, an bestehende Latenzbudgets aus `tests/performance` anlehnen). | M | 🔲 | — |
+| SEC-CI-03 | `G304`-Finding lokalisieren + beheben (Pfad-Validierung/Whitelisting) oder als begründetes False-Positive mit `#nosec G304 -- <Begründung>`-Kommentar markieren. | S | 🔲 | — |
+| SEC-CI-04 | `npm audit fix` in `frontend/` ausführen, Ergebnis verifizieren (`npm run build`, `npm test`, Vitest-Suite grün) — falls einzelne Findings einen Major-Bump brauchen, den jeweils isoliert bewerten (Breaking-Change-Risiko vor `--force`). | S | 🔲 | — |
+| SEC-CI-05 | Beide Checks (`gosec (Go)`, `npm audit (Frontend)` in `security-scan.yml`) von informational auf required (Merge-Gate, analog `CIGATE-06`/Branch-Protection) umstellen, sobald SEC-CI-01..04 0 Findings liefern — verhindert stillen Rückfall in denselben Zustand. | S | 🔲 | SEC-CI-01, SEC-CI-02, SEC-CI-03, SEC-CI-04 |
+| SEC-CI-06 | Doku-Update: `DECISIONS.MD` (warum informational → required), Backlog-Status, ggf. `docs/go-style-guide.md`-Hinweis auf `http.Server{}`-Timeout-Pflicht für neue Services. | S | 🔲 | SEC-CI-05 |
+
+**Nicht Teil dieses Sprints:** Zusätzliche SAST-Tools über `gosec`/`npm audit` hinaus (z. B.
+CodeQL/Trivy, s. CIHARD-04-Diskussionspunkt für `buf breaking` — ähnlich gelagerte, separat zu
+entscheidende Erweiterung); automatisierte Dependabot-Konfiguration (eigener, kleinerer Folge-Task
+falls gewünscht).
+
+---
+
 ## EPIC: Tech Debt
 
 | ID | Task | Typ | Status | Notizen |
