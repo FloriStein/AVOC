@@ -7,6 +7,18 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 58 — Continuous Deployment für die lokale VM ✅
+2026-07-22 → [tasks/sprints/58-continuous-deployment-lokale-vm.md](sprints/58-continuous-deployment-lokale-vm.md)
+- Neuer Workflow `.github/workflows/deploy-local-vm.yml`: triggert per `workflow_run` nach
+  `docker-build.yml`, hart gefiltert auf `push`+`main`+`success` (nie `pull_request`), läuft auf
+  einem neu registrierten Self-hosted Runner (Label `avoc-local-deploy`) auf dem Dev-Rechner.
+- GHCR-Login über das ephemere `secrets.GITHUB_TOKEN` statt persönlichem PAT; Post-Deploy
+  Health-Check (Frontend HTTPS + Control-Server `/health`), kein automatischer Rollback.
+- Public-Repo-Risiko (Self-hosted Runner) mitigiert: "Require approval for all outside
+  collaborators" vor Runner-Registrierung verifiziert, Trigger ausschließlich `push`-basiert.
+- Real verifiziert: ein echter `main`-Merge löste den kompletten Pfad (Build → GHCR-Push →
+  automatischer Deploy → Health-Check) ohne jeden manuellen Eingriff aus.
+
 ## Sprint 57 — GHCR-Pull-Deployment ✅
 2026-07-22 → [tasks/sprints/57-ghcr-pull-deployment.md](sprints/57-ghcr-pull-deployment.md)
 - `ansible/deploy.yml` pullt per Default (`avoc_skip_registry_pull: false`) direkt von GHCR statt

@@ -336,3 +336,34 @@ EOF
 Benötigt ein Token mit `Administration: Read and write` (Fine-Grained PAT) bzw. `repo`-Scope
 (Classic PAT) — ohne Write-Anteil scheitert der PUT mit `403 Resource not accessible`, auch wenn
 `GET .../protection` und die allgemeine Repo-Permission-Abfrage bereits erfolgreich sind.
+
+### CI-Image-Publishing & Continuous Deployment — avoc-local-vm (Sprint 56-58)
+
+Zwei weitere Workflows sind bewusst **keine** Merge-Gates (blockieren keinen PR), laufen aber auf
+`push` nach `main`:
+
+| Datei | Trigger | Zweck |
+|-------|---------|-------|
+| `docker-build.yml` | `push: main`, `push: tags v*`, `pull_request` (nur Build, kein Push) | Baut alle 8 `avoc-*`-Images; auf `main`-Push zusätzlich Push nach `ghcr.io/floristein/avoc-*` (`:latest` + `:<sha>`, bei `v*`-Tag zusätzlich `:<tag>`) — CIPUB-01 (Sprint 56), GHCRPULL-02 (Sprint 57) |
+| `deploy-local-vm.yml` | `workflow_run` nach `docker-build.yml`, gefiltert auf `event=push`, `head_branch=main`, `conclusion=success` | Deployt automatisch auf `avoc-local-vm` — CD-02..04 (Sprint 58) |
+
+**Voller CD-Pfad:** `push nach main → docker-build.yml baut+pusht Images nach GHCR → deploy-local-vm.yml pullt via ansible-playbook deploy.yml + Health-Check`. Kein manueller Schritt mehr nötig (vor Sprint 58 musste `ansible-playbook deploy.yml` nach jedem Merge von Hand angestoßen werden).
+
+**Sicherheit — Self-hosted Runner auf public Repo:** `deploy-local-vm.yml` läuft auf einem
+Self-hosted Runner auf dem Dev-Rechner (Label `avoc-local-deploy`) — der einzige Weg, das
+nicht-öffentliche `avoc-local-vm` zu erreichen. Da das Repo **public** ist, ist ein Self-hosted
+Runner grundsätzlich ein Risiko (beliebige Fork-PR-Autoren könnten sonst Code auf dem Runner
+ausführen). Mitigation, zwingend beibehalten:
+- Trigger ausschließlich `workflow_run` nach einem `push`-Build auf `main` — **niemals**
+  `pull_request`/`pull_request_target` auf diesem Job.
+- Repo-Setting "Require approval for all outside collaborators" (Settings → Actions → General →
+  Fork pull request workflows) muss aktiv bleiben.
+- GHCR-Login im Deploy-Job über das ephemere `secrets.GITHUB_TOKEN` — kein persönlicher PAT im
+  automatisierten Pfad.
+- Der Deploy-Job bleibt strikt getrennt von den GitHub-gehosteten Build-/Test-Jobs.
+
+**Runner-lokale Voraussetzung (einmalig, nicht committet):** `~/avoc-deploy/hosts.local.ini` auf
+dem Runner-Host — Pendant zu `ansible/inventory/hosts.ini`s `<VM_IP_PLACEHOLDER>` (der bei jedem
+Checkout zurückgesetzt wird), lebt bewusst außerhalb des Checkout-Baums mit der echten VM-IP.
+
+**Kein automatischer Rollback:** Schlägt der Post-Deploy-Health-Check (Frontend HTTPS + Control-Server `/health`) fehl, bleibt der Stack im fehlgeschlagenen Zustand stehen und der Workflow-Run zeigt rot — bewusste Design-Entscheidung (Sprint 58), manueller Eingriff nötig.
