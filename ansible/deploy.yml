@@ -5,27 +5,31 @@
 # avoc-User, Firewall, .env + SSL-Zertifikat vorhanden — s. roles/bootstrap, roles/firewall,
 # roles/secrets).
 #
-# Voraussetzung für den Image-Transfer: die in docker-compose.hetzner.yml referenzierten
-# avoc-*-Images sind auf dem Dev-Rechner bereits lokal gebaut (z. B. 'make build-prod' +
-# Retag ohne Registry-Präfix, oder ein künftiges eigenes Build-Target — siehe
-# tasks/backlog.md EPIC, Notiz zu LOCALVM-07). Dieses Playbook baut NICHT selbst, sondern
-# transferiert nur — Trennung Build/Deploy, analog zum 'push: build-prod'-Aufbau im Makefile.
+# GHCRPULL-04 (tasks/backlog.md EPIC "GHCR-Pull-Deployment", Sprint 57): Default ist jetzt
+# GHCR-Pull — deploy-hetzner.sh loggt sich mit den echten (per Umgebungsvariable injizierten,
+# s. ansible/roles/secrets/defaults/main.yml) GHCR-Zugangsdaten ein und zieht die avoc-*-Images
+# direkt von ghcr.io. Dieses Playbook selbst baut nichts, es überträgt nur Configs + startet
+# den Stack; der eigentliche Pull passiert in deploy-hetzner.sh.
 #
-# Kein Docker-Hub-Roundtrip (Architektur-Entscheidung, s. EPIC "Lokale Ansible-VM..."):
-# docker save (lokal) -> copy -> docker load (VM) — dasselbe etablierte Muster wie
-# scripts/deploy.sh (EC2, "Übergabe-Abweichung von ADR-019", s. docker-compose.prod.yml-Kommentar
-# am Dateianfang). scripts/deploy-hetzner.sh selbst bleibt bis auf einen klar markierten,
-# optionalen SKIP_REGISTRY_PULL-Zweig 1:1 aus docs/deployment/hetzner-setup.md Schritt 7
+# Fallback (avoc_skip_registry_pull: true, Default false — s. group_vars/local_vm.yml): der
+# alte Weg aus Sprint 48 (LOCALVM-07) bleibt erhalten — docker save (lokal) -> copy -> docker
+# load (VM), kein Registry-Roundtrip. Voraussetzung dafür: die avoc-*-Images sind auf dem
+# Dev-Rechner bereits lokal gebaut UND mit demselben ${REGISTRY}-Präfix getaggt, den die VM in
+# ihrer .env hat (z. B. 'make build-prod REGISTRY=ghcr.io/floristein' oder Retag von Hand — s.
+# docker-compose.hetzner.yml-Kopfkommentar). Dasselbe etablierte Transfer-Muster wie
+# scripts/deploy.sh (EC2, "Übergabe-Abweichung von ADR-019", s. docker-compose.prod.yml-
+# Kommentar am Dateianfang). scripts/deploy-hetzner.sh selbst bleibt bis auf den klar
+# markierten SKIP_REGISTRY_PULL-Zweig 1:1 aus docs/deployment/hetzner-setup.md Schritt 7
 # übernommen — s. Kommentar dort.
 #
 # Seit Sprint 56 (EPIC "CI-Image-Publishing nach GHCR", CIPUB-01) baut/pusht
-# .github/workflows/docker-build.yml die avoc-*-Images bei jedem Push auf main zusätzlich nach
-# ghcr.io. Das ändert NICHTS an diesem Playbook: der obige lokale Build+docker save/load-Weg
-# bleibt der einzige Transferweg auf die VM. GHCR-Pull hier einzubauen wäre eine eigene,
-# größere Architektur-Entscheidung (s. "Nicht Teil dieses Sprints" in tasks/backlog.md EPIC
-# "CI-Image-Publishing nach GHCR") und ist bewusst nicht Teil von Sprint 56.
+# .github/workflows/docker-build.yml die avoc-*-Images bei jedem Push auf main (und seit
+# Sprint 57 bei jedem v*-Tag-Push zusätzlich versioniert) nach ghcr.io — das ist die Quelle,
+# von der dieses Playbook im Default-Fall pullt.
 #
-# Aufruf: ansible-playbook deploy.yml   (aus dem Verzeichnis ansible/)
+# Aufruf (GHCR-Pull, Default): GHCR_USERNAME=<user> GHCR_TOKEN=<PAT> ansible-playbook deploy.yml
+# Aufruf (Fallback): ansible-playbook deploy.yml -e avoc_skip_registry_pull=true
+# (jeweils aus dem Verzeichnis ansible/)
 # Syntax-Check ohne Zielmaschine: ansible-playbook deploy.yml --syntax-check
 
 - name: AVOC lokale VM — Deployment (Configs + Images + Stack-Start)
@@ -128,7 +132,9 @@
         - dashboards.yml
         - avoc.json
 
-    # ─── Images: lokal gebaut, ohne Docker-Hub-Roundtrip übertragen ────────
+    # ─── Fallback (avoc_skip_registry_pull: true): Images lokal gebaut, ohne Registry-Roundtrip
+    # übertragen. Im Default-Fall (false) übersprungen — deploy-hetzner.sh pullt dann direkt von
+    # GHCR, dieser ganze Block ist nur für den Sprint-48-Fallback nötig.
     - name: Benötigte Images aus docker-compose.hetzner.yml ermitteln (lokal)
       ansible.builtin.command:
         cmd: docker compose -f {{ repo_root }}/infrastructure/compose/docker-compose.hetzner.yml config --images
@@ -136,8 +142,13 @@
       become: false
       register: avoc_required_images
       changed_when: false
+      when: avoc_skip_registry_pull | bool
       environment:
         VERSION: "{{ deploy_version }}"
+        # Muss zum REGISTRY-Wert in der echten .env passen (roles/secrets), sonst findet der
+        # Fallback-Pfad die per docker save/load erwarteten Image-Tags nicht — s.
+        # GHCR_REGISTRY-Override in ansible/roles/secrets/defaults/main.yml.
+        REGISTRY: "{{ lookup('env', 'GHCR_REGISTRY') | default('ghcr.io/floristein', true) }}"
         DB_PASSWORD: "unused-for-image-listing"
         JWT_SECRET: "unused-for-image-listing"
         WHIP_STREAM_KEY: "unused-for-image-listing"
@@ -152,7 +163,8 @@
 
     - name: avoc-*-Images herausfiltern (nur selbst gebaute, keine Basisimages wie postgres/coturn/grafana)
       ansible.builtin.set_fact:
-        avoc_local_images: "{{ avoc_required_images.stdout_lines | select('match', '^avoc-') | list }}"
+        avoc_local_images: "{{ avoc_required_images.stdout_lines | select('search', 'avoc-') | list }}"
+      when: avoc_skip_registry_pull | bool
 
     - name: Prüfen, welche Images lokal tatsächlich vorhanden sind
       ansible.builtin.command:
@@ -163,6 +175,7 @@
       register: avoc_image_check
       changed_when: false
       failed_when: false
+      when: avoc_skip_registry_pull | bool
 
     - name: Warnen, falls Images lokal fehlen (vor erneutem Lauf lokal bauen, s. Playbook-Kopfkommentar)
       ansible.builtin.debug:
@@ -170,14 +183,14 @@
       loop: "{{ avoc_image_check.results }}"
       loop_control:
         label: "{{ item.item }}"
-      when: item.rc != 0
+      when: avoc_skip_registry_pull | bool and item.rc != 0
 
     - name: Images lokal als Tar-Archiv sichern (docker save)
       ansible.builtin.command:
         cmd: "docker save -o {{ repo_root }}/.avoc-images-transfer.tar {{ avoc_local_images | join(' ') }}"
       delegate_to: localhost
       become: false
-      when: avoc_local_images | length > 0
+      when: avoc_skip_registry_pull | bool and avoc_local_images | length > 0
       changed_when: true
 
     - name: Image-Tar auf die VM übertragen
@@ -185,19 +198,19 @@
         src: "{{ repo_root }}/.avoc-images-transfer.tar"
         dest: "/tmp/avoc-images-transfer.tar"
         mode: "0644"
-      when: avoc_local_images | length > 0
+      when: avoc_skip_registry_pull | bool and avoc_local_images | length > 0
 
     - name: Images auf der VM per docker load einspielen
       ansible.builtin.command:
         cmd: "docker load -i /tmp/avoc-images-transfer.tar"
-      when: avoc_local_images | length > 0
+      when: avoc_skip_registry_pull | bool and avoc_local_images | length > 0
       changed_when: true
 
     - name: Temporäre Image-Datei auf der VM aufräumen
       ansible.builtin.file:
         path: /tmp/avoc-images-transfer.tar
         state: absent
-      when: avoc_local_images | length > 0
+      when: avoc_skip_registry_pull | bool and avoc_local_images | length > 0
 
     - name: Temporäre Image-Datei lokal aufräumen
       ansible.builtin.file:
@@ -205,19 +218,18 @@
         state: absent
       delegate_to: localhost
       become: false
-      when: avoc_local_images | length > 0
+      when: avoc_skip_registry_pull | bool and avoc_local_images | length > 0
 
     # ─── deploy-hetzner.sh ausführen ────────────────────────────────────────
-    # SKIP_REGISTRY_PULL=true: Bilder liegen bereits lokal geladen vor (s. oben) — kein
-    # Docker-Hub-Login/-Pull nötig oder gewünscht (Architektur-Entscheidung, s. Kopfkommentar
-    # dieser Datei + scripts/deploy-hetzner.sh-Kommentar).
+    # SKIP_REGISTRY_PULL wird 1:1 aus avoc_skip_registry_pull durchgereicht (Default false =
+    # GHCR-Login+Pull; true = Fallback, Bilder liegen bereits lokal geladen vor, s. oben).
     - name: deploy-hetzner.sh auf der VM ausführen
       ansible.builtin.command:
         cmd: "bash {{ app_dir }}/deploy-hetzner.sh"
       become_user: "{{ avoc_user }}"
       environment:
         VERSION: "{{ deploy_version }}"
-        SKIP_REGISTRY_PULL: "true"
+        SKIP_REGISTRY_PULL: "{{ avoc_skip_registry_pull | lower }}"
       register: avoc_deploy_result
       changed_when: true
 

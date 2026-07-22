@@ -12,17 +12,19 @@
 #   - /home/avoc/app/.env vorhanden (chmod 600), enthält alle Secrets
 #   - docker-compose.hetzner.yml liegt in APP_DIR
 #
-# Verwendung (echter Hetzner-Server, Standardfall — 1:1 wie in hetzner-setup.md):
+# Verwendung (Standardfall, seit Sprint 57 GHCRPULL-04 — GHCR-Pull statt Docker Hub):
 #   VERSION=latest bash ~/app/deploy-hetzner.sh
+#   Login-Registry wird aus REGISTRY (.env, z. B. "ghcr.io/floristein") abgeleitet — der Teil
+#   vor dem ersten "/" ist der Host, den `docker login` erwartet. DOCKER_USERNAME/
+#   DOCKER_PASSWORD (Namen unverändert aus der Docker-Hub-Ära, s. "Nicht Teil dieses Sprints"
+#   in tasks/backlog.md EPIC "GHCR-Pull-Deployment") enthalten den GHCR-Nutzernamen + PAT.
 #
-# SKIP_REGISTRY_PULL=true (Ergänzung, nicht in hetzner-setup.md dokumentiert):
-#   Überspringt Docker-Hub-Login + 'docker compose pull' und prüft stattdessen nur, ob die
+# SKIP_REGISTRY_PULL=true (Fallback, s. ansible/deploy.yml avoc_skip_registry_pull):
+#   Überspringt Registry-Login + 'docker compose pull' und prüft stattdessen nur, ob die
 #   benötigten Images bereits lokal vorhanden sind (identisches Muster wie scripts/deploy.sh
 #   auf EC2, "Übergabe-Abweichung von ADR-019" — s. docker-compose.prod.yml-Kommentar).
-#   Wird von ansible/deploy.yml für die lokale Test-VM gesetzt (Architektur-Entscheidung
-#   "kein Docker-Hub-Roundtrip", s. tasks/backlog.md EPIC "Lokale Ansible-VM als
-#   Hetzner-Nachbildung"). Für den echten Hetzner-Server bleibt die Variable unbenutzt
-#   (Default: false) — dort läuft der Docker-Hub-Weg aus hetzner-setup.md unverändert weiter.
+#   Default seit Sprint 57: false (GHCR-Pull ist der Normalfall, auch für die lokale Test-VM —
+#   s. tasks/backlog.md EPIC "GHCR-Pull-Deployment").
 #
 set -euo pipefail
 
@@ -91,10 +93,12 @@ if [ "$SKIP_REGISTRY_PULL" = "true" ]; then
   echo ""
   echo "[3/4] (übersprungen — kein Pull bei SKIP_REGISTRY_PULL=true)"
 else
-  # ─── Docker Hub Login ───────────────────────────────────────────────────────
+  # ─── Registry-Login ──────────────────────────────────────────────────────────
+  # Host = Teil von REGISTRY vor dem ersten "/" (z. B. "ghcr.io/floristein" -> "ghcr.io").
+  REGISTRY_HOST="${REGISTRY%%/*}"
   echo ""
-  echo "[2/4] Docker Hub Login..."
-  echo "$DOCKER_PASSWORD" | docker login \
+  echo "[2/4] Registry-Login (${REGISTRY_HOST})..."
+  echo "$DOCKER_PASSWORD" | docker login "$REGISTRY_HOST" \
     --username "$DOCKER_USERNAME" \
     --password-stdin
 

@@ -11,10 +11,15 @@ name: Docker Build Verification
 # CIPUB-01 (tasks/backlog.md EPIC "CI-Image-Publishing nach GHCR", Sprint 56): on a push to
 # main, images are additionally pushed to GHCR (ghcr.io/<owner>/avoc-<service>:latest +
 # :<git-sha>). On pull_request, push stays false — no images from unverified PR branches.
+#
+# GHCRPULL-02 (tasks/backlog.md EPIC "GHCR-Pull-Deployment", Sprint 57): on a push of a `v*`
+# tag, an additional version tag (ghcr.io/<owner>/avoc-<service>:<git-tag>) is pushed, so VM
+# deployments can pin to a real release instead of floating `:latest`.
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -45,12 +50,31 @@ jobs:
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCRPULL-02: on a `v*` tag push, publish only the version tag (not :latest — :latest
+      # tracks main, a tag push may not be built from main's current HEAD).
+      - name: Compute image tags
+        id: tags
+        run: |
+          IMG="ghcr.io/${OWNER_LC}/avoc-${SERVICE}"
+          {
+            echo "tags<<TAGSEOF"
+            if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo "$IMG:${{ github.ref_name }}"
+            else
+              echo "$IMG:latest"
+              echo "$IMG:${{ github.sha }}"
+            fi
+            echo "TAGSEOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          SERVICE: ${{ matrix.service }}
 
       - name: docker buildx build
         uses: docker/build-push-action@v6
@@ -59,10 +83,8 @@ jobs:
           file: infrastructure/docker/go-service.Dockerfile
           build-args: |
             SERVICE_NAME=${{ matrix.service }}
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: |
-            ghcr.io/${{ env.OWNER_LC }}/avoc-${{ matrix.service }}:latest
-            ghcr.io/${{ env.OWNER_LC }}/avoc-${{ matrix.service }}:${{ github.sha }}
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') }}
+          tags: ${{ steps.tags.outputs.tags }}
 
   frontend:
     name: Build frontend
@@ -80,22 +102,35 @@ jobs:
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image tags
+        id: tags
+        run: |
+          IMG="ghcr.io/${OWNER_LC}/avoc-frontend"
+          {
+            echo "tags<<TAGSEOF"
+            if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo "$IMG:${{ github.ref_name }}"
+            else
+              echo "$IMG:latest"
+              echo "$IMG:${{ github.sha }}"
+            fi
+            echo "TAGSEOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: docker buildx build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infrastructure/docker/frontend.Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: |
-            ghcr.io/${{ env.OWNER_LC }}/avoc-frontend:latest
-            ghcr.io/${{ env.OWNER_LC }}/avoc-frontend:${{ github.sha }}
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') }}
+          tags: ${{ steps.tags.outputs.tags }}
 
   vehicle-mock:
     name: Build vehicle-mock
@@ -113,19 +148,32 @@ jobs:
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image tags
+        id: tags
+        run: |
+          IMG="ghcr.io/${OWNER_LC}/avoc-vehicle-mock"
+          {
+            echo "tags<<TAGSEOF"
+            if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo "$IMG:${{ github.ref_name }}"
+            else
+              echo "$IMG:latest"
+              echo "$IMG:${{ github.sha }}"
+            fi
+            echo "TAGSEOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: docker buildx build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infrastructure/docker/vehicle-mock.Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: |
-            ghcr.io/${{ env.OWNER_LC }}/avoc-vehicle-mock:latest
-            ghcr.io/${{ env.OWNER_LC }}/avoc-vehicle-mock:${{ github.sha }}
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') }}
+          tags: ${{ steps.tags.outputs.tags }}
