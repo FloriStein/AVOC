@@ -14,6 +14,9 @@ frontend/node_modules/
 # Docker Hub username helper (optional local file for make push)
 .docker-username
 
+# GHCR-Pull-Credentials (GHCRPULL-01/04, Sprint 57) — lokal, nie committen
+ansible/.ghcr-credentials.sh
+
 # Local-only reference material, not part of the repo
 requirements.pdf
 

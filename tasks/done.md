@@ -7,6 +7,22 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 57 — GHCR-Pull-Deployment ✅
+2026-07-22 → [tasks/sprints/57-ghcr-pull-deployment.md](sprints/57-ghcr-pull-deployment.md)
+- `ansible/deploy.yml` pullt per Default (`avoc_skip_registry_pull: false`) direkt von GHCR statt
+  Images lokal zu bauen und per `docker save`/`load` zu übertragen; alter Weg bleibt als expliziter
+  Fallback erhalten. `docker-compose.hetzner.yml`: alle 8 `avoc-*`-Images jetzt `${REGISTRY}`-
+  präfigiert. CI (`docker-build.yml`) pusht bei `v*`-Tag-Pushes zusätzlich einen Versions-Tag.
+- Nutzer legte einen Least-Privilege Classic-PAT (`read:packages`) an, lokal per gitignored
+  `ansible/.ghcr-credentials.sh` bereitgestellt (nie im Chat sichtbar).
+- Beide Wege (GHCR-Pull + Fallback) real gegen `avoc-local-vm` durchgespielt: VM gestartet, Stack
+  je einmal vollständig neu deployt, Health-Checks (Frontend HTTPS + Control-Server `/health`)
+  beide Male HTTP 200. `select('match','^avoc-')`→`select('search','avoc-')`-Fix in
+  `ansible/deploy.yml` nötig (Images heißen nach der Registry-Präfigierung nicht mehr `avoc-...`).
+- `docs/deployment/UEBERGABE-ABWEICHUNGEN.md` Abweichung 2 korrigiert (war durch GHCRPULL-04 nicht
+  mehr aktuell). `hetzner-setup.md`-Volltextumstellung bewusst offen gelassen (nur der nicht
+  existierende echte Hetzner-Server betroffen).
+
 ## Sprint 56 — CI-Image-Publishing nach GHCR ✅ (CIPUB-04 offen)
 2026-07-22 → [tasks/sprints/56-ci-image-publishing.md](sprints/56-ci-image-publishing.md)
 - `.github/workflows/docker-build.yml`: `docker/login-action` gegen `ghcr.io` (`GITHUB_TOKEN`,
