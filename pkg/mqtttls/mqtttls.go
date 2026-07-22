@@ -15,6 +15,8 @@ import (
 // that trusts it — no InsecureSkipVerify, so a misconfigured or missing CA fails the connection
 // instead of silently falling back to an unverified one (CLAUDE.MD §0).
 func LoadClientConfig(caCertPath string) (*tls.Config, error) {
+	// #nosec G304 -- caCertPath is an operator-supplied server config value (CA cert path for
+	// MQTTS), never derived from user/network input — see package doc above.
 	caCert, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("mqtttls: read CA cert %s: %w", caCertPath, err)

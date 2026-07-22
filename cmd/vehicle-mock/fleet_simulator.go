@@ -126,7 +126,7 @@ func (s *fleetVehicleSimulator) tick() (fleetgateway.VehicleStatusEvent, *fleetg
 	}
 
 	var alert *fleetgateway.VehicleAlertEvent
-	if !s.charging && rand.Float64() < 0.005 {
+	if !s.charging && rand.Float64() < 0.005 { // #nosec G404 -- simulation probability, not security-relevant
 		alert = &fleetgateway.VehicleAlertEvent{
 			VehicleID: s.vehicleID,
 			Severity:  "critical",

@@ -139,8 +139,7 @@ func (h *Handler) readLoop(conn *websocket.Conn, claims *vehicleClaims) {
 	}()
 
 	conn.SetPongHandler(func(_ string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
 	for {

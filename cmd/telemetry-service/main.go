@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"avoc/internal/telemetryservice"
 	"avoc/pkg/logger"
@@ -34,7 +35,14 @@ func main() {
 	mux := newTelemetryMux(client)
 
 	log.Info("Telemetry Service starting", "port", port, "broker", broker)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal("Telemetry Service failed", "error", err)
 	}
 }
@@ -54,7 +62,7 @@ func newTelemetryMux(client *telemetryservice.Client) *http.ServeMux {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"vehicle_id":         event.Header.GetVehicleId(),
 			"session_id":         event.Header.GetSessionId(),
 			"speed_kmh":          event.SpeedKmh,
@@ -68,12 +76,16 @@ func newTelemetryMux(client *telemetryservice.Client) *http.ServeMux {
 			"brake_commanded":    event.BrakeCommanded,
 			"steer_actual":       event.SteerActual,
 			"throttle_actual":    event.ThrottleActual,
-		})
+		}); err != nil {
+			log.Warn("failed to encode response", "error", err)
+		}
 	})
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "telemetry-service"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "telemetry-service"}); err != nil {
+			log.Warn("failed to encode response", "error", err)
+		}
 	})
 
 	return mux

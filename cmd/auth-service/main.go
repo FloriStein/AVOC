@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"avoc/internal/authservice"
 	pkgdb "avoc/pkg/db"
@@ -50,7 +51,14 @@ func main() {
 	mux.HandleFunc("GET /health", handler.Health)
 
 	log.Info("Auth Service starting", "port", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal("Auth Service failed", "error", err)
 	}
 }

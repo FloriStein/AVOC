@@ -1214,7 +1214,7 @@ grünen Health-Check komplett ohne manuellen Eingriff aus. Details
 
 ---
 
-## EPIC: CI-Sicherheits-Findings beheben — gosec + npm audit (Sprint 59, 🔲 geplant)
+## EPIC: CI-Sicherheits-Findings beheben — gosec + npm audit (Sprint 59, ✅ vollständig)
 
 **Auftrag (2026-07-22):** `gosec` (Go) und `npm audit` (Frontend) laufen seit Sprint 55 (CIHARD-02,
 `security-scan.yml`) als bewusst nicht-blockierende, informational Checks mit — seitdem laufen sie
@@ -1251,17 +1251,21 @@ mit "fix available via `npm audit fix`":
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| SEC-CI-01 | `G104`-Findings beheben: alle `json.NewEncoder(w).Encode(...)`-Aufrufe in HTTP-Handlern — Encode-Fehler statt Ignorieren strukturiert loggen (Response ist zu dem Zeitpunkt bereits committet, kann nicht mehr sinnvoll per HTTP-Statuscode reagiert werden). | M | 🔲 | — |
-| SEC-CI-02 | `G114`-Findings beheben: alle 6 `http.ListenAndServe(...)`-Aufrufe (`cmd/*/main.go`) auf explizites `http.Server{Addr:, Handler:, ReadHeaderTimeout:, ReadTimeout:, WriteTimeout:}` + `.ListenAndServe()` umstellen. Timeout-Werte einheitlich wählen (Vorschlag: 10s ReadHeaderTimeout, an bestehende Latenzbudgets aus `tests/performance` anlehnen). | M | 🔲 | — |
-| SEC-CI-03 | `G304`-Finding lokalisieren + beheben (Pfad-Validierung/Whitelisting) oder als begründetes False-Positive mit `#nosec G304 -- <Begründung>`-Kommentar markieren. | S | 🔲 | — |
-| SEC-CI-04 | `npm audit fix` in `frontend/` ausführen, Ergebnis verifizieren (`npm run build`, `npm test`, Vitest-Suite grün) — falls einzelne Findings einen Major-Bump brauchen, den jeweils isoliert bewerten (Breaking-Change-Risiko vor `--force`). | S | 🔲 | — |
-| SEC-CI-05 | Beide Checks (`gosec (Go)`, `npm audit (Frontend)` in `security-scan.yml`) von informational auf required (Merge-Gate, analog `CIGATE-06`/Branch-Protection) umstellen, sobald SEC-CI-01..04 0 Findings liefern — verhindert stillen Rückfall in denselben Zustand. | S | 🔲 | SEC-CI-01, SEC-CI-02, SEC-CI-03, SEC-CI-04 |
-| SEC-CI-06 | Doku-Update: `DECISIONS.MD` (warum informational → required), Backlog-Status, ggf. `docs/go-style-guide.md`-Hinweis auf `http.Server{}`-Timeout-Pflicht für neue Services. | S | 🔲 | SEC-CI-05 |
+| SEC-CI-01 | `G104`-Findings beheben: alle `json.NewEncoder(w).Encode(...)`-Aufrufe in HTTP-Handlern — Encode-Fehler statt Ignorieren strukturiert loggen (Response ist zu dem Zeitpunkt bereits committet, kann nicht mehr sinnvoll per HTTP-Statuscode reagiert werden). | M | ✅ Sprint 59 | — |
+| SEC-CI-02 | `G114`-Findings beheben: alle 6 `http.ListenAndServe(...)`-Aufrufe (`cmd/*/main.go`) auf explizites `http.Server{Addr:, Handler:, ReadHeaderTimeout:, ReadTimeout:, WriteTimeout:}` + `.ListenAndServe()` umstellen. Timeout-Werte einheitlich wählen (Vorschlag: 10s ReadHeaderTimeout, an bestehende Latenzbudgets aus `tests/performance` anlehnen). | M | ✅ Sprint 59 | — |
+| SEC-CI-03 | `G304`-Finding lokalisieren + beheben (Pfad-Validierung/Whitelisting) oder als begründetes False-Positive mit `#nosec G304 -- <Begründung>`-Kommentar markieren. | S | ✅ Sprint 59 | — |
+| SEC-CI-04 | `npm audit fix` in `frontend/` ausführen, Ergebnis verifizieren (`npm run build`, `npm test`, Vitest-Suite grün) — falls einzelne Findings einen Major-Bump brauchen, den jeweils isoliert bewerten (Breaking-Change-Risiko vor `--force`). | S | ✅ Sprint 59 | — |
+| SEC-CI-05 | Beide Checks (`gosec (Go)`, `npm audit (Frontend)` in `security-scan.yml`) von informational auf required (Merge-Gate, analog `CIGATE-06`/Branch-Protection) umstellen, sobald SEC-CI-01..04 0 Findings liefern — verhindert stillen Rückfall in denselben Zustand. | S | ✅ Sprint 59 | SEC-CI-01, SEC-CI-02, SEC-CI-03, SEC-CI-04 |
+| SEC-CI-06 | Doku-Update: `DECISIONS.MD` (warum informational → required), Backlog-Status, ggf. `docs/go-style-guide.md`-Hinweis auf `http.Server{}`-Timeout-Pflicht für neue Services. | S | ✅ Sprint 59 | SEC-CI-05 |
 
 **Nicht Teil dieses Sprints:** Zusätzliche SAST-Tools über `gosec`/`npm audit` hinaus (z. B.
 CodeQL/Trivy, s. CIHARD-04-Diskussionspunkt für `buf breaking` — ähnlich gelagerte, separat zu
 entscheidende Erweiterung); automatisierte Dependabot-Konfiguration (eigener, kleinerer Folge-Task
 falls gewünscht).
+
+**Ergebnis (2026-07-22):** Alle 6 Tasks umgesetzt, real gegen einen lokal installierten `gosec`
+(nicht nur den CI-Snapshot) verifiziert — 44 → 0 Findings, `npm audit` 4 → 0 Vulnerabilities.
+Details `tasks/sprints/59-ci-sicherheits-findings-beheben.md`.
 
 ---
 

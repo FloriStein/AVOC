@@ -207,8 +207,7 @@ func (h *WSHandler) readLoop(conn *websocket.Conn, claims *Claims, sess session.
 	defer h.handleWSDisconnect(ws)
 
 	conn.SetPongHandler(func(_ string) error {
-		conn.SetReadDeadline(time.Now().Add(heartbeatInterval * 2))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(heartbeatInterval * 2))
 	})
 
 	for {

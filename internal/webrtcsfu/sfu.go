@@ -119,17 +119,23 @@ func (s *SFU) newPeerConnection() (*webrtc.PeerConnection, error) {
 func negotiateAnswer(pc *webrtc.PeerConnection, sdpOffer string) (string, error) {
 	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdpOffer}
 	if err := pc.SetRemoteDescription(offer); err != nil {
-		pc.Close()
+		if closeErr := pc.Close(); closeErr != nil {
+			svcLog.Warn("failed to close peer connection after SetRemoteDescription error", "error", closeErr)
+		}
 		return "", err
 	}
 
 	answer, err := pc.CreateAnswer(nil)
 	if err != nil {
-		pc.Close()
+		if closeErr := pc.Close(); closeErr != nil {
+			svcLog.Warn("failed to close peer connection after CreateAnswer error", "error", closeErr)
+		}
 		return "", err
 	}
 	if err := pc.SetLocalDescription(answer); err != nil {
-		pc.Close()
+		if closeErr := pc.Close(); closeErr != nil {
+			svcLog.Warn("failed to close peer connection after SetLocalDescription error", "error", closeErr)
+		}
 		return "", err
 	}
 
@@ -214,7 +220,9 @@ func (s *SFU) forwardTrack(sessionID string, track *webrtc.TrackRemote) {
 func (s *SFU) dropStreams(sessionID string) {
 	for id, peer := range s.peers {
 		if peer.SessionID == sessionID {
-			peer.Connection.Close()
+			if err := peer.Connection.Close(); err != nil {
+				svcLog.Warn("failed to close peer connection", "peer_id", id, "session_id", sessionID, "error", err)
+			}
 			delete(s.peers, id)
 			svcLog.Info("peer dropped", "peer_id", id, "session_id", sessionID)
 		}
@@ -233,11 +241,15 @@ func (s *SFU) SubscribeOperator(sessionID, operatorID, sdpOffer string) (string,
 		"video", "avoc-vehicle",
 	)
 	if err != nil {
-		pc.Close()
+		if closeErr := pc.Close(); closeErr != nil {
+			svcLog.Warn("failed to close peer connection after NewTrackLocalStaticRTP error", "error", closeErr)
+		}
 		return "", err
 	}
 	if _, err := pc.AddTrack(localTrack); err != nil {
-		pc.Close()
+		if closeErr := pc.Close(); closeErr != nil {
+			svcLog.Warn("failed to close peer connection after AddTrack error", "error", closeErr)
+		}
 		return "", err
 	}
 
@@ -293,7 +305,9 @@ func (s *SFU) removePeer(peerID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if peer, ok := s.peers[peerID]; ok {
-		peer.Connection.Close()
+		if err := peer.Connection.Close(); err != nil {
+			svcLog.Warn("failed to close peer connection", "peer_id", peerID, "error", err)
+		}
 		delete(s.peers, peerID)
 	}
 }

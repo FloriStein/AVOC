@@ -80,3 +80,15 @@ zwei verschiedene "Zugriffspfade" auf denselben Wert existieren (Bootstrap-Code 
 an der Testpflicht aus CLAUDE.MD Abschnitt 17 — extrahierte Helper brauchen keine eigenen Tests,
 wenn sie über den bestehenden Test der ursprünglichen Funktion bereits abgedeckt sind (Verhalten,
 nicht Struktur, ist das Testobjekt).
+
+**HTTP-Server-Timeouts (SEC-CI-02, Sprint 59):** Kein Service darf `http.ListenAndServe(addr, mux)`
+direkt aufrufen (gosec `G114`, seit Sprint 59 ein Required-Check, s. README.md "Required Status
+Checks"). Stattdessen explizit `http.Server{Addr:, Handler:, ReadHeaderTimeout:, ReadTimeout:,
+WriteTimeout:}` konstruieren und `.ListenAndServe()` darauf aufrufen — Schutz gegen Slowloris-
+artige Angriffe (unbegrenzt langsame Clients halten sonst Handler-Goroutinen offen). Einheitliche
+Werte in allen sechs Services (`cmd/*/main.go`): `ReadHeaderTimeout: 10 * time.Second`,
+`ReadTimeout: 10 * time.Second`, `WriteTimeout: 30 * time.Second`. Diese Timeouts wirken nur auf
+die HTTP-Request-Phase — WebSocket-Verbindungen (`control-server`, `fleet-service`,
+`vehicle-connection`) übernehmen die Connection per `Hijack()` (intern in `gorilla/websocket`) und
+verwalten ihre eigenen Read-Deadlines danach selbst (`conn.SetReadDeadline` im PongHandler), daher
+keine Konflikte mit lang laufenden Sessions.

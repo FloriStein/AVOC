@@ -63,7 +63,14 @@ func main() {
 	mux := newFleetMux(handler)
 
 	log.Info("Fleet Service starting", "port", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal("Fleet Service failed", "error", err)
 	}
 }

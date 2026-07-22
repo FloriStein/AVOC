@@ -7,6 +7,18 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 59 — CI-Sicherheits-Findings beheben (gosec + npm audit) ✅
+2026-07-22 → [tasks/sprints/59-ci-sicherheits-findings-beheben.md](sprints/59-ci-sicherheits-findings-beheben.md)
+- `gosec` 44 → 0 Findings: `G104` (32× unhandled errors, meist `json.NewEncoder(w).Encode(...)`)
+  → strukturiertes Logging bzw. Fehler-Rückgabe statt Ignorieren; `G114` (6× `http.ListenAndServe`
+  ohne Timeouts) → explizites `http.Server{ReadHeaderTimeout/ReadTimeout/WriteTimeout}` in allen
+  6 Go-Services; `G304` (1× `pkg/mqtttls`) als begründetes False-Positive markiert. Zusätzlich
+  5× `G404` (Simulationscode) entdeckt und ebenfalls per `#nosec`-Kommentar begründet markiert.
+- `npm audit` 4 → 0 Vulnerabilities: 3 automatisch per `npm audit fix`, `esbuild` (transitiv über
+  `vite`) per gezieltem `overrides`-Eintrag statt riskantem `vite`-Major-Bump.
+- Beide `security-scan.yml`-Jobs verloren `continue-on-error: true` und wurden als zusätzliche
+  Required Status Checks in die Branch-Protection von `main` aufgenommen (6 statt 4 Checks).
+
 ## Sprint 58 — Continuous Deployment für die lokale VM ✅
 2026-07-22 → [tasks/sprints/58-continuous-deployment-lokale-vm.md](sprints/58-continuous-deployment-lokale-vm.md)
 - Neuer Workflow `.github/workflows/deploy-local-vm.yml`: triggert per `workflow_run` nach
