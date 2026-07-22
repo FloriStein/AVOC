@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -89,7 +90,11 @@ func newAuditWriter(db *sql.DB) (audit.AuditWriter, func()) {
 		return audit.NewNoopWriter(), func() {}
 	}
 	log.Info("audit store ready (PostgreSQL)")
-	return pgWriter, func() { pgWriter.Close() }
+	return pgWriter, func() {
+		if err := pgWriter.Close(); err != nil {
+			log.Warn("failed to close audit store", "error", err)
+		}
+	}
 }
 
 // newVehicleStore opens the Postgres-backed vehicle registry (ADR-022/023),
@@ -248,7 +253,14 @@ func main() {
 	mux := srv.newMux()
 
 	log.Info("Control Server starting", "port", cfg.port)
-	if err := http.ListenAndServe(":"+cfg.port, mux); err != nil {
+	httpSrv := &http.Server{
+		Addr:              ":" + cfg.port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatal("Control Server failed", "error", err)
 	}
 }
@@ -362,11 +374,13 @@ func (s *controlServer) handleSessionStart(w http.ResponseWriter, r *http.Reques
 		"session_id", sess.ID, "vehicle_id", sess.VehicleID,
 		"operator_id", sess.OperatorID, "role", sess.OperatorRole)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"session_id": sess.ID,
 		"role":       sess.OperatorRole,
 		"vehicle_id": sess.VehicleID,
-	})
+	}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 // advanceVehicleToActiveOperator advances THIS VEHICLE's state machine:
@@ -648,7 +662,9 @@ func (s *controlServer) handleAuditEvents(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(events)
+	if err := json.NewEncoder(w).Encode(events); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 func (s *controlServer) handleRecording(w http.ResponseWriter, r *http.Request) {
@@ -659,11 +675,13 @@ func (s *controlServer) handleRecording(w http.ResponseWriter, r *http.Request) 
 	}
 	entries := s.recorder.GetEntries(sessionID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"session_id": sessionID,
 		"count":      len(entries),
 		"entries":    entries,
-	})
+	}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 // handleMediaAuth validates WHIP publish + WHEP read (ADR-020). MediaMTX
@@ -727,13 +745,15 @@ func (s *controlServer) handleVehicleAckLatest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"vehicle_id":        vehicleID,
 		"command_event_id":  ack.CommandEventId,
 		"received":          ack.Received,
 		"received_at_ms":    ack.ReceivedAtMs,
 		"vehicle_connected": s.vehicleRegistry.Connected(vehicleID),
-	})
+	}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 // handleDevWhipKey returns the stream key for the browser-based WHIP sender
@@ -742,7 +762,9 @@ func (s *controlServer) handleVehicleAckLatest(w http.ResponseWriter, r *http.Re
 // copying it from .env.
 func (s *controlServer) handleDevWhipKey(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"streamKey": s.cfg.whipStreamKey})
+	if err := json.NewEncoder(w).Encode(map[string]string{"streamKey": s.cfg.whipStreamKey}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 // handleVehiclesList includes each vehicle's live SYSTEM STATE (MV-09) alongside its identity —
@@ -773,7 +795,9 @@ func (s *controlServer) handleVehiclesList(w http.ResponseWriter, _ *http.Reques
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 func (s *controlServer) handleVehiclesCreate(w http.ResponseWriter, r *http.Request) {
@@ -848,7 +872,9 @@ func (s *controlServer) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 // handleVehicleState returns the per-vehicle 4-layer state snapshot (ADR-026).
@@ -864,12 +890,14 @@ func (s *controlServer) handleVehicleState(w http.ResponseWriter, r *http.Reques
 	}
 	sys, ctrl, media, op := s.vehicleContexts.Get(vehicleID).SM.Get()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"system":   string(sys),
 		"control":  string(ctrl),
 		"media":    string(media),
 		"operator": string(op),
-	})
+	}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 // handleICEConfig returns STUN + TURN (UDP + TCP) servers for WebRTC clients
@@ -889,12 +917,16 @@ func (s *controlServer) handleICEConfig(w http.ResponseWriter, _ *http.Request) 
 		{URLs: []string{"turn:" + host + ":" + s.cfg.turnPort + "?transport=tcp"}, Username: s.cfg.turnUser, Credential: s.cfg.turnPassword},
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"iceServers": servers})
+	if err := json.NewEncoder(w).Encode(map[string]any{"iceServers": servers}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 func (s *controlServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "control-server"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "control-server"}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }
 
 type contextKey string

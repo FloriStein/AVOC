@@ -102,7 +102,9 @@ func (c *wsClient) writePump() {
 		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 			// Force the blocked reader in readPump to unblock promptly instead of waiting for
 			// its own read to time out on the same broken connection.
-			c.conn.Close()
+			if closeErr := c.conn.Close(); closeErr != nil {
+				log.Debug("failed to close broken websocket connection", "error", closeErr)
+			}
 			return
 		}
 	}

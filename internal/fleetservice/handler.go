@@ -12,7 +12,10 @@ import (
 	"github.com/gorilla/websocket"
 
 	"avoc/internal/fleetgateway"
+	"avoc/pkg/logger"
 )
+
+var log = logger.New("fleet-service")
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
@@ -330,5 +333,7 @@ func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }

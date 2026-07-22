@@ -8,7 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"avoc/pkg/logger"
 )
+
+var log = logger.New("auth-service")
 
 // OperatorRole maps to ADR-011 OPERATOR STATE roles.
 type OperatorRole string
@@ -307,5 +311,7 @@ func (h *Handler) callerID(r *http.Request) string {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }

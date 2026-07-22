@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 
 	"avoc/internal/webrtcsfu"
 	"avoc/pkg/logger"
@@ -21,7 +22,14 @@ func main() {
 	mux := newSFUMux(sfu)
 
 	log.Info("WebRTC SFU starting", "port", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal("WebRTC SFU failed", "error", err)
 	}
 }
@@ -48,7 +56,9 @@ func handleSessionState(sfu *webrtcsfu.SFU) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID, "state": string(state)})
+		if err := json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID, "state": string(state)}); err != nil {
+			log.Warn("failed to encode response", "error", err)
+		}
 	}
 }
 
@@ -85,7 +95,9 @@ func handleVehicleOffer(sfu *webrtcsfu.SFU) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"sdp": answer})
+		if err := json.NewEncoder(w).Encode(map[string]string{"sdp": answer}); err != nil {
+			log.Warn("failed to encode response", "error", err)
+		}
 	}
 }
 
@@ -110,11 +122,15 @@ func handleOperatorSubscribe(sfu *webrtcsfu.SFU) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"sdp": answer})
+		if err := json.NewEncoder(w).Encode(map[string]string{"sdp": answer}); err != nil {
+			log.Warn("failed to encode response", "error", err)
+		}
 	}
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "webrtc-sfu"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "webrtc-sfu"}); err != nil {
+		log.Warn("failed to encode response", "error", err)
+	}
 }

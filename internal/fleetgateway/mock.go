@@ -139,9 +139,9 @@ func (g *MockGateway) simulateTick() {
 	for id, v := range g.simState {
 		// Small random walk — plausible movement, not a real path-following simulator
 		// (FLEET-04 adds station-to-station movement for actual task demos).
-		v.lat += (rand.Float64() - 0.5) * 0.0005
-		v.lon += (rand.Float64() - 0.5) * 0.0005
-		v.batteryPct -= rand.Float64() * 0.2
+		v.lat += (rand.Float64() - 0.5) * 0.0005 // #nosec G404 -- simulation jitter, not security-relevant
+		v.lon += (rand.Float64() - 0.5) * 0.0005 // #nosec G404 -- simulation jitter, not security-relevant
+		v.batteryPct -= rand.Float64() * 0.2     // #nosec G404 -- simulation jitter, not security-relevant
 		if v.batteryPct < 0 {
 			v.batteryPct = 0
 		}
@@ -161,7 +161,7 @@ func (g *MockGateway) simulateTick() {
 
 		// Rare vehicle-initiated alert — models "detected a problem it cannot resolve itself"
 		// (ADR-028), not battery (that's a fleet-service threshold computation, FLEET-07).
-		if rand.Float64() < 0.01 {
+		if rand.Float64() < 0.01 { // #nosec G404 -- simulation probability, not security-relevant
 			g.SimulateVehicleAlert(VehicleAlertEvent{
 				VehicleID: s.id,
 				Severity:  "critical",
