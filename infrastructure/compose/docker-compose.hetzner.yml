@@ -9,21 +9,25 @@ name: avoc
 #      (Hetzner-Nutzer heißt avoc, nicht ec2-admin).
 # Secrets kommen aus einer .env-Datei auf dem Server (kein AWS SSM) — s.
 # scripts/secrets-setup-hetzner.sh bzw. für die lokale Test-VM ansible/roles/secrets.
-# Images: wie auf EC2 kein Docker-Hub-Registry-Präfix bei den avoc-*-Images (nur
-# "avoc-x:${VERSION}") — auf dem echten Hetzner-Server werden sie laut hetzner-setup.md
-# Schritt 5 dennoch über Docker Hub verteilt (dort per docker-compose.hetzner.yml referenziert
-# Tag == lokal gebauter Tag, kein Neu-Tagging in diesem Dokument beschrieben); für die lokale
-# Test-VM (Sprint 48 EPIC) gilt stattdessen "kein Docker-Hub-Roundtrip" — s.
-# ansible/deploy.yml (docker save/load direkt auf die VM).
 #
-# Starten (echter Hetzner-Server): VERSION=latest bash deploy-hetzner.sh
-# Starten (lokale Test-VM): ansible-playbook -i ansible/inventory/hosts.ini ansible/deploy.yml
+# GHCRPULL-03 (tasks/backlog.md EPIC "GHCR-Pull-Deployment", Sprint 57): die 8 avoc-*-Images
+# sind über ${REGISTRY} registry-qualifiziert (z. B. "ghcr.io/floristein/avoc-x:${VERSION}"),
+# nicht mehr unqualifiziert "avoc-x:${VERSION}" wie vor Sprint 57. ${REGISTRY} kommt aus der
+# .env (ansible/roles/secrets/templates/env.j2 bzw. scripts/secrets-setup-hetzner.sh) und ist
+# der einzige Ort, der zwischen GHCR-Pull-Weg (Default) und dem SKIP_REGISTRY_PULL-Fallback
+# (docker save/load, s. ansible/deploy.yml) unterscheidet — im Fallback muss der lokale Build
+# (z. B. `make build-prod REGISTRY=...`) mit demselben ${REGISTRY}-Präfix taggen. Drittanbieter-
+# Images (postgres/mosquitto/mediamtx/coturn/loki/promtail/grafana) bleiben unverändert
+# registry-qualifiziert wie zuvor.
+#
+# Starten (echter Hetzner-Server oder lokale Test-VM, jeweils via .env): VERSION=latest bash deploy-hetzner.sh
+# Starten (lokale Test-VM über Ansible): ansible-playbook -i ansible/inventory/hosts.ini ansible/deploy.yml
 
 services:
 
   # ─── Frontend ──────────────────────────────────────────────────────────────
   frontend:
-    image: avoc-frontend:${VERSION}
+    image: ${REGISTRY}/avoc-frontend:${VERSION}
     ports:
       - "3000:80"
       - "443:443"    # HTTPS — Self-signed cert aus ./ssl/ (via deploy.sh generiert)
@@ -55,7 +59,7 @@ services:
 
   # ─── Control Server ────────────────────────────────────────────────────────
   control-server:
-    image: avoc-control-server:${VERSION}
+    image: ${REGISTRY}/avoc-control-server:${VERSION}
     ports:
       - "8080:8080"
     environment:
@@ -85,7 +89,7 @@ services:
 
   # ─── Auth Service ──────────────────────────────────────────────────────────
   auth-service:
-    image: avoc-auth-service:${VERSION}
+    image: ${REGISTRY}/avoc-auth-service:${VERSION}
     ports:
       - "8081:8081"
     environment:
@@ -102,7 +106,7 @@ services:
 
   # ─── Safety Service ────────────────────────────────────────────────────────
   safety-service:
-    image: avoc-safety-service:${VERSION}
+    image: ${REGISTRY}/avoc-safety-service:${VERSION}
     ports:
       - "8082:8082"
     environment:
@@ -113,7 +117,7 @@ services:
 
   # ─── Telemetry Service ─────────────────────────────────────────────────────
   telemetry-service:
-    image: avoc-telemetry-service:${VERSION}
+    image: ${REGISTRY}/avoc-telemetry-service:${VERSION}
     ports:
       - "8083:8083"
     environment:
@@ -132,7 +136,7 @@ services:
 
   # ─── Fleet Service (Fleet-Domäne — Zonen/Stationen/Tasks/Alerts, ADR-027/028/029) ─────────
   fleet-service:
-    image: avoc-fleet-service:${VERSION}
+    image: ${REGISTRY}/avoc-fleet-service:${VERSION}
     ports:
       - "8085:8085"
     environment:
@@ -171,7 +175,7 @@ services:
 
   # ─── WebRTC SFU ────────────────────────────────────────────────────────────
   webrtc-sfu:
-    image: avoc-webrtc-sfu:${VERSION}
+    image: ${REGISTRY}/avoc-webrtc-sfu:${VERSION}
     ports:
       - "8084:8084"
       - "10000-10050:10000-10050/udp"
@@ -270,7 +274,7 @@ services:
 
   # ─── Vehicle Mock — simuliert Raspberry Pi (ADR-021) ──────────────────────
   vehicle-mock:
-    image: avoc-vehicle-mock:${VERSION}
+    image: ${REGISTRY}/avoc-vehicle-mock:${VERSION}
     environment:
       VEHICLE_ID: "vehicle-001"
       CONTROL_SERVER_URL: "ws://control-server:8080/vehicle/ws"

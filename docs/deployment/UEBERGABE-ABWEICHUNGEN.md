@@ -61,13 +61,19 @@ frisch aus dem aktuellen Stand gebaut sein (`make build-prod` + Retag ohne Regis
 
 **Ergänzung Sprint 56 (EPIC "CI-Image-Publishing nach GHCR", CIPUB-01/02):** Seit Sprint 56 baut
 und pusht `.github/workflows/docker-build.yml` die avoc-*-Images bei jedem Push auf `main`
-zusätzlich nach `ghcr.io/<owner>/avoc-<service>:latest` + `:<git-sha>`. Das ist eine reine
-Zusatz-Veröffentlichung (z. B. für externe Nachvollziehbarkeit/Nicht-lokale Nutzung) — der oben
-beschriebene lokale Save/Load-Weg für `ansible/deploy.yml` bleibt unverändert der einzige
-Transferweg auf die VM. Eine Umstellung auf GHCR-Pull in `deploy.yml`/`deploy-hetzner.sh` wäre ein
-Revert dieser Abweichung analog zum in Abweichung 1 skizzierten Docker-Hub-Pfad und ist bewusst
-nicht Teil von Sprint 56 (s. `tasks/backlog.md` EPIC "CI-Image-Publishing nach GHCR",
-"Nicht Teil dieses Sprints").
+zusätzlich nach `ghcr.io/<owner>/avoc-<service>:latest` + `:<git-sha>`. Zum Sprint-56-Zeitpunkt war
+das eine reine Zusatz-Veröffentlichung ohne Rückwirkung auf den VM-Deploy-Weg — s. Ergänzung
+Sprint 57 unten, die das ändert.
+
+**Ergänzung Sprint 57 (EPIC "GHCR-Pull-Deployment", GHCRPULL-02..04) — löst Abweichung 2 ab:**
+Diese Abweichung ist seit Sprint 57 **nicht mehr der Normalfall**. `ansible/deploy.yml` pullt per
+Default (`avoc_skip_registry_pull: false`, s. `ansible/group_vars/local_vm.yml`) direkt von GHCR —
+derselbe Weg, den auch der (weiterhin nicht existierende) echte Hetzner-Server nutzen würde, s.
+`ansible/deploy.yml`-Kopfkommentar. Der oben beschriebene lokale Save/Load-Weg (docker save →
+scp → docker load) bleibt als expliziter Fallback erhalten (`-e avoc_skip_registry_pull=true`),
+ist aber nicht mehr der Default — Abweichung 1 (EC2/`scripts/deploy.sh`) ist davon nicht betroffen
+und bleibt unverändert bestehen. Vollständige Verifikation gegen `avoc-local-vm` und ggf. weitere
+Doku-Anpassungen (`hetzner-setup.md`) s. `tasks/current-sprint.md` GHCRPULL-05.
 
 ---
 

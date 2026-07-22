@@ -6,3 +6,10 @@
 avoc_user: avoc
 app_base_dir: "/home/{{ avoc_user }}"
 app_dir: "{{ app_base_dir }}/app"
+
+# GHCRPULL-04 (tasks/backlog.md EPIC "GHCR-Pull-Deployment", Sprint 57): Default = GHCR-Pull-Weg
+# (deploy-hetzner.sh loggt sich bei ghcr.io ein und zieht die avoc-*-Images). true = alter
+# lokaler Build+docker save/load-Fallback aus Sprint 48 (LOCALVM-07) — Override per
+# `ansible-playbook deploy.yml -e avoc_skip_registry_pull=true`. S. ansible/deploy.yml
+# Kopfkommentar für beide Aufrufvarianten.
+avoc_skip_registry_pull: false
