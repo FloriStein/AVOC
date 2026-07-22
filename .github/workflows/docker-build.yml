@@ -4,9 +4,13 @@ name: Docker Build Verification
 # CI-Härtung, Sprint 55): non-blocking container build check. continue-on-error: true —
 # deliberately NOT a merge gate: this only guards against "builds locally, doesn't build in
 # CI/Prod" Dockerfile drift (missing files in .dockerignore, stale base images, etc.), it is
-# not a functional test — build failures need a look, not an automatic merge block. No push,
-# just `docker buildx build` against each of the 8 targets from
+# not a functional test — build failures need a look, not an automatic merge block.
+# `docker buildx build` runs against each of the 8 targets from
 # infrastructure/compose/docker-compose.yml.
+#
+# CIPUB-01 (tasks/backlog.md EPIC "CI-Image-Publishing nach GHCR", Sprint 56): on a push to
+# main, images are additionally pushed to GHCR (ghcr.io/<owner>/avoc-<service>:latest +
+# :<git-sha>). On pull_request, push stays false — no images from unverified PR branches.
 
 on:
   push:
@@ -18,6 +22,9 @@ jobs:
     name: Build ${{ matrix.service }}
     runs-on: ubuntu-latest
     continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         service:
@@ -32,6 +39,19 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # GHCR requires lowercase image refs; github.repository_owner can be mixed-case
+      # (e.g. "FloriStein") and Actions expressions have no toLower() function.
+      - name: Compute lowercase owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: docker buildx build
         uses: docker/build-push-action@v6
         with:
@@ -39,36 +59,73 @@ jobs:
           file: infrastructure/docker/go-service.Dockerfile
           build-args: |
             SERVICE_NAME=${{ matrix.service }}
-          push: false
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/avoc-${{ matrix.service }}:latest
+            ghcr.io/${{ env.OWNER_LC }}/avoc-${{ matrix.service }}:${{ github.sha }}
 
   frontend:
     name: Build frontend
     runs-on: ubuntu-latest
     continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Compute lowercase owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: docker buildx build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infrastructure/docker/frontend.Dockerfile
-          push: false
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/avoc-frontend:latest
+            ghcr.io/${{ env.OWNER_LC }}/avoc-frontend:${{ github.sha }}
 
   vehicle-mock:
     name: Build vehicle-mock
     runs-on: ubuntu-latest
     continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Compute lowercase owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: docker buildx build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infrastructure/docker/vehicle-mock.Dockerfile
-          push: false
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/avoc-vehicle-mock:latest
+            ghcr.io/${{ env.OWNER_LC }}/avoc-vehicle-mock:${{ github.sha }}

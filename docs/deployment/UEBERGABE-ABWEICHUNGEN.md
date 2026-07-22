@@ -59,6 +59,16 @@ nicht die Aktualität). Vor jedem realen Deploy über diesen Weg müssen die avo
 frisch aus dem aktuellen Stand gebaut sein (`make build-prod` + Retag ohne Registry-Präfix, siehe
 `ansible/deploy.yml`-Kopfkommentar).
 
+**Ergänzung Sprint 56 (EPIC "CI-Image-Publishing nach GHCR", CIPUB-01/02):** Seit Sprint 56 baut
+und pusht `.github/workflows/docker-build.yml` die avoc-*-Images bei jedem Push auf `main`
+zusätzlich nach `ghcr.io/<owner>/avoc-<service>:latest` + `:<git-sha>`. Das ist eine reine
+Zusatz-Veröffentlichung (z. B. für externe Nachvollziehbarkeit/Nicht-lokale Nutzung) — der oben
+beschriebene lokale Save/Load-Weg für `ansible/deploy.yml` bleibt unverändert der einzige
+Transferweg auf die VM. Eine Umstellung auf GHCR-Pull in `deploy.yml`/`deploy-hetzner.sh` wäre ein
+Revert dieser Abweichung analog zum in Abweichung 1 skizzierten Docker-Hub-Pfad und ist bewusst
+nicht Teil von Sprint 56 (s. `tasks/backlog.md` EPIC "CI-Image-Publishing nach GHCR",
+"Nicht Teil dieses Sprints").
+
 ---
 
 ## Nicht hier dokumentiert

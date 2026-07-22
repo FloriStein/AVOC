@@ -6,36 +6,15 @@
 
 ---
 
-# Sprint 56 — CI-Image-Publishing nach GHCR
+## Kein aktiver Sprint
 
-Vollständiger Kontext: [tasks/backlog.md](backlog.md) EPIC "CI-Image-Publishing nach GHCR
-(Sprint 56)". Baut auf CIHARD-03 (Sprint 55, [tasks/sprints/55-ci-haertung.md](sprints/55-ci-haertung.md))
-auf — der bestehende `docker-build.yml`-Job baut bereits alle 8 Targets (6 Go-Services +
-Frontend + vehicle-mock), aktuell nur zur Build-Verifikation (`push: false`).
+Sprint 56 (CI-Image-Publishing nach GHCR, 2026-07-22) ist abgeschlossen — CIPUB-01..03, siehe
+[tasks/sprints/56-ci-image-publishing.md](sprints/56-ci-image-publishing.md). CIPUB-04
+(Branch-Protection-Aktivierung) bleibt offen, blockiert durch fehlende
+`Administration: Read and write`-Berechtigung des verfügbaren GitHub-Tokens.
 
-**Auftrag (2026-07-22):** Nutzer möchte die `avoc-*`-Images zusätzlich in GitHub Actions bauen
-lassen, statt sie ausschließlich lokal zu bauen (bisherige Voraussetzung für
-`ansible/deploy.yml`, siehe EPIC "Lokale Ansible-VM als Hetzner-Nachbildung").
-
-**Nutzerentscheidungen (Rückfrage 2026-07-22):**
-- Registry: **GHCR** (`ghcr.io`), nicht Docker Hub.
-- **Bestehenden Job in `.github/workflows/docker-build.yml` erweitern**, kein neuer separater
-  Workflow.
-
-Datum: 2026-07-22 | Status: 🔲 geplant, noch nicht umgesetzt.
-
-## Tasks
-
-| ID | Task | Typ | Status | Abhängigkeiten |
-|----|------|-----|--------|-----------------|
-| CIPUB-01 | `.github/workflows/docker-build.yml` erweitern: `docker/login-action` gegen `ghcr.io` (`GITHUB_TOKEN`), `permissions: packages: write` auf Job-Ebene, `push: true` nur bei `push`-Event auf `main` (bei `pull_request` weiterhin `push: false`). Tag-Schema festlegen (z. B. `ghcr.io/<owner>/avoc-<service>:latest` + `:<git-sha>`). | M | 🔲 | CIHARD-03 (Sprint 55) |
-| CIPUB-02 | Kurzer Hinweis-Kommentar in `ansible/deploy.yml`-Kopf und/oder `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, dass GHCR-Images jetzt existieren, ohne den bestehenden lokalen Build+`docker save`/`load`-Weg in diesem Sprint umzustellen. | S | 🔲 | CIPUB-01 |
-| CIPUB-03 | Verifikation: `actionlint` gegen die geänderte Workflow-Datei, nach echtem Push auf `main` prüfen, dass die Packages tatsächlich unter GHCR erscheinen (Sichtbarkeit public/private dokumentieren), Doku-/Backlog-Status-Update. | S | 🔲 | CIPUB-01 |
-| CIPUB-04 | **CIGATE-06 abschließen** (seit Sprint 41 vorbereitet, nie aktiviert): Branch-Protection/Required-Status-Checks für die 4 blockierenden Jobs real im GitHub-Repo-Setting einschalten — nur nach nochmaliger expliziter Nutzerbestätigung unmittelbar vor der Aktivierung. Auf Nutzerwunsch (2026-07-22) mitaufgenommen, thematisch unabhängig von CIPUB-01..03. | S | 🔲 | CIGATE-06 (Vorbereitung Sprint 41) |
-
-**Nicht Teil dieses Sprints:** Umstellung von `ansible/deploy.yml` auf GHCR-Pull statt lokalem
-Build+Transfer; Docker-Hub als Alternative; Image-Retention-/Cleanup-Policies in GHCR.
-
-## Ergebnis
-
-_Noch offen — Sprint ist geplant, aber noch nicht umgesetzt._
+**Möglicher nächster Sprint:** Für einen neuen Sprint siehe die übrigen offenen Punkte in
+`tasks/backlog.md` — u. a. CIPUB-04 (Branch-Protection-Aktivierung, sobald ein Token mit
+Administration-Berechtigung verfügbar ist) sowie der reguläre Post-Merge-Verifikationsschritt aus
+CIPUB-03 (GHCR-Packages nach dem ersten echten Push auf `main` prüfen). Nutzer entscheidet beim
+nächsten Sprint-Kickoff wie gewohnt.
