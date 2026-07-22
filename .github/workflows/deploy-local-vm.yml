@@ -1,0 +1,76 @@
+name: Deploy to local VM
+
+# CD-02/03/04 (tasks/backlog.md EPIC "Continuous Deployment für die lokale VM", Sprint 58):
+# automatischer Deploy auf avoc-local-vm, sobald docker-build.yml auf einem main-Push fertig
+# ist (die dort gebauten :latest-Images sind dann in GHCR verfügbar).
+#
+# SICHERHEIT: Das AVOC-Repo ist public. Dieser Job läuft auf einem Self-hosted Runner (einziger
+# Weg, avoc-local-vm zu erreichen — kein öffentliches IP). Self-hosted Runner + public Repo ist
+# ein bekanntes Risiko (beliebige PR-Autoren könnten sonst Code auf dem Runner ausführen), daher
+# zwingend:
+#   - Trigger ausschließlich workflow_run nach "Docker Build Verification", zusätzlich hart
+#     gefiltert auf event == 'push' und head_branch == 'main' (siehe if: unten). NIEMALS
+#     pull_request/pull_request_target auf diesem Job.
+#   - Repo-Setting "Require approval for all outside collaborators" muss aktiv bleiben (schützt
+#     bereits den vorgelagerten Build-Workflow vor Fork-PRs ohne Freigabe).
+#   - Kein persönlicher PAT: GHCR-Login läuft über das ephemere secrets.GITHUB_TOKEN
+#     (packages: read reicht zum Pullen, s. permissions: unten).
+#
+# Voraussetzung auf dem Runner-Host (einmalige, nicht committete lokale Einrichtung, s.
+# docs/deployment/UEBERGABE-ABWEICHUNGEN.md): eine lokale Inventory-Datei
+# ~/avoc-deploy/hosts.local.ini mit der echten VM-IP (Pendant zu ansible/inventory/hosts.ini,
+# dessen <VM_IP_PLACEHOLDER> nie committet wird — s. dortiger Kommentar). Der Workflow-Checkout
+# setzt das committete hosts.ini bei jedem Lauf zurück, daher lebt die echte IP bewusst
+# außerhalb des Checkout-Baums.
+
+on:
+  workflow_run:
+    workflows: ["Docker Build Verification"]
+    types: [completed]
+
+concurrency:
+  group: deploy-local-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to avoc-local-vm
+    if: >
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, avoc-local-deploy]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Ansible-Verfügbarkeit prüfen
+        run: command -v ansible-playbook >/dev/null
+
+      - name: Lokale Inventory-Override-Datei prüfen
+        run: |
+          INV="$HOME/avoc-deploy/hosts.local.ini"
+          if [ ! -f "$INV" ]; then
+            echo "::error::$INV fehlt — einmalige lokale Einrichtung nötig, s. Workflow-Kopfkommentar"
+            exit 1
+          fi
+
+      - name: Deploy via Ansible (GHCR-Pull)
+        working-directory: ansible
+        env:
+          GHCR_REGISTRY: ghcr.io/floristein
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ansible-playbook -i "$HOME/avoc-deploy/hosts.local.ini" deploy.yml
+
+      - name: Health-Check — Frontend (HTTPS) + Control-Server (/health)
+        run: |
+          VM_IP=$(grep -oP 'ansible_host=\K\S+' "$HOME/avoc-deploy/hosts.local.ini")
+          echo "Prüfe avoc-local-vm unter $VM_IP ..."
+          curl -fsSk --max-time 10 "https://${VM_IP}/" >/dev/null
+          curl -fsS --max-time 10 "http://${VM_IP}:8080/health" >/dev/null
+          echo "Health-Check OK."
