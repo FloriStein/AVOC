@@ -1110,7 +1110,7 @@ scharf geschaltet: `main` verlangt jetzt die 4 Required Status Checks (`Unit Tes
 
 ---
 
-## EPIC: GHCR-Pull-Deployment (Sprint 57, 🔲 geplant)
+## EPIC: GHCR-Pull-Deployment (Sprint 57, ✅ vollständig)
 
 **Auftrag (2026-07-22):** Nutzer möchte den bestehenden lokalen Build+`docker save`/`load`-Weg
 (`ansible/deploy.yml`, EPIC "Lokale Ansible-VM als Hetzner-Nachbildung" oben) auf einen
@@ -1133,11 +1133,11 @@ wird) — die Plumbing existiert also größtenteils schon, es fehlt die GHCR-An
 
 | ID | Task | Typ | Status | Abhängigkeiten |
 |----|------|-----|--------|-----------------|
-| GHCRPULL-01 | **Nutzeraktion:** Least-Privilege GHCR-PAT anlegen — Classic PAT nur mit `read:packages`-Scope (Fine-grained-PATs unterstützen die Packages-API/GHCR-Login nachweislich nicht zuverlässig, s. Diskussion 2026-07-22). Ausdrücklich NICHT den `Administration`-Token aus CIPUB-04 wiederverwenden (falsches Least-Privilege-Prinzip, dieser Token braucht nur Lesezugriff auf Packages). | S | 🔲 | — |
-| GHCRPULL-02 | `.github/workflows/docker-build.yml`: Tag-Push-Trigger ergänzen (`on.push.tags: ['v*']`), bei echtem Tag-Push zusätzlichen Tag `ghcr.io/<owner>/avoc-<service>:<git-tag>` neben `:latest`/`:<sha>` pushen. `pull_request` bleibt unverändert `push: false`. | M | 🔲 | CIPUB-01 (Sprint 56) |
-| GHCRPULL-03 | `infrastructure/compose/docker-compose.hetzner.yml`: die 8 `avoc-*`-Image-Referenzen auf `ghcr.io/<owner-lowercase>/avoc-<service>:${VERSION}` umstellen (Drittanbieter-Images wie `postgres`/`mosquitto`/`mediamtx`/`grafana` bleiben unverändert). | S | 🔲 | GHCRPULL-02 |
-| GHCRPULL-04 | `ansible/roles/secrets` (echten PAT aus GHCRPULL-01 einbinden, NICHT im Repo committen — ansible-vault oder externe, gitignorte Var-Datei) + `ansible/deploy.yml`/`scripts/deploy-hetzner.sh`: `SKIP_REGISTRY_PULL`-Default umdrehen (GHCR-Pull wird Standard für die lokale VM), `REGISTRY`/`DOCKER_USERNAME`/`DOCKER_PASSWORD` real befüllen. Lokaler Fallback-Pfad bleibt über das Flag erreichbar (Nutzerentscheidung oben). | M | 🔲 | GHCRPULL-01, GHCRPULL-03 |
-| GHCRPULL-05 | Verifikation real gegen die laufende lokale VM (`avoc-local-vm`, libvirt/KVM, analog Sprint 49): Internet-Konnektivität VM→`ghcr.io` prüfen, GHCR-Pull-Weg UND Fallback-Weg (`SKIP_REGISTRY_PULL=true`) je einmal real durchspielen, Doku-Updates (`ansible/deploy.yml`-Kopf-Kommentar, `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, README.md CI-Abschnitt, Backlog-/DECISIONS.MD-Status). | M | 🔲 | GHCRPULL-04 |
+| GHCRPULL-01 | **Nutzeraktion:** Least-Privilege GHCR-PAT anlegen — Classic PAT nur mit `read:packages`-Scope (Fine-grained-PATs unterstützen die Packages-API/GHCR-Login nachweislich nicht zuverlässig, s. Diskussion 2026-07-22). Ausdrücklich NICHT den `Administration`-Token aus CIPUB-04 wiederverwenden (falsches Least-Privilege-Prinzip, dieser Token braucht nur Lesezugriff auf Packages). | S | ✅ Sprint 57 | — |
+| GHCRPULL-02 | `.github/workflows/docker-build.yml`: Tag-Push-Trigger ergänzen (`on.push.tags: ['v*']`), bei echtem Tag-Push zusätzlichen Tag `ghcr.io/<owner>/avoc-<service>:<git-tag>` neben `:latest`/`:<sha>` pushen. `pull_request` bleibt unverändert `push: false`. | M | ✅ Sprint 57 | CIPUB-01 (Sprint 56) |
+| GHCRPULL-03 | `infrastructure/compose/docker-compose.hetzner.yml`: die 8 `avoc-*`-Image-Referenzen auf `ghcr.io/<owner-lowercase>/avoc-<service>:${VERSION}` umstellen (Drittanbieter-Images wie `postgres`/`mosquitto`/`mediamtx`/`grafana` bleiben unverändert). | S | ✅ Sprint 57 | GHCRPULL-02 |
+| GHCRPULL-04 | `ansible/roles/secrets` (echten PAT aus GHCRPULL-01 einbinden, NICHT im Repo committen — ansible-vault oder externe, gitignorte Var-Datei) + `ansible/deploy.yml`/`scripts/deploy-hetzner.sh`: `SKIP_REGISTRY_PULL`-Default umdrehen (GHCR-Pull wird Standard für die lokale VM), `REGISTRY`/`DOCKER_USERNAME`/`DOCKER_PASSWORD` real befüllen. Lokaler Fallback-Pfad bleibt über das Flag erreichbar (Nutzerentscheidung oben). | M | ✅ Sprint 57 | GHCRPULL-01, GHCRPULL-03 |
+| GHCRPULL-05 | Verifikation real gegen die laufende lokale VM (`avoc-local-vm`, libvirt/KVM, analog Sprint 49): Internet-Konnektivität VM→`ghcr.io` prüfen, GHCR-Pull-Weg UND Fallback-Weg (`SKIP_REGISTRY_PULL=true`) je einmal real durchspielen, Doku-Updates (`ansible/deploy.yml`-Kopf-Kommentar, `docs/deployment/UEBERGABE-ABWEICHUNGEN.md`, README.md CI-Abschnitt, Backlog-/DECISIONS.MD-Status). | M | ✅ Sprint 57 | GHCRPULL-04 |
 
 **Nicht Teil dieses Sprints:** Umbenennung der Docker-Hub-artigen Variablennamen
 `DOCKER_USERNAME`/`DOCKER_PASSWORD` auf generische Registry-Namen (kosmetisch, würde zusätzlich
@@ -1147,6 +1147,15 @@ Verifikation daher nur gegen die lokale Test-VM möglich — `docker-compose.het
 `deploy-hetzner.sh` werden aber von beiden genutzt, profitieren also indirekt mit); automatisches
 Rollback bei fehlgeschlagenem Pull (bleibt manueller Eingriff wie bisher); Image-Retention-/
 Cleanup-Policies in GHCR (bereits in Sprint 56 als offen vermerkt).
+
+**Ergebnis (2026-07-22):** Alle 5 Tasks umgesetzt und real verifiziert — Details/Testprotokoll in
+[tasks/sprints/57-ghcr-pull-deployment.md](sprints/57-ghcr-pull-deployment.md). Kurzfassung:
+Nutzer legte den Classic-PAT an (lokal, gitignored, nie im Chat sichtbar). GHCR-Pull-Weg UND
+Fallback-Weg (`avoc_skip_registry_pull=true`) je einmal real gegen `avoc-local-vm` durchgespielt
+(VM gestartet, Stack neu deployt, Health-Checks beide Male HTTP 200). Dabei ein echter Bug
+gefunden und behoben: `ansible/deploy.yml`s `select('match','^avoc-')`-Filter griff nach der
+Registry-Präfigierung (GHCRPULL-03) nicht mehr — Images heißen jetzt `<registry>/avoc-...` statt
+`avoc-...` — korrigiert auf `select('search','avoc-')`.
 
 ---
 
