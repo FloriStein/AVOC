@@ -75,6 +75,17 @@ ist aber nicht mehr der Default — Abweichung 1 (EC2/`scripts/deploy.sh`) ist d
 und bleibt unverändert bestehen. Vollständige Verifikation gegen `avoc-local-vm` und ggf. weitere
 Doku-Anpassungen (`hetzner-setup.md`) s. `tasks/current-sprint.md` GHCRPULL-05.
 
+**Ergänzung Sprint 58 (EPIC "Continuous Deployment für die lokale VM", CD-01..05) — der GHCR-Pull
+aus Sprint 57 lief bis hierhin nur, wenn `ansible-playbook deploy.yml` manuell angestoßen wurde.
+Seit Sprint 58 passiert das automatisch: `.github/workflows/deploy-local-vm.yml` triggert per
+`workflow_run` nach jedem erfolgreichen `docker-build.yml`-Lauf auf `main` und deployt auf einem
+Self-hosted Runner (Label `avoc-local-deploy`) auf dem Dev-Rechner, inkl. Post-Deploy-Health-Check
+(Frontend HTTPS + Control-Server `/health`, kein automatischer Rollback). Real verifiziert
+2026-07-22: ein echter `main`-Merge löste den kompletten Pfad ohne manuellen Eingriff aus. Details
+inkl. der Sicherheitsauflagen für den Self-hosted Runner auf diesem public Repo:
+`tasks/sprints/58-continuous-deployment-lokale-vm.md`, README.md Abschnitt "CI-Image-Publishing &
+Continuous Deployment".**
+
 ---
 
 ## Nicht hier dokumentiert
