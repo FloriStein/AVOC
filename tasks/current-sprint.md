@@ -8,13 +8,13 @@
 
 ## Kein aktiver Sprint
 
-Sprint 56 (CI-Image-Publishing nach GHCR, 2026-07-22) ist abgeschlossen — CIPUB-01..03, siehe
-[tasks/sprints/56-ci-image-publishing.md](sprints/56-ci-image-publishing.md). CIPUB-04
-(Branch-Protection-Aktivierung) bleibt offen, blockiert durch fehlende
-`Administration: Read and write`-Berechtigung des verfügbaren GitHub-Tokens.
+Sprint 56 (CI-Image-Publishing nach GHCR, 2026-07-22) ist vollständig abgeschlossen, siehe
+[tasks/sprints/56-ci-image-publishing.md](sprints/56-ci-image-publishing.md) (CIPUB-01..03) und
+den Nachtrag zu CIPUB-04 in `tasks/backlog.md` (EPIC "CI-Image-Publishing nach GHCR", Abschnitt
+"Nachtrag CIPUB-04", 2026-07-22): Branch-Protection/Required-Status-Checks für `main` sind jetzt
+real aktiv (4 Jobs, `enforce_admins=true`) — CIGATE-06 damit ebenfalls abgeschlossen.
 
 **Möglicher nächster Sprint:** Für einen neuen Sprint siehe die übrigen offenen Punkte in
-`tasks/backlog.md` — u. a. CIPUB-04 (Branch-Protection-Aktivierung, sobald ein Token mit
-Administration-Berechtigung verfügbar ist) sowie der reguläre Post-Merge-Verifikationsschritt aus
-CIPUB-03 (GHCR-Packages nach dem ersten echten Push auf `main` prüfen). Nutzer entscheidet beim
-nächsten Sprint-Kickoff wie gewohnt.
+`tasks/backlog.md` — u. a. der reguläre Post-Merge-Verifikationsschritt aus CIPUB-03
+(GHCR-Packages-Sichtbarkeit nach dem ersten echten Push auf `main` prüfen). Nutzer entscheidet
+beim nächsten Sprint-Kickoff wie gewohnt.
