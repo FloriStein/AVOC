@@ -12,6 +12,12 @@ name: Security Scan
 # for the one transitive dep (esbuild, dev-server-only) that needed a version bump `npm audit
 # fix` couldn't apply automatically. Any new finding now fails the PR — regressions must be fixed
 # or justified inline, not silently reintroduced.
+#
+# Fix (2026-07-23): npm's registry retired the legacy "quick audit" endpoint
+# (POST /-/npm/v1/security/audits/quick), which `npm audit` falls back to when no `node_modules`
+# is present (as was the case here — this job checked out the repo and ran `npm audit` directly,
+# unlike every other frontend job which runs `npm ci` first). Added an `npm ci` step so `npm audit`
+# resolves against an installed tree and uses the current "bulk advisory" endpoint instead.
 
 on:
   push:
@@ -45,6 +51,10 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
 
       - name: npm audit
         working-directory: frontend
