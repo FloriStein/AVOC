@@ -1291,8 +1291,12 @@ zwei Grill-Me-Entscheidungen + mehrere M-Tasks) — aufgeteilt: **Sprint 60** (`
 `DRIFT-M18` — Grill-Me-Entscheidungen + trivialer Backlog-Doku-Fix, s.
 `tasks/current-sprint.md`) läuft zuerst, da `DRIFT-M19`/`M22` inhaltlich von den
 Sprint-60-Latenz-/Benchmark-Entscheidungen abhängen. **Sprint 61** (`DRIFT-M19/M20/M21/M22/M24/
-M25` — reine Umsetzung, keine offenen Entscheidungen mehr) folgt danach, noch nicht im Detail
-geplant.
+M25` — reine Umsetzung, keine offenen Entscheidungen mehr) folgt danach, s.
+`tasks/current-sprint.md` — Vorrecherche 2026-07-23 hat dabei `DRIFT-M21`s Umfang von M/L auf S
+korrigiert (die im Drift-Audit beschriebene Compose-Lücke ist bereits seit Sprint 36/`DEPLOY-08`
+geschlossen, nur die Doku dazu nicht) und für `DRIFT-M24` geklärt, dass kein Cross-Service-Import
+von `authservice.OperatorRole` erfolgt, sondern ein eigener package-lokaler Typ in
+`session/manager.go`.
 
 | ID | Task | Typ | Schweregrad | Status | Notizen |
 |----|------|-----|-------------|--------|---------|
@@ -1321,13 +1325,13 @@ geplant.
 | DRIFT-M16 | `docs/requirements.md` State-Machine-Requirements um Per-Vehicle-Hinweis (ADR-026) ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Deckt sich mit M03 |
 | DRIFT-M17 | `README.md`-Projektstruktur-Baum um `fleet-service`/`fleetgateway` ergänzen | S | Mittel | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | Service-Tabelle im selben Dokument bereits korrekt |
 | DRIFT-M18 | OBSERVATION-Trigger „Auth-Service-down blockiert neue Sessions" — implementieren oder Doku korrigieren | M | Mittel | ✅ behoben (Sprint 60, 2026-07-23) | Grill-Me-Entscheidung `DRIFT60-04`: Doku korrigiert statt implementiert — `AuthWatchdog`/CRITICAL deckt den real relevanten Fall bereits ab, `/session/start` ruft auth-service nie auf, ein echter OBSERVATION-Pfad wäre eine neue sicherheitsrelevante Abhängigkeit ohne bisherigen Anlass. `CONTEXT.md` korrigiert, ADR-009 Update-Block |
-| DRIFT-M19 | k6-Latenztest auf echten WS-ACK-Roundtrip umstellen (misst aktuell `GET /state`) | M | Mittel | 🔄 Sprint 61 geplant | Nach Sprint 60 (hängt an denselben Latenz-/Benchmark-Entscheidungen, `DRIFT60-02`/`-03`) |
-| DRIFT-M20 | Video-Latenzziel (100–300ms) — automatisierten Test ergänzen oder Doku als unverifiziert kennzeichnen | S/M | Mittel | 🔄 Sprint 61 geplant | ADR-014: kein Safety-Hartziel |
-| DRIFT-M21 | `Doku.md` (EC2-Prod-Deployment) um `fleet-service` ergänzen (Compose + Build/Save-Listen) | M/L | Mittel | 🔄 Sprint 61 geplant | Aktuell kein lauffähiger Fleet-Stack auf EC2 dokumentiert |
-| DRIFT-M22 | `-race` strukturell in Makefile-Standardziel(en) verankern statt nur ad-hoc | M | Mittel | 🔄 Sprint 61 geplant | Nach Sprint 60 (hängt an denselben Latenz-/Benchmark-Entscheidungen, `DRIFT60-02`/`-03`) |
+| DRIFT-M19 | k6-Latenztest auf echten WS-ACK-Roundtrip umstellen (misst aktuell `GET /state`) | M | Mittel | 🔄 Sprint 61 geplant (`DRIFT61-01`) | Nach Sprint 60 (hängt an denselben Latenz-/Benchmark-Entscheidungen, `DRIFT60-02`/`-03`) |
+| DRIFT-M20 | Video-Latenzziel (100–300ms) — automatisierten Test ergänzen oder Doku als unverifiziert kennzeichnen | S/M | Mittel | 🔄 Sprint 61 geplant (`DRIFT61-02`) | ADR-014: kein Safety-Hartziel |
+| DRIFT-M21 | `docs/deployment/ec2-bootstrap.md` um `fleet-service` ergänzen | S | Mittel | 🔄 Sprint 61 geplant (`DRIFT61-03`) | Vorrecherche 2026-07-23: Compose/nginx/Build bereits seit Sprint 36 (`DEPLOY-08`) verdrahtet, nur die Doku wurde nie nachgezogen — Umfang von M/L auf S reduziert |
+| DRIFT-M22 | `-race` strukturell in Makefile-Standardziel(en) verankern statt nur ad-hoc | M | Mittel | 🔄 Sprint 61 geplant (`DRIFT61-04`) | Nach Sprint 60 (hängt an denselben Latenz-/Benchmark-Entscheidungen, `DRIFT60-02`/`-03`) |
 | DRIFT-M23 | Backlog-Task für dokumentierte `CreateAlert`-Fehlerpfad-Testlücke (FLEET-07-Nachtrag) nachtragen | S | Mittel | ✅ hiermit erledigt | Diese Zeile selbst ist der Backlog-Eintrag |
-| DRIFT-M24 | `OperatorRole` als Typ statt Rohstring durchgängig verwenden (`session/manager.go` u. a.) | M | Mittel | 🔄 Sprint 61 geplant | Sicherheitsnah (ADR-025) — volle §17-Testabdeckung bei Umsetzung |
-| DRIFT-M25 | Task-Status in `internal/fleetservice/store.go` als benannten Typ statt Rohstrings führen | M | Mittel | 🔄 Sprint 61 geplant | Vorbild: `statemachine/state.go` |
+| DRIFT-M24 | `OperatorRole` als Typ statt Rohstring durchgängig verwenden (`session/manager.go` u. a.) | M | Mittel | 🔄 Sprint 61 geplant (`DRIFT61-05`) | Sicherheitsnah (ADR-025) — volle §17-Testabdeckung bei Umsetzung. Vorrecherche 2026-07-23: package-lokaler Typ, kein Cross-Service-Import von `authservice.OperatorRole` |
+| DRIFT-M25 | Task-Status in `internal/fleetservice/store.go` als benannten Typ statt Rohstrings führen | M | Mittel | 🔄 Sprint 61 geplant (`DRIFT61-06`) | Vorbild: `statemachine/state.go` |
 | DRIFT-N01 | `docs/adr/README.md` Kopfzeile „29 ADRs" auf 32 korrigieren | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
 | DRIFT-N02 | `ADR-002` Pseudocode-Methodennamen an echten Code (`Subscribe`, 3-Parameter-Signatur) angleichen | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |
 | DRIFT-N03 | `ADR-009` Dateipfade (`detector.go` statt `deadman.go`) und Testanzahl (20 statt 18) korrigieren | S | Niedrig | ✅ behoben (Sprint 26, docs/drift-audit-2026-07.md) | — |

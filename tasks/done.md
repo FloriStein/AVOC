@@ -7,6 +7,20 @@ Scope-Details) je Sprint in [tasks/sprints/](sprints/).
 
 ---
 
+## Sprint 60 — Drift-Audit-Restposten Teil 1 (Grill-Me-Entscheidungen) ✅
+2026-07-23 → [tasks/sprints/60-drift-audit-restposten-1.md](sprints/60-drift-audit-restposten-1.md)
+- Drei Grill-Me-Entscheidungen (`CLAUDE.MD` §0, sicherheitsrelevant): `DRIFT-K4` — CI-Historie
+  (47 Läufe, p99 durchgängig 0-1ms bei 100ms-Budget) zeigt keinen Rausch-Vorfall seit Sprint 41 →
+  `test-latency.yml`s `go-benchmark`-Job auf blocking umgestellt. `DRIFT-K6` —
+  `TestLatencyBudget_DocumentedRequirement` (tautologisch) ersatzlos gestrichen, der Benchmark
+  selbst deckt die Anforderung bereits ab. `DRIFT-M18` — `CONTEXT.MD`/ADR-009 korrigiert statt
+  OBSERVATION zu implementieren (kein Produktivpfad, `AuthWatchdog`/CRITICAL deckt den real
+  relevanten Fall bereits ab).
+- `DRIFT-K5` als Backlog-Pflegefehler korrigiert (war bereits seit Sprint 55 gelöst).
+- `gemini-mcp`-Sub-Agent für eine zweite Meinung versucht, aber wegen eines serverseitigen
+  Modell-Fallback-Bugs (404 auf ein nicht mehr existierendes Modell) nicht verfügbar — beide
+  Entscheidungen stattdessen mit eigenständig verifizierter Evidenz getroffen.
+
 ## Sprint 59 — CI-Sicherheits-Findings beheben (gosec + npm audit) ✅
 2026-07-22 → [tasks/sprints/59-ci-sicherheits-findings-beheben.md](sprints/59-ci-sicherheits-findings-beheben.md)
 - `gosec` 44 → 0 Findings: `G104` (32× unhandled errors, meist `json.NewEncoder(w).Encode(...)`)
