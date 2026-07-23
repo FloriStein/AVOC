@@ -1,21 +1,21 @@
 name: Test Latency
 
 # ADR-006 (Testing Strategy) documents the Latency Gate (<100ms p99) as "BLOCKING". Sprint 41
-# (tasks/backlog.md EPIC "CI-Gates einführen") deliberately deviates from that and keeps it
-# non-blocking here — analogous to lint.yml's non-blocking rationale and ADR-006's own
-# WebRTC-Non-Determinism-Policy: GitHub-hosted runners have shared-tenancy CPU noise, so a hard
-# <100ms assertion would block merges on runner noise, not on actual code regressions. Results
-# stay visible (job log / benchmark output), but continue-on-error: true means neither job can
-# fail a required check. Tightening to blocking is a possible follow-up once enough CI runs
-# establish a noise baseline.
+# (tasks/backlog.md EPIC "CI-Gates einführen") deliberately deviated from that and kept it
+# non-blocking, pending a noise baseline — GitHub-hosted runners have shared-tenancy CPU noise,
+# so a hard <100ms assertion could in theory block merges on runner noise, not actual code
+# regressions.
 #
-# Known gap (found while wiring this job, 2026-07-19, not fixed here — out of scope for
-# "introduce CI gates"): BenchmarkControlACKRoundtrip (tests/performance/latency_test.go) dials
-# the /ws endpoint before calling startSession() and never passes the session_id query parameter
-# ADR-025 introduced — the server now rejects the handshake with "session_id required" and the
-# benchmark SKIPs every run (verified locally, 2x). The k6 job below is unaffected (hits
-# /sessions with just a bearer token) and does produce real latency numbers. Tracked as a backlog
-# follow-up rather than fixed here since it changes test behavior, not CI wiring.
+# Grill-Me decision (DRIFT-K4, Sprint 60, 2026-07-23, tasks/sprints/60-*.md): tightened to
+# BLOCKING. Baseline established — 47 recorded runs since Sprint 41, all passed, measured p99 in
+# every sampled run 0-1ms (~100x margin below the 100ms budget). The noise-margin concern never
+# materialized. `continue-on-error` removed from the go-benchmark job only; the k6 job stays
+# non-blocking (separate concern, not part of this decision). Branch-protection required-status-
+# check activation is a separate follow-up requiring explicit user sign-off — not done here.
+#
+# The BenchmarkControlACKRoundtrip session_id/vehicle_id skip-bug noted here until Sprint 60 was
+# fixed in Sprint 55 (CIHARD-01, tasks/sprints/55-ci-haertung.md) — the benchmark now runs and
+# produces real latency numbers, it does not SKIP.
 
 on:
   push:
@@ -27,7 +27,6 @@ jobs:
     name: Go Benchmark (ACK Roundtrip)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

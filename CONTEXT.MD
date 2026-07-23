@@ -33,7 +33,7 @@
 | **ULID** | Universally Unique Lexicographically Sortable Identifier — Format der Session-IDs (zeitlich sortierbar) |
 | **CRITICAL Failure** | Fehler der sofortigen Channel Close + SAFE MODE auslöst |
 | **DEGRADED State** | Teilausfall (Video/Telemetrie) — Control möglich, Awareness reduziert |
-| **OBSERVATION** | Nicht-kritischer Ausfall (Auth Service down) — laufende Session aktiv, neue Sessions blockiert |
+| **OBSERVATION** | *(Sprint 60, DRIFT-M18: nie implementiert)* Ursprünglich geplante Klasse für „Auth Service down" — nie produktiv umgesetzt, s. Failure Classification unten |
 
 ---
 
@@ -99,7 +99,7 @@ Regel: Max. 1 ACTIVE_OPERATOR. NO_OPERATOR → SYSTEM SAFE_MODE.
 |--------|---------|----------|
 | **CRITICAL** | WS Disconnect, Safety Bus Failure, Dead-man Timeout, **Command ACK Timeout** (`ACKTimeoutWatcher`, 100ms — Server-ACK an Operator bleibt aus), **Vehicle ACK Timeout** (`VehicleACKWatchdog`, 1s — Fahrzeug bestätigt weitergeleiteten Befehl nicht), Auth Invalidation (`AuthWatchdog`, 2026-07-16), No Active Operator (`TransitionOperator(OpNoOperator)`, produktiv verdrahtet seit 2026-07-16) | Channel Close → SAFE_MODE |
 | **DEGRADED** | Video Lost (MEDIA_FAILED), Video Degraded (MEDIA_DEGRADED, Schwellwert-basiert seit 2026-07-16), Partial Telemetry Loss (noch kein Produktivpfad — siehe unten) | DEGRADED State, Warnung im UI, Control möglich |
-| **OBSERVATION** | Auth Service down (bestehende Session) | Neue Sessions blockiert, JWT-Validierung lokal weiter |
+| **OBSERVATION** *(korrigiert, Sprint 60)* | War als eigene Klasse für „Auth Service down" geplant, aber nie implementiert (kein `SystemState`-Wert, keine Transition, kein Handler) — Grill-Me-Entscheidung `DRIFT-M18`: kein Folge-Task, Doku korrigiert statt nachgebaut. Der real relevante Fall (Operator-Account wird während einer laufenden Session ungültig) läuft bereits über `AuthWatchdog` als **CRITICAL** (s. o.), der direkt gegen die geteilte Postgres-DB pollt statt gegen auth-service selbst. `/session/start` validiert JWTs rein lokal (HMAC-Secret) und ruft auth-service nie auf — „neue Sessions blockiert, wenn auth-service down ist" hat und hatte nie einen Produktivpfad. Details: ADR-009 Update (2026-07-23). |
 
 **„Command ACK Timeout" ist kein einzelner Mechanismus**, sondern zwei eigenständige Watchdogs mit
 unterschiedlichem Timeout/Trigger (beide Teil des `VehicleContext`, ADR-026):
