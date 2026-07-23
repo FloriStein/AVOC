@@ -155,7 +155,7 @@ func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims, sess := auth.claims, auth.sess
-	isObserver := sess.OperatorRole == "OBSERVER"
+	isObserver := sess.OperatorRole == session.RoleObserver
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

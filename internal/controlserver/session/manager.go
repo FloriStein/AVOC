@@ -10,12 +10,25 @@ import (
 	"avoc/pkg/ulid"
 )
 
+// OperatorRole is a session's role for its vehicle (ADR-025) — exactly one
+// ACTIVE_OPERATOR per vehicle, all others OBSERVER. Package-local (DRIFT-M24,
+// Sprint 61): control-server and auth-service are separate deployable services
+// coupled only via JWT claims, so this is deliberately its own type rather than
+// a reuse of authservice.OperatorRole — importing authservice here would add an
+// inappropriate cross-service dependency, not close a type-reuse gap.
+type OperatorRole string
+
+const (
+	RoleActiveOperator OperatorRole = "ACTIVE_OPERATOR"
+	RoleObserver       OperatorRole = "OBSERVER"
+)
+
 // Session represents an active Control Session (ADR-015).
 type Session struct {
 	ID           string // ULID — root anchor, survives SAFE_MODE (ADR-016)
 	VehicleID    string
 	OperatorID   string
-	OperatorRole string // "ACTIVE_OPERATOR" or "OBSERVER"
+	OperatorRole OperatorRole
 	CreatedAt    time.Time
 }
 
@@ -54,10 +67,10 @@ func (m *Manager) StartSession(vehicleID, operatorID string) Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	role := "ACTIVE_OPERATOR"
+	role := RoleActiveOperator
 	if ctrlSessID, locked := m.vehicleController[vehicleID]; locked {
 		if _, alive := m.sessions[ctrlSessID]; alive {
-			role = "OBSERVER"
+			role = RoleObserver
 		} else {
 			// Stale lock — controller session was removed without ReleaseSession.
 			delete(m.vehicleController, vehicleID)
@@ -72,7 +85,7 @@ func (m *Manager) StartSession(vehicleID, operatorID string) Session {
 		CreatedAt:    time.Now(),
 	}
 	m.sessions[s.ID] = &s
-	if role == "ACTIVE_OPERATOR" {
+	if role == RoleActiveOperator {
 		m.vehicleController[vehicleID] = s.ID
 	}
 	return s
@@ -95,7 +108,7 @@ func (m *Manager) GetCurrentSession() (Session, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, s := range m.sessions {
-		if s.OperatorRole == "ACTIVE_OPERATOR" {
+		if s.OperatorRole == RoleActiveOperator {
 			return *s, true
 		}
 	}
@@ -108,7 +121,7 @@ func (m *Manager) HasActiveOperatorSession(operatorID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, s := range m.sessions {
-		if s.OperatorID == operatorID && s.OperatorRole == "ACTIVE_OPERATOR" {
+		if s.OperatorID == operatorID && s.OperatorRole == RoleActiveOperator {
 			return true
 		}
 	}
@@ -135,7 +148,7 @@ func (m *Manager) ReleaseSession(sessionID string) {
 	if !ok {
 		return
 	}
-	if s.OperatorRole == "ACTIVE_OPERATOR" {
+	if s.OperatorRole == RoleActiveOperator {
 		if ctrlSessID := m.vehicleController[s.VehicleID]; ctrlSessID == sessionID {
 			delete(m.vehicleController, s.VehicleID)
 		}
@@ -147,11 +160,11 @@ func (m *Manager) ReleaseSession(sessionID string) {
 // Handover (ADR-011/015). Scoped to the given vehicle (ADR-026 follow-up) —
 // previously updated "the first ACTIVE_OPERATOR session found" fleet-wide,
 // which could reassign the wrong vehicle's controller once 2+ vehicles were active.
-func (m *Manager) UpdateOperator(vehicleID, operatorID, operatorRole string) {
+func (m *Manager) UpdateOperator(vehicleID, operatorID string, operatorRole OperatorRole) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, s := range m.sessions {
-		if s.VehicleID == vehicleID && s.OperatorRole == "ACTIVE_OPERATOR" {
+		if s.VehicleID == vehicleID && s.OperatorRole == RoleActiveOperator {
 			s.OperatorID = operatorID
 			s.OperatorRole = operatorRole
 			return
@@ -173,7 +186,7 @@ func (m *Manager) SaveCheckpoint(sysState, ctrlState, safetyReason string) {
 	defer m.mu.Unlock()
 	// Save checkpoint from the ACTIVE_OPERATOR session.
 	for _, s := range m.sessions {
-		if s.OperatorRole == "ACTIVE_OPERATOR" {
+		if s.OperatorRole == RoleActiveOperator {
 			m.checkpoint = &RecoveryCheckpoint{
 				SessionID:        s.ID,
 				VehicleID:        s.VehicleID,
@@ -204,7 +217,7 @@ func (m *Manager) PushSFUEvent(eventType string) {
 	m.mu.RLock()
 	var s *Session
 	for _, sess := range m.sessions {
-		if sess.OperatorRole == "ACTIVE_OPERATOR" {
+		if sess.OperatorRole == RoleActiveOperator {
 			s = sess
 			break
 		}
@@ -264,7 +277,7 @@ func (m *Manager) ActiveVehicleIDs() []string {
 
 // CreateSession is kept for backward compatibility (used by handover manager and tests).
 // Prefer StartSession for new code.
-func (m *Manager) CreateSession(vehicleID, operatorID, operatorRole string) Session {
+func (m *Manager) CreateSession(vehicleID, operatorID string, operatorRole OperatorRole) Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := Session{
@@ -275,7 +288,7 @@ func (m *Manager) CreateSession(vehicleID, operatorID, operatorRole string) Sess
 		CreatedAt:    time.Now(),
 	}
 	m.sessions[s.ID] = &s
-	if operatorRole == "ACTIVE_OPERATOR" {
+	if operatorRole == RoleActiveOperator {
 		m.vehicleController[vehicleID] = s.ID
 	}
 	return s

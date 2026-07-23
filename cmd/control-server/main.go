@@ -366,7 +366,7 @@ func (s *controlServer) handleSessionStart(w http.ResponseWriter, r *http.Reques
 
 	sess := s.sessionMgr.StartSession(req.VehicleID, req.OperatorID)
 
-	if sess.OperatorRole == "ACTIVE_OPERATOR" {
+	if sess.OperatorRole == session.RoleActiveOperator {
 		s.advanceVehicleToActiveOperator(sess)
 	}
 
@@ -376,7 +376,7 @@ func (s *controlServer) handleSessionStart(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"session_id": sess.ID,
-		"role":       sess.OperatorRole,
+		"role":       string(sess.OperatorRole),
 		"vehicle_id": sess.VehicleID,
 	}); err != nil {
 		log.Warn("failed to encode response", "error", err)
@@ -429,7 +429,7 @@ func (s *controlServer) handleSessionEnd(w http.ResponseWriter, r *http.Request)
 			s.recorder.EndSession(sess.ID)
 			log.Event(logger.EventSessionEnded, "session ended",
 				"session_id", sess.ID, "role", sess.OperatorRole)
-			if sess.OperatorRole == "ACTIVE_OPERATOR" {
+			if sess.OperatorRole == session.RoleActiveOperator {
 				vc := s.vehicleContexts.Get(sess.VehicleID)
 				vc.Deadman.Stop()
 				vc.VehicleACKWatchdog.Stop()
@@ -867,7 +867,7 @@ func (s *controlServer) handleSessions(w http.ResponseWriter, _ *http.Request) {
 			SessionID:  sess.ID,
 			VehicleID:  sess.VehicleID,
 			OperatorID: sess.OperatorID,
-			Role:       sess.OperatorRole,
+			Role:       string(sess.OperatorRole),
 			CreatedAt:  sess.CreatedAt.Format("15:04:05"),
 		}
 	}

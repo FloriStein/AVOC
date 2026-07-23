@@ -39,7 +39,7 @@ func transitionTaskStatus(store FleetStore, hub *Hub, id, newStatus, changedBy s
 	}
 	hub.Broadcast("task_status_changed", TaskStatusChangedEvent{
 		ID:          updated.ID,
-		Status:      updated.Status,
+		Status:      string(updated.Status),
 		CompletedAt: updated.CompletedAt,
 		ChangedBy:   changedBy,
 	})

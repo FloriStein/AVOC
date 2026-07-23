@@ -1,4 +1,4 @@
-.PHONY: proto-gen proto-gen-ts dev-frontend build up down test test-unit test-safety test-integration test-latency test-k6 lint clean build-prod push
+.PHONY: proto-gen proto-gen-ts dev-frontend build up down test test-unit test-safety test-integration test-race test-latency test-k6 lint clean build-prod push
 
 # ─── Dev-Stack Isolation über parallele Worktrees (TASKUI-05) ─────────────────
 # infrastructure/compose/docker-compose.yml pins `name: avoc` — every worktree checked out
@@ -88,6 +88,22 @@ test-integration:
 	@sleep 5
 	@echo "Running integration tests..."
 	go test ./tests/integration/... -v -timeout 120s -count=1; \
+	EXIT=$$?; \
+	docker compose -f tests/docker-compose.test.yml down; \
+	exit $$EXIT
+
+# Race detector over the whole project (DRIFT-M22, CLAUDE.MD §17), incl. tests/integration — needs
+# the Docker test stack, same as test-integration below. Kept as its own target instead of baked
+# into test-unit/test-integration: -race roughly doubles runtime and memory, which would slow down
+# the fast default loop devs/CI run on every push. Run twice back-to-back (`make test-race` twice)
+# to rule out flakiness before trusting a green result (§17) — not baked in as -count=2 by default
+# for the same reason (doubling an already-doubled run again is too slow for routine use).
+test-race:
+	@echo "Starting test stack for race-detector run..."
+	docker compose -f tests/docker-compose.test.yml up --build -d
+	@sleep 5
+	@echo "Running full test suite with -race..."
+	go test ./... -race -timeout 180s; \
 	EXIT=$$?; \
 	docker compose -f tests/docker-compose.test.yml down; \
 	exit $$EXIT

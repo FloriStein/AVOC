@@ -1,8 +1,9 @@
 name: Test Go
 
 # ADR-006 (Testing Strategy) + CLAUDE.MD §17: blocking CI gates for the Go backend.
-# 3 jobs, all blocking (no continue-on-error): unit, safety, integration.
-# CIGATE-02 (tasks/backlog.md EPIC "CI-Gates einführen").
+# 4 jobs, all blocking (no continue-on-error): unit, safety, integration, race.
+# CIGATE-02 (tasks/backlog.md EPIC "CI-Gates einführen"). race added DRIFT-M22 (Sprint 61) —
+# -race previously only ran ad-hoc/manually, never as a standing CI gate.
 
 on:
   push:
@@ -54,3 +55,17 @@ jobs:
 
       - name: make test-integration
         run: make test-integration
+
+  race:
+    name: Race Detector (full project, Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: make test-race
+        run: make test-race

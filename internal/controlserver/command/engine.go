@@ -105,7 +105,7 @@ func (e *Engine) Handle(rawMsg []byte, sess session.Session) ([]byte, error) {
 		controlv1.CommandType_COMMAND_TYPE_BRAKE,
 		controlv1.CommandType_COMMAND_TYPE_SPEED:
 		// OBSERVERs may not send movement commands (ADR-025).
-		if sess.OperatorRole == "OBSERVER" {
+		if sess.OperatorRole == session.RoleObserver {
 			return e.ack(sess, eventID, false, "observer role: control commands not allowed")
 		}
 		e.forwardMovementCommand(vc, sess, cmd, rawMsg)

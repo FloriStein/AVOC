@@ -76,7 +76,7 @@ func (f *mockForwarder) Count() int {
 func TestMultiOp_FirstOperator_GetsActiveRole(t *testing.T) {
 	mgr := newMgr(t)
 	sess := mgr.StartSession("vehicle-001", "alice")
-	assert.Equal(t, "ACTIVE_OPERATOR", sess.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, sess.OperatorRole)
 	assert.Equal(t, "vehicle-001", sess.VehicleID)
 	assert.Equal(t, "alice", sess.OperatorID)
 }
@@ -86,8 +86,8 @@ func TestMultiOp_SecondOperator_SameVehicle_GetsObserverRole(t *testing.T) {
 	first := mgr.StartSession("vehicle-001", "alice")
 	second := mgr.StartSession("vehicle-001", "bob")
 
-	assert.Equal(t, "ACTIVE_OPERATOR", first.OperatorRole, "first must be ACTIVE_OPERATOR")
-	assert.Equal(t, "OBSERVER", second.OperatorRole, "second must be OBSERVER on locked vehicle")
+	assert.Equal(t, session.RoleActiveOperator, first.OperatorRole, "first must be ACTIVE_OPERATOR")
+	assert.Equal(t, session.RoleObserver, second.OperatorRole, "second must be OBSERVER on locked vehicle")
 	assert.NotEqual(t, first.ID, second.ID, "sessions must have distinct IDs")
 }
 
@@ -97,8 +97,8 @@ func TestMultiOp_ThirdOperator_SameVehicle_AlsoObserver(t *testing.T) {
 	second := mgr.StartSession("vehicle-001", "bob")
 	third := mgr.StartSession("vehicle-001", "carol")
 
-	assert.Equal(t, "OBSERVER", second.OperatorRole)
-	assert.Equal(t, "OBSERVER", third.OperatorRole)
+	assert.Equal(t, session.RoleObserver, second.OperatorRole)
+	assert.Equal(t, session.RoleObserver, third.OperatorRole)
 }
 
 func TestMultiOp_SecondOperator_DifferentVehicle_GetsActiveRole(t *testing.T) {
@@ -106,8 +106,8 @@ func TestMultiOp_SecondOperator_DifferentVehicle_GetsActiveRole(t *testing.T) {
 	s1 := mgr.StartSession("vehicle-001", "alice")
 	s2 := mgr.StartSession("vehicle-002", "bob")
 
-	assert.Equal(t, "ACTIVE_OPERATOR", s1.OperatorRole)
-	assert.Equal(t, "ACTIVE_OPERATOR", s2.OperatorRole, "different vehicle must get its own ACTIVE_OPERATOR")
+	assert.Equal(t, session.RoleActiveOperator, s1.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, s2.OperatorRole, "different vehicle must get its own ACTIVE_OPERATOR")
 }
 
 // ── Session Manager — GetSession ─────────────────────────────────────────────
@@ -120,7 +120,7 @@ func TestMultiOp_GetSession_ReturnsCorrectSession(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, created.ID, found.ID)
 	assert.Equal(t, "alice", found.OperatorID)
-	assert.Equal(t, "ACTIVE_OPERATOR", found.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, found.OperatorRole)
 }
 
 func TestMultiOp_GetSession_UnknownID_ReturnsFalse(t *testing.T) {
@@ -136,7 +136,7 @@ func TestMultiOp_GetSession_ObserverSession_Found(t *testing.T) {
 
 	found, ok := mgr.GetSession(observer.ID)
 	require.True(t, ok)
-	assert.Equal(t, "OBSERVER", found.OperatorRole)
+	assert.Equal(t, session.RoleObserver, found.OperatorRole)
 }
 
 // ── Session Manager — GetCurrentSession ──────────────────────────────────────
@@ -148,7 +148,7 @@ func TestMultiOp_GetCurrentSession_ReturnsActiveOperator(t *testing.T) {
 
 	sess, ok := mgr.GetCurrentSession()
 	require.True(t, ok)
-	assert.Equal(t, "ACTIVE_OPERATOR", sess.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, sess.OperatorRole)
 	assert.Equal(t, active.ID, sess.ID)
 }
 
@@ -190,7 +190,7 @@ func TestMultiOp_ReleaseActiveOperator_NextGetsActiveRole(t *testing.T) {
 
 	// Carol starts a new session — vehicle is now free
 	carol := mgr.StartSession("vehicle-001", "carol")
-	assert.Equal(t, "ACTIVE_OPERATOR", carol.OperatorRole,
+	assert.Equal(t, session.RoleActiveOperator, carol.OperatorRole,
 		"new operator must get ACTIVE_OPERATOR after controller released")
 }
 
@@ -246,7 +246,7 @@ func TestMultiOp_StaleLock_Cleaned_NextGetsActiveRole(t *testing.T) {
 	// Now vehicleController no longer has an entry for vehicle-001.
 	// Simulate "stale lock" by checking that a new operator gets ACTIVE_OPERATOR.
 	next := mgr.StartSession("vehicle-001", "bob")
-	assert.Equal(t, "ACTIVE_OPERATOR", next.OperatorRole,
+	assert.Equal(t, session.RoleActiveOperator, next.OperatorRole,
 		"after stale lock cleaned up, next operator must be ACTIVE_OPERATOR")
 }
 
@@ -305,9 +305,9 @@ func TestMultiOp_MultipleVehicles_IndependentControllers(t *testing.T) {
 	v2ctrl := mgr.StartSession("vehicle-002", "bob")
 	v1obs := mgr.StartSession("vehicle-001", "carol")
 
-	assert.Equal(t, "ACTIVE_OPERATOR", v1ctrl.OperatorRole)
-	assert.Equal(t, "ACTIVE_OPERATOR", v2ctrl.OperatorRole)
-	assert.Equal(t, "OBSERVER", v1obs.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, v1ctrl.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, v2ctrl.OperatorRole)
+	assert.Equal(t, session.RoleObserver, v1obs.OperatorRole)
 
 	assert.True(t, mgr.IsVehicleLocked("vehicle-001"))
 	assert.True(t, mgr.IsVehicleLocked("vehicle-002"))
@@ -369,7 +369,7 @@ func TestMultiOp_Concurrent_ReleaseAndReacquire(t *testing.T) {
 	}()
 	wg.Wait()
 
-	assert.Equal(t, "ACTIVE_OPERATOR", next.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, next.OperatorRole)
 }
 
 // ── Command Engine — observer command rejection ───────────────────────────────
@@ -524,7 +524,7 @@ func TestMultiOp_CreateSession_BackwardCompat_StillWorks(t *testing.T) {
 	sess := mgr.CreateSession("vehicle-001", "alice", "ACTIVE_OPERATOR")
 
 	assert.NotEmpty(t, sess.ID)
-	assert.Equal(t, "ACTIVE_OPERATOR", sess.OperatorRole)
+	assert.Equal(t, session.RoleActiveOperator, sess.OperatorRole)
 
 	// GetCurrentSession must find it.
 	found, ok := mgr.GetCurrentSession()
