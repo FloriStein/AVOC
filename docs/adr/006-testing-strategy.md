@@ -234,3 +234,17 @@ Vitest (seit Projektstart, funktional äquivalent) — keine Änderung nötig.
 Branch-Protection (Required Status Checks für die 4 blockierenden Jobs) ist vorbereitet und in
 README.md dokumentiert, aber bewusst nicht aktiviert — geteilte Repo-Einstellung, die alle
 künftigen PRs betrifft, Aktivierung erfordert explizite Nutzerbestätigung.
+
+## Update (2026-07-23, Sprint 60 — DRIFT-K4 Grill-Me-Entscheidung)
+
+Die oben (2026-07-20) dokumentierte Abweichung ("Latenz-Gate non-blocking, Verschärfung ein
+möglicher Folge-Task sobald genug CI-Läufe eine Rausch-Baseline zeigen") ist eingelöst: Bei
+Sprint-60-Vorrecherche gegen die echte CI-Historie (`test-latency.yml`, GitHub Actions) geprüft —
+47 aufgezeichnete Läufe seit Sprint 41, alle grün, gemessenes p99 in jeder Stichprobe 0–1ms bei
+einem 100ms-Budget (~100-facher Puffer). Der befürchtete Rausch-Fall ist nie eingetreten.
+Entscheidung: `go-benchmark`-Job in `test-latency.yml` auf blocking umgestellt
+(`continue-on-error` entfernt), der `k6`-Job bleibt unabhängig davon non-blocking. Damit ist das
+Latenz-Gate wieder deckungsgleich mit der ursprünglichen ADR-006-Pipeline-Skizze oben
+("[BLOCKING] Latency Tests"). Branch-Protection (Required Status Checks) bleibt weiterhin bewusst
+nicht aktiviert — eigener Folgeschritt mit expliziter Nutzerbestätigung, nicht Teil dieser
+Entscheidung.

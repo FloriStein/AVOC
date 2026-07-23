@@ -395,3 +395,40 @@ die Session gebunden, nicht an SYSTEM STATE), aber `TransitionTelemetry`s Guards
 Aufrufe während SAFE_MODE automatisch zu No-Ops — Invariante 1 bleibt gewahrt, kein Sonderfall im
 Watchdog-Code nötig. Details, Task-Aufschlüsselung und Teststandard:
 `tasks/sprints/50-telemetry-watchdog.md`.
+
+## Update (2026-07-23, Sprint 60 — DRIFT-M18 Grill-Me-Entscheidung)
+
+Bei Sprint-60-Vorrecherche gegen echten Code gegengeprüft: Die oben (§Failure Classification)
+tabellierte **OBSERVATION**-Klasse ("Auth Service down (bestehende Session) → neue Sessions
+blockiert, JWT-Validierung lokal weiter") hat und hatte **nie** einen Produktivpfad — kein
+`SystemState`-Wert, keine Transition, kein Handler-Zweig. `grep -rn "OBSERVATION"` über
+`internal/`/`cmd/` findet außer einem erklärenden Kommentar in `authcheck/checker.go` (s. u.)
+keine Code-Referenz. Verifiziert: `/session/start` validiert JWTs ausschließlich lokal gegen das
+geteilte HMAC-Secret und ruft auth-service nie über HTTP auf — auth-service-Ausfall hat heute
+buchstäblich keinen Effekt auf neue Sessions, weder blockierend noch anderweitig.
+
+**Entscheidung (Grill-Me):** Doku korrigieren (CONTEXT.md), nicht nachbauen. Begründung:
+
+1. Der einzige real relevante Auth-Fehlerfall — ein Operator-Account wird während einer laufenden
+   Session ungültig — ist bereits vollständig abgedeckt: `AuthWatchdog` (DRIFT-K1 oben) pollt
+   `users.is_active` direkt gegen die geteilte Postgres-DB und triggert CRITICAL → SAFE_MODE.
+   Genau dieses Design (DB-Direktzugriff statt HTTP-Call zu auth-service) wurde 2026-07-16 bewusst
+   gewählt, *um* eine Kopplung an einen zweiten Netzwerk-Hop und eine eigene
+   OBSERVATION-Fehlerklasse zu vermeiden (s. `authcheck/checker.go`-Kommentar, DRIFT-K1-Abschnitt
+   oben) — die Doku hinkte dieser Entscheidung seither hinterher.
+2. Eine echte OBSERVATION-Implementierung ("neue Sessions blockieren, wenn auth-service
+   unerreichbar ist") würde eine komplett neue Abhängigkeit einführen, die heute für keinen
+   anderen Zweck existiert: `/session/start` müsste auth-service aktiv auf Erreichbarkeit prüfen,
+   obwohl es aktuell überhaupt nicht mit auth-service spricht. Sicherheitsrelevanter
+   State-Machine-Umfang (neuer `SystemState`-Wert, neue Transitionen, volle §17-Testabdeckung) für
+   ein Szenario (auth-service-Prozess down, DB aber erreichbar), das kein Betriebsvorfall bislang
+   nahegelegt hat.
+3. Konsistent mit der bereits 2026-07-16 getroffenen Architekturentscheidung (Punkt 1) — ein neuer
+   OBSERVATION-Pfad würde ihr direkt widersprechen, statt sie zu ergänzen.
+
+**Umfang dieser Entscheidung:** reine Doku-Korrektur (`CONTEXT.md`), keine Code-Änderung. Die
+CRITICAL-Zeile "Auth Invalidation" oben sowie der DRIFT-K1-Abschnitt bleiben unverändert gültig —
+diese Korrektur betrifft ausschließlich die separate OBSERVATION-Zeile, die nie einen
+Produktivpfad hatte. Kein Folge-Task; sollte auth-service-Erreichbarkeit als eigenständiges Signal
+künftig doch gebraucht werden (z. B. weil `/session/start` beginnt, auth-service aktiv
+anzusprechen), ist das ein neuer Grill-Me-Anlass, keine Fortsetzung dieser Entscheidung.

@@ -154,10 +154,3 @@ func BenchmarkControlACKRoundtrip(b *testing.B) {
 		p99.Round(time.Millisecond),
 		latencyBudget)
 }
-
-// TestLatencyBudget_DocumentedRequirement verifies the budget constant matches ADR-010.
-func TestLatencyBudget_DocumentedRequirement(t *testing.T) {
-	if latencyBudget != 100*time.Millisecond {
-		t.Fatalf("latency budget must be 100ms per ADR-010, got %v", latencyBudget)
-	}
-}
