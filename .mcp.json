@@ -1,20 +1,54 @@
 {
   "mcpServers": {
+    "gemini-mcp": {
+      "type": "sse",
+      "url": "http://localhost:3000/mcp/sse"
+    },
     "firefox-devtools": {
       "command": "npx",
-      "args": ["-y", "@mozilla/firefox-devtools-mcp@latest", "--headless", "--viewport", "1280x800"]
+      "args": [
+        "-y",
+        "@mozilla/firefox-devtools-mcp@latest",
+        "--headless",
+        "--viewport",
+        "1280x800"
+      ]
     },
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--executablePath=/snap/bin/chromium", "--headless", "--isolated"]
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--executablePath=/snap/bin/chromium",
+        "--headless",
+        "--isolated"
+      ]
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium", "--executable-path", "/snap/bin/chromium", "--headless", "--isolated"]
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--browser",
+        "chromium",
+        "--executable-path",
+        "/snap/bin/chromium",
+        "--headless",
+        "--isolated"
+      ]
     },
     "github": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "-e", "GITHUB_TOOLSETS", "ghcr.io/github/github-mcp-server"],
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e",
+        "GITHUB_TOOLSETS",
+        "ghcr.io/github/github-mcp-server"
+      ],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
         "GITHUB_TOOLSETS": "context,repos,issues,pull_requests,users,actions"
@@ -22,11 +56,29 @@
     },
     "postgres": {
       "command": "npx",
-      "args": ["-y", "@henkey/postgres-mcp-server", "--connection-string", "${POSTGRES_CONNECTION_STRING}"]
+      "args": [
+        "-y",
+        "@henkey/postgres-mcp-server",
+        "--connection-string",
+        "${POSTGRES_CONNECTION_STRING}"
+      ]
     },
     "grafana": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "--network", "host", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana/mcp-grafana", "-t", "stdio"],
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--network",
+        "host",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+        "grafana/mcp-grafana",
+        "-t",
+        "stdio"
+      ],
       "env": {
         "GRAFANA_URL": "http://localhost:3001",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_SERVICE_ACCOUNT_TOKEN}"
