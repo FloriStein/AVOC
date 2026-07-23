@@ -6,125 +6,118 @@
 
 ---
 
-# Sprint 60 — Drift-Audit-Restposten Teil 1 (Grill-Me-Entscheidungen)
+# Sprint 61 — Drift-Audit-Restposten Teil 2 (Umsetzung)
 
 Vollständiger Kontext: [tasks/backlog.md](backlog.md) EPIC "Drift-Audit-Fixes (Sprint 26,
-`docs/drift-audit-2026-07.md`)". Erster von zwei Sprints, die die seit Sprint 26 offenen
-`DRIFT-K*`/`DRIFT-M18`-Punkte abschließen (Sprint-59-Nachbesprechung, 2026-07-22 —
-Nutzerentscheidung: aufteilen statt alles in einen Sprint zu packen, Begründung Token-Budget).
+`docs/drift-audit-2026-07.md`)". Zweiter und letzter der beiden Sprints, die die seit Sprint 26
+offenen `DRIFT-M*`-Punkte abschließen (Sprint-59-Nachbesprechung, 2026-07-22 — Aufteilung wegen
+Token-Budget). Sprint 60 hat die drei kritischen Grill-Me-Entscheidungen (`DRIFT-K4/K6/M18`)
+geliefert; alle sechs hier verbliebenen Punkte (`DRIFT-M19/M20/M21/M22/M24/M25`) sind laut
+Backlog-Einstufung "reine Umsetzung, keine offenen Entscheidungen mehr" — kein Grill-Me nötig.
 
-**Auftrag (2026-07-22):** Die drei kritischsten offenen Drift-Findings (`DRIFT-K4`, `DRIFT-K6`,
-`DRIFT-M18`) sind laut `CLAUDE.MD` §0 nicht direkt fixbar — jedes braucht erst eine eigene
-Grill-Me-Session (Entscheidung, ggf. ADR-Bezug), bevor überhaupt Code angefasst wird. Dieser Sprint
-liefert die drei Entscheidungen plus die Umsetzung, sofern sie klein genug ausfällt (S/M) —
-größere Folge-Implementierungen wandern nach Sprint 61. Zusätzlich ein trivialer Backlog-Doku-Fix
-(`DRIFT-K5`), der beim Vorrecherchieren dieses Sprints auffiel.
+**Vorrecherche (2026-07-23, gegen echten Code verifiziert statt nur die Backlog-/Drift-Audit-
+Einschätzung zu übernehmen):**
+- **DRIFT-M19** — `tests/performance/latency.js` misst laut eigenem Kommentar bewusst `GET
+  /sessions` als HTTP-Proxy für die ACK-Latenz, weil "WebSocket binary framing in k6 requires
+  additional setup". k6s stabiles `k6/ws`-Modul unterstützt binäre Frames aber bereits seit
+  Jahren nativ (kein Experimental-Feature, keine Docker-Image-Änderung nötig) — die im
+  Kommentar genannte Einschränkung ist überholt. Login (`setup()`) und Schwellwerte (`p(99)<100`)
+  bleiben unverändert, nur der eigentliche Request wird von `http.get` auf einen echten
+  `ws.connect`-Roundtrip mit einer minimalen Protobuf-`DEADMAN_HOLD`-Nachricht umgestellt (analog
+  `BenchmarkControlACKRoundtrip` in `tests/performance/latency_test.go`) — braucht vorher
+  `session/start` gegen `vehicle-int-mock` (einziges Fahrzeug mit echter WS-Verbindung im
+  Test-Stack, siehe Memory zu E2E-Backend-Eigenheiten).
+- **DRIFT-M20** — Video-Latenzziel (100–300ms) ist laut ADR-014 explizit **kein**
+  Safety-Hartziel (anders als der 100ms-ACK-Wert, ADR-010) und hat aktuell nur einen
+  Farbcodierungs-Test der UI-Anzeige, keinen automatisierten Latenz-Messwert. Reine
+  Ermessensentscheidung ohne Sicherheitsbezug — kein Grill-Me nötig, aber eine bewusste Wahl:
+  echten Test ergänzen (WebRTC-`getStats()`-basiert, aufwendig gegen einen echten
+  MediaMTX-Container) vs. Doku als "unverifiziert/aspirational" kennzeichnen.
+- **DRIFT-M21** — Der im Drift-Audit beschriebene Zustand ("`docker-compose.prod.yml` hat keinen
+  `fleet-service`-Eintrag") ist **überholt**: `DEPLOY-08` (Sprint 36) hat den Service-Block bereits
+  ergänzt (`infrastructure/compose/docker-compose.prod.yml:126-127`), `infrastructure/docker/
+  nginx.conf:107-116` proxied `/fleet/` bereits auf `fleet-service:8085`, und `GO_SERVICES` in
+  `docs/deployment/ec2-bootstrap.md:262` baut `fleet-service` bereits mit. Fleet-service braucht
+  auch **keinen** eigenen Security-Group-Port (wie `auth-service:8081` läuft es rein intern hinter
+  nginx — `infrastructure/AWS/cdk_server-stack.ts` öffnet konsequenterweise auch für
+  `auth-service` keinen Port). Der einzige reale Rest-Gap: `ec2-bootstrap.md` selbst behauptet an
+  zwei Stellen (Zeile 107-109, Zeile 371) noch fälschlich, die Lücke bestehe weiterhin — reiner
+  Doku-Korrektur-Task (S statt M/L, kein Compose-/CDK-/nginx-Code betroffen).
+- **DRIFT-M22** — Kein `Makefile`-Target ruft `-race` auf (nur ad-hoc in `tasks/sprints/*.md`
+  dokumentierte manuelle Läufe). Sicherheitsnah nur indirekt (deckt Data Races in
+  sicherheitsrelevantem Code auf, ist selbst aber keine Sicherheitslücke) — Entscheidungspunkt:
+  welche(s) Target(s) bekommen `-race` (`test-unit` betrifft `go test $(go list ./... | grep -v
+  /tests/integration)`, `test-integration` den Docker-Stack) und ob `-race` das Default-`test`
+  ersetzt oder als zusätzliches `test-race`-Target danebensteht (Laufzeit-Overhead beachten).
+- **DRIFT-M24** — `authservice.OperatorRole` (`internal/authservice/handler.go:17-25`, benannte
+  Konstanten `RoleAdmin/RoleActiveOperator/RoleObserver/RoleStandby/RoleVehicle`) existiert
+  bereits, wird aber **nicht** wiederverwendet: `control-server` importiert `authservice` an
+  keiner Stelle (separate deploybare Services, nur über JWT-Claims gekoppelt — ein Cross-Service-
+  Import wäre eine neue, unerwünschte Kopplung). Der Fix ist deshalb kein Type-Reuse, sondern ein
+  eigener, package-lokaler Typ in `internal/controlserver/session/manager.go` (analog zum
+  bestehenden Muster in `statemachine/state.go`), der die drei betroffenen Rohstring-Stellen
+  (`session/manager.go:18,57,60,71,75,98,111,138,154,156,176,207,274,278`,
+  `command/engine.go:108`, `transport/websocket.go:158,172`) ersetzt. Sicherheitsnah (ADR-025
+  Rollenprüfung) — volle §17-Testabdeckung (`-race -count=2`) bei Umsetzung Pflicht.
+- **DRIFT-M25** — `internal/fleetservice/store.go`s `Task.Status` (Zeile 210) sowie
+  `taskTransitionSources`/`allowedTargetsFrom` (Zeile 572ff.) arbeiten durchgängig mit
+  Rohstrings (`"pending"|"in_progress"|"completed"|"cancelled"`). Analog `DRIFT-M24`: neuer
+  package-lokaler `TaskStatus`-Typ (Vorbild `statemachine/state.go`), keine Verhaltensänderung an
+  der Übergangslogik selbst.
 
-**Vorrecherche (2026-07-22, gegen echten Code verifiziert statt nur den Backlog-Stand zu
-übernehmen):**
-- **DRIFT-K4** — `.github/workflows/test-latency.yml` existiert bereits (seit Sprint 41) und führt
-  den ACK-Roundtrip-Benchmark bei jedem Push/PR aus, ist aber laut eigenem Kopfkommentar bewusst
-  `continue-on-error: true` — Abweichung von ADR-006s "BLOCKING", Begründung: Shared-Runner-
-  CPU-Rauschen auf GitHub-hosted Runnern würde harte <100ms-Assertions an Runner-Rauschen statt
-  echten Regressionen scheitern lassen. Der Kommentar selbst nennt "Tightening to blocking is a
-  possible follow-up once enough CI runs establish a noise baseline" — seit Sprint 41 (2026-07-20)
-  sind inzwischen >30 Sprints/PRs durch diese Pipeline gelaufen. Das Finding "existiert nicht als
-  Pipeline" ist damit **überholt** (sie existiert), die eigentliche offene Frage ist: reicht die
-  informational Variante dauerhaft, oder wird jetzt auf blocking umgestellt?
-- **DRIFT-K5** — `tests/backlog.md` listet dies noch als "🔲 Grill-Me ausstehend", aber Sprint 55
-  (`CIHARD-01`) hat den `BenchmarkControlACKRoundtrip`-Skip-Bug real behoben — `make test-latency`
-  läuft seitdem nachweislich 2× hintereinander grün ohne Skip (siehe
-  `tasks/sprints/55-ci-haertung.md`). Reiner Backlog-Pflegefehler, kein offener Code-Task.
-- **DRIFT-K6** — `tests/performance/latency_test.go`s `TestLatencyBudget_DocumentedRequirement`
-  wurde gegengelesen: prüft ausschließlich `if latencyBudget != 100*time.Millisecond`, also dass
-  eine Konstante sich selbst nicht geändert hat — tautologisch, wie im Finding beschrieben.
-  Sprint 55s Backlog-Zeile zu `CIHARD-01` behauptet fälschlich "schließt DRIFT-K5/K6 endgültig
-  ab" — das stimmt nur für K5, K6 ist nach wie vor unbehoben (Backlog-Fehler, nicht nur veraltet).
-- **DRIFT-M18** — `CONTEXT.MD` (Zeilen 36/102) dokumentiert OBSERVATION als eigene Stufe ("Auth
-  Service down (bestehende Session) → neue Sessions blockiert, JWT-Validierung lokal weiter"),
-  aber `grep -rn "OBSERVATION\|StateObservation"` über `internal/`/`cmd/` findet **keine**
-  Code-Referenz außer einem Kommentar in `internal/controlserver/authcheck/checker.go:8`, der
-  selbst nur auf `CONTEXT.MD` verweist. Bestätigt: reine Dokumentations-Behauptung ohne
-  Produktivpfad — Grill-Me muss entscheiden, ob implementiert oder die Doku korrigiert wird.
+**Gemini-mcp-Einsatz (2026-07-23, Konnektivität live neu verifiziert):** Sprint 60 konnte den
+`gemini-mcp`-Server wegen eines serverseitigen Modell-Fallback-Bugs (404 auf ein nicht mehr
+existierendes Modell) nicht nutzen (s. `tasks/sprints/60-drift-audit-restposten-1.md`). Vor
+diesem Sprint erneut geprüft, nicht nur angenommen: `gemini_subagent_list` antwortet, und ein
+echter Modell-Call (`gemini_summarize`) liefert ein korrektes Ergebnis — der Server läuft aktuell
+sauber. Dieser Sprint plant Gemini deshalb gezielt dort ein, wo ein Werkzeug wirklich passt (nicht
+pauschal für jeden Task):
+- **Zweitmeinung (`gemini_brainstorm`)** für die beiden echten Ermessensentscheidungen
+  `DRIFT-M20`/`DRIFT-M22` — Entscheidung selbst bleibt bei Claude/Nutzer, Gemini liefert nur
+  Pro/Contra.
+- **Entwurf (`gemini_simple_code_generator`, Gemini Flash)** für den k6-`ws.connect`-Rewrite in
+  `DRIFT-M19` — mechanische, gut abgegrenzte Übersetzung eines bestehenden Musters
+  (`BenchmarkControlACKRoundtrip`) in eine andere Sprache; Claude integriert den Entwurf und
+  verifiziert ihn gegen den echten Docker-Teststack (`make test-k6`), übernimmt ihn nicht
+  ungeprüft.
+- **Zweitmeinung-Review (`gemini_code_review_refactor`, Gemini Pro)** für `DRIFT-M24`/`M25` — beide
+  sind sicherheitsnahe bzw. strukturelle Typ-Refactorings; Claude implementiert (ADR-025-Rollen-
+  prüfung bleibt bei Claude, `CLAUDE.MD` §0), Gemini liefert danach eine unabhängige zweite
+  Code-Review-Meinung auf den fertigen Diff, bevor der PR aufgemacht wird.
+- **Abschließendes Review (`gemini_code_review_refactor`)** in `DRIFT61-07` über den gesamten
+  Sprint-Diff als zusätzliches Gate vor dem PR — ergänzt, ersetzt nicht die eigene Verifikation.
+- **`DRIFT-M21`** (reiner Doku-Zeilenfix) bekommt bewusst **keinen** Gemini-Einsatz — kein
+  Werkzeug aus dem Katalog passt für eine triviale Zwei-Zeilen-Korrektur, Einsatz wäre Ritual statt
+  Mehrwert.
+- `gemini_unit_test_generator`/`gemini_type_converter_formatter` passen für keinen der sechs Tasks
+  (Vitest/Jest/PyTest bzw. JSON/SQL/YAML→TS/Pydantic — dieser Sprint ist reines Go/k6) und werden
+  deshalb nicht eingeplant.
 
 ## Tasks
 
-| ID | Task | Typ | Status | Abhängigkeiten |
-|----|------|-----|--------|-----------------|
-| DRIFT60-01 | Backlog-Doku-Fix: `DRIFT-K5` in `tasks/backlog.md` von "🔲 Grill-Me ausstehend" auf "✅ Sprint 55" korrigieren (Status war real bereits erledigt, nur nie nachgezogen); `CIHARD-01`-Zeile korrigieren (behauptet fälschlich, auch K6 zu schließen). | S | ✅ | — |
-| DRIFT60-02 | Grill-Me `DRIFT-K4`: Entscheidung, ob `test-latency.yml`s `go-benchmark`-Job dauerhaft non-blocking bleibt (ADR-006-Abweichung formal in `DECISIONS.MD`/ADR-006 als dauerhaft festschreiben) oder jetzt — nach >30 Sprints ohne dokumentierten Noise-Vorfall — auf `continue-on-error: false` umgestellt wird. Bei Entscheidung "blocking": Branch-Protection-Erweiterung analog SEC-CI-05 als eigener Folgeschritt (Nutzerbestätigung nötig), nicht automatisch Teil dieses Tasks. | M | ✅ | — |
-| DRIFT60-03 | Grill-Me `DRIFT-K6`: Entscheidung + Umsetzung — `TestLatencyBudget_DocumentedRequirement` entweder durch einen echten Test ersetzen (z. B. Assertion direkt im Benchmark statt separatem tautologischen Test) oder ersatzlos streichen, falls der Benchmark selbst (`b.Fatalf` bei p99>100ms) die Anforderung bereits ausreichend verifiziert. | S/M | ✅ | DRIFT60-02 (gleiche Datei, im selben Aufwasch sinnvoll) |
-| DRIFT60-04 | Grill-Me `DRIFT-M18`: Entscheidung — OBSERVATION-Trigger "Auth-Service-down blockiert neue Sessions" produktiv implementieren (neuer Watchdog analog `AuthWatchdog`/`TelemetryWatchdog`, sicherheitsnah — volle §17-Testabdeckung) oder `CONTEXT.MD` auf den tatsächlichen Stand korrigieren (kein Produktivpfad). Nur die Entscheidung + ggf. reine Doku-Korrektur sind Teil dieses Sprints — eine volle Watchdog-Implementierung wäre eigener Typ-L-Folge-Task für Sprint 61 oder später. | M | ✅ | — |
-| DRIFT60-05 | Verifikation: `go build ./...`, `go vet ./...`, `gofmt -l` sauber; `make test-latency` weiterhin grün; Doku-Updates (`DECISIONS.MD`, `tasks/backlog.md` Drift-Audit-Fixes-Tabelle, ggf. ADR-006/`CONTEXT.MD`). | S | ✅ | DRIFT60-01..04 |
+| ID | Task | Typ | Gemini-mcp-Rolle | Status | Abhängigkeiten |
+|----|------|-----|-------------------|--------|-----------------|
+| DRIFT61-01 | `DRIFT-M19`: `tests/performance/latency.js` von `GET /sessions`-Proxy auf echten WS-ACK-Roundtrip umstellen (`k6/ws`, `session/start` gegen `vehicle-int-mock`, minimale Protobuf-`DEADMAN_HOLD`-Nachricht wie im Go-Benchmark). Schwellwerte (`p(99)<100`) unverändert. | M | Entwurf via `gemini_simple_code_generator`, Claude integriert + verifiziert (`make test-k6`) | 🔲 | — |
+| DRIFT61-02 | `DRIFT-M20`: Entscheidung + Umsetzung — Video-Latenzziel (100–300ms) entweder um einen `getStats()`-basierten automatisierten Test ergänzen, oder `docs/requirements.md`/`CONTEXT.MD` explizit als "unverifiziert/aspirational" kennzeichnen (ADR-014: kein Safety-Hartziel, daher reine Ermessensfrage ohne Grill-Me). | S/M | Zweitmeinung via `gemini_brainstorm` vor der Entscheidung | 🔲 | — |
+| DRIFT61-03 | `DRIFT-M21`: `docs/deployment/ec2-bootstrap.md` korrigieren — Zeile 107-109 (Security-Group-Hinweis) und Zeile 371 (Service-Tabelle) korrigieren: `fleet-service` ist seit Sprint 36 (`DEPLOY-08`) in `docker-compose.prod.yml` + nginx-Proxy verdrahtet, braucht keinen eigenen Port (analog `auth-service`). Kein Compose-/CDK-Code betroffen, reiner Doku-Fix. | S | keiner (trivialer Doku-Fix, kein Werkzeug passt) | 🔲 | — |
+| DRIFT61-04 | `DRIFT-M22`: `-race` strukturell in mindestens einem Makefile-Standardziel verankern (Entscheidung: eigenes `test-race`-Target vs. `-race` in `test-unit` selbst) statt nur ad-hoc manuell. Bei Umsetzung: `go test ./... -race` einmal vollständig gegen den aktuellen Stand laufen lassen, um neu auffällige Races (nicht nur den Task selbst) sofort sichtbar zu machen. | M | Zweitmeinung via `gemini_brainstorm` vor der Entscheidung | 🔲 | — |
+| DRIFT61-05 | `DRIFT-M24`: Package-lokalen `OperatorRole`-Typ in `internal/controlserver/session/manager.go` einführen (analog `statemachine/state.go`, **kein** Import von `authservice` — separate Services). Alle Rohstring-Stellen in `session/manager.go`, `command/engine.go:108`, `transport/websocket.go:158,172` umstellen. Sicherheitsnah (ADR-025) — volle Testabdeckung inkl. `-race -count=2`. | M | Claude implementiert; `gemini_code_review_refactor` als unabhängige Zweitmeinung auf den fertigen Diff vor PR | 🔲 | — |
+| DRIFT61-06 | `DRIFT-M25`: Package-lokalen `TaskStatus`-Typ in `internal/fleetservice/store.go` einführen (analog `statemachine/state.go`), `Task.Status`, `taskTransitionSources` und alle Vergleichsstellen umstellen. Keine Verhaltensänderung an der Übergangsmatrix. | M | Claude implementiert; `gemini_code_review_refactor` als unabhängige Zweitmeinung auf den fertigen Diff vor PR | 🔲 | DRIFT61-04 (falls `-race`-Target vorher steht, direkt mitverifizieren) |
+| DRIFT61-07 | Verifikation: `go build ./...`, `go vet ./...`, `gofmt -l` sauber; `make test-latency`/`make test-k6` weiterhin grün (inkl. neuem WS-Roundtrip aus `DRIFT61-01`); `go test ./... -race -count=2` grün (§17); Doku-Updates (`DECISIONS.MD`, `tasks/backlog.md` Drift-Audit-Fixes-Tabelle — 6 Zeilen, ggf. `docs/requirements.md`/`CONTEXT.MD` für `DRIFT-M20`). | S | Abschließendes `gemini_code_review_refactor` über den gesamten Sprint-Diff als zusätzliches Pre-PR-Gate | 🔲 | DRIFT61-01..06 |
 
-**Nicht Teil dieses Sprints (→ Sprint 61, s. `tasks/backlog.md`):** `DRIFT-M19` (k6-Latenztest auf
-echten WS-ACK-Roundtrip), `DRIFT-M20` (Video-Latenzziel-Test/Doku), `DRIFT-M21` (`Doku.md`
-EC2-Deployment `fleet-service`-Ergänzung), `DRIFT-M22` (`-race` strukturell in Makefile
-verankern), `DRIFT-M24` (`OperatorRole` als Typ), `DRIFT-M25` (Task-Status als Typ in
-`fleetservice/store.go`) — bewusst nach den Sprint-60-Entscheidungen verschoben, da `M22`
-inhaltlich von `DRIFT60-02`/`-03` abhängt (dieselbe Latenz-/Benchmark-Baustelle) und eine volle
-`DRIFT-M18`-Watchdog-Implementierung (falls so entschieden) den Sprint sonst sprengen würde.
-Ebenfalls nicht Teil: `DRIFT-AP3` (neues EPIC „AP3" anlegen, strukturell, kein Drift-Fix),
-`CIHARD-04` (`buf breaking`, weiterhin offener Diskussionspunkt ohne neuen Anlass).
+**Grundsatz (gilt für alle Gemini-Einsätze in diesem Sprint):** Gemini liefert Entwürfe/Zweit-
+meinungen, niemals die finale Entscheidung oder unüberprüfte sicherheitsrelevante Umsetzung —
+Claude verifiziert jeden Gemini-Output gegen echten Code/Teststack, bevor er übernommen wird
+(`CLAUDE.MD` §0: Sicherheit schlägt alles). Bei erneutem Serverausfall (s. Sprint-60-Präzedenzfall)
+wird ohne Gemini weitergearbeitet und das transparent im Ergebnis-Abschnitt dokumentiert, statt den
+Sprint zu blockieren.
+
+**Nicht Teil dieses Sprints:** `DRIFT-AP3` (neues EPIC „AP3" anlegen, strukturell, kein
+Drift-Fix), `CIHARD-04` (`buf breaking`, weiterhin offener Diskussionspunkt ohne neuen Anlass) —
+beide bereits in Sprint 60 als bewusst ausgeklammert dokumentiert und weiterhin ohne neuen Anlass.
+Mit Abschluss dieses Sprints sind alle in der Sprint-59-Nachbesprechung (2026-07-22) benannten
+`DRIFT-K*`/`DRIFT-M18..M25`-Restposten abgearbeitet.
 
 ## Ergebnis
 
-**DRIFT60-01:** `tasks/backlog.md` korrigiert — `DRIFT-K5` von "🔄 Sprint 60 geplant" auf "✅
-Sprint 55" (war real bereits durch `CIHARD-01` behoben, nur nie nachgezogen); `CIHARD-01`-Zeile
-korrigiert, behauptet jetzt nur noch, K5 (nicht auch K6) zu schließen.
-
-**DRIFT60-02 — Grill-Me `DRIFT-K4`, Entscheidung: blocking.** Vor der Entscheidung echte
-CI-Historie via `github`-MCP geprüft (`mcp__github__actions_list`/`get_job_logs`, nicht nur den
-Backlog-Stand übernommen): 47 aufgezeichnete Läufe von `test-latency.yml` seit Sprint 41, **alle**
-grün, gemessenes p99 in jeder Stichprobe (aktuellster + mehrere historische Läufe, u. a. vom
-20./21./22.07.) durchgängig **0-1ms** bei einem 100ms-Budget — ~100-facher Puffer. Der
-Rausch-Vorfall, den die Non-blocking-Entscheidung von Sprint 41 befürchtete, ist nie eingetreten.
-`go-benchmark`-Job in `.github/workflows/test-latency.yml` auf blocking umgestellt
-(`continue-on-error` entfernt), `k6`-Job bleibt unabhängig davon non-blocking. ADR-006
-Update-Block, `DECISIONS.MD`, Backlog-Zeile aktualisiert. Branch-Protection
-(Required-Status-Check) bewusst **nicht** aktiviert — eigener Folgeschritt, Nutzerbestätigung
-nötig.
-
-**DRIFT60-03 — Grill-Me `DRIFT-K6`, Entscheidung: ersatzlos streichen.**
-`TestLatencyBudget_DocumentedRequirement` prüfte nur `latencyBudget != 100*time.Millisecond` —
-eine Konstante gegen sich selbst, keine echte Testabdeckung. Der Benchmark selbst
-(`BenchmarkControlACKRoundtrip`s `b.Fatalf` bei p99>100ms, ADR-010) verifiziert die eigentliche
-Anforderung bereits vollständig. Test in `tests/performance/latency_test.go` entfernt, keine
-Ersatzassertion nötig. Verifiziert: `make test-latency` läuft weiterhin grün (s. u.).
-
-**DRIFT60-04 — Grill-Me `DRIFT-M18`, Entscheidung: Doku korrigieren, nicht implementieren.**
-Vor der Entscheidung per Explore-Subagent gegen echten Code verifiziert: kein `SystemState`-Wert,
-keine Transition, kein Handler-Zweig für OBSERVATION irgendwo in `internal/`/`cmd/`; `/session/
-start` validiert JWTs rein lokal (HMAC-Secret) und ruft auth-service nie über HTTP auf —
-„neue Sessions blockiert, wenn auth-service down" hatte nie einen Produktivpfad. Der real
-relevante Fall (Operator-Account wird während laufender Session ungültig) ist bereits durch
-`AuthWatchdog`/CRITICAL abgedeckt — dessen DB-Direktzugriff-Design wurde 2026-07-16 explizit
-gewählt, *um* eine Kopplung an OBSERVATION zu vermeiden (`authcheck/checker.go`-Kommentar). Eine
-echte OBSERVATION-Implementierung wäre eine neue sicherheitsrelevante Abhängigkeit ohne bisherigen
-Betriebsanlass. `CONTEXT.MD` (Glossar + Failure-Classification-Tabelle) korrigiert, ADR-009
-Update-Block, Backlog-Zeile aktualisiert.
-
-**Gemini-mcp Sub-Agent (zweite Meinung, DRIFT60-02/-04):** Für beide Architektur-Trade-offs wurde
-versucht, den neu verbundenen `gemini-mcp`-Server (`gemini_subagent_start`/`gemini_brainstorm`)
-als zweite Meinung einzuholen. Ergebnis: **nicht verfügbar** — erster Versuch scheiterte an
-Free-Tier-Rate-Limit (429), der Retry sowie ein direkter synchroner `gemini_brainstorm`-Aufruf
-scheiterten beide an einem serverseitigen Fallback-Bug (404 `models/gemini-1.5-flash is not
-found`, unabhängig vom angeforderten `model_override`). Beide Entscheidungen beruhen stattdessen
-auf eigenständig verifizierter Evidenz (CI-Lauf-Historie via `github`-MCP für K4, Code-Grep +
-Explore-Subagent für M18) — kein Blocker, aber der `gemini-mcp`-Server selbst braucht
-Aufmerksamkeit (Modell-Fallback-Kette zeigt auf ein nicht mehr existierendes Modell).
-
-**DRIFT60-05 — Verifikation:** `go build ./...` sauber, `go vet ./...` sauber, `gofmt -l` ohne
-Findings. `make test-latency`: `PASS`, `BenchmarkControlACKRoundtrip-16  189322  63052 ns/op
-p50=0s p95=0s p99=0s (budget=100ms)`, `ok avoc/tests/performance 14.655s` — kein Skip, keine
-Regression durch das Streichen des tautologischen Tests. Doku-Updates: `DECISIONS.MD` (ADR-006/
-ADR-009-Zeilen), `tasks/backlog.md` (Drift-Audit-Fixes-Tabelle, 4 Zeilen), ADR-006/ADR-009
-Update-Blöcke, `CONTEXT.MD`.
-
-**Bewusst nicht getestet/umgesetzt:**
-- Branch-Protection-Aktivierung für den jetzt blockierenden `go-benchmark`-Job — eigener
-  Folgeschritt, Nutzerbestätigung nötig (s. DRIFT60-02).
-- Volle `DRIFT-M18`-OBSERVATION-Implementierung wurde bewusst nicht gebaut (Grill-Me-Entscheidung
-  gegen Implementierung, s. o.) — kein Folge-Task, da die Doku-Korrektur als abschließend gilt.
-- CI-Verifikation der `test-latency.yml`-Änderung lief nicht auf einem echten GitHub-Actions-Run
-  (kein Push in diesem Sprint) — echtes Verhalten erst nach Push/PR sichtbar.
+_Noch offen — Sprint ist geplant, aber nicht umgesetzt._
