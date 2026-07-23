@@ -41,12 +41,12 @@ func TestListSessions_MultipleObserversOnSameVehicle(t *testing.T) {
 	sessions := mgr.ListSessions()
 
 	assert.Len(t, sessions, 2)
-	roles := map[string]int{}
+	roles := map[OperatorRole]int{}
 	for _, s := range sessions {
 		roles[s.OperatorRole]++
 	}
-	assert.Equal(t, 1, roles["ACTIVE_OPERATOR"])
-	assert.Equal(t, 1, roles["OBSERVER"])
+	assert.Equal(t, 1, roles[RoleActiveOperator])
+	assert.Equal(t, 1, roles[RoleObserver])
 }
 
 // TestListSessions_ReturnsSnapshotNotAlias verifies mutating the returned slice's elements does

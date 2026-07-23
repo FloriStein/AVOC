@@ -200,6 +200,18 @@ type Station struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// TaskStatus is a Task's lifecycle state (ADR-030). Package-local, modeled on the typed-string-
+// constant pattern in statemachine/state.go — pure magic-value cleanup (DRIFT-M25, Sprint 61),
+// no change to the transition matrix or its behavior.
+type TaskStatus string
+
+const (
+	TaskPending    TaskStatus = "pending"
+	TaskInProgress TaskStatus = "in_progress"
+	TaskCompleted  TaskStatus = "completed"
+	TaskCancelled  TaskStatus = "cancelled"
+)
+
 // Task represents a vehicle moving between two Stations (ADR-029 — first-version task model,
 // no multi-step job/loading model yet).
 type Task struct {
@@ -207,7 +219,7 @@ type Task struct {
 	VehicleID       string     `json:"vehicle_id"`
 	FromStationID   string     `json:"from_station_id"`
 	ToStationID     string     `json:"to_station_id"`
-	Status          string     `json:"status"` // "pending" | "in_progress" | "completed" | "cancelled"
+	Status          TaskStatus `json:"status"`
 	Priority        int        `json:"priority"`
 	CreatedAt       time.Time  `json:"created_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
@@ -216,7 +228,7 @@ type Task struct {
 	// taskTransitionSources below (TASKUI-02) — lets the frontend render the correct
 	// status-change buttons without duplicating the transition matrix itself. Never nil (see
 	// allowedTaskTransitions), so it marshals to `[]` rather than `null` for terminal statuses.
-	AllowedTransitions []string `json:"allowed_transitions"`
+	AllowedTransitions []TaskStatus `json:"allowed_transitions"`
 }
 
 // TaskStatusHistoryEntry is one recorded status transition for a Task (ADR-032), returned in
@@ -526,7 +538,7 @@ func (s *PostgresFleetStore) ListStations() ([]Station, error) {
 func (s *PostgresFleetStore) CreateTask(t Task) (Task, error) {
 	t.ID = ulid.Generate()
 	if t.Status == "" {
-		t.Status = "pending"
+		t.Status = TaskPending
 	}
 	err := s.db.QueryRow(
 		`INSERT INTO tasks (id, vehicle_id, from_station_id, to_station_id, status, priority)
@@ -572,17 +584,17 @@ var (
 // taskTransitionSources maps each allowed target status to the set of statuses a task may
 // currently be in for that transition to succeed (ADR-030's state machine). "pending" is
 // deliberately absent as a key — it is only ever the CreateTask default, never a PATCH target.
-var taskTransitionSources = map[string][]string{
-	"in_progress": {"pending"},
-	"completed":   {"in_progress"},
-	"cancelled":   {"pending", "in_progress"},
+var taskTransitionSources = map[TaskStatus][]TaskStatus{
+	TaskInProgress: {TaskPending},
+	TaskCompleted:  {TaskInProgress},
+	TaskCancelled:  {TaskPending, TaskInProgress},
 }
 
 // taskTransitionOrder fixes the button order the frontend renders for a given current status
 // (e.g. "Abschließen" before "Stornieren" for in_progress) — map iteration in
 // allowedTaskTransitions would otherwise be non-deterministic. Must list every key of
 // taskTransitionSources.
-var taskTransitionOrder = []string{"in_progress", "completed", "cancelled"}
+var taskTransitionOrder = []TaskStatus{TaskInProgress, TaskCompleted, TaskCancelled}
 
 // allowedTaskTransitions derives, for a task currently in status, the list of target statuses it
 // may transition to — the inverse of taskTransitionSources. This is the single source of truth
@@ -590,8 +602,8 @@ var taskTransitionOrder = []string{"in_progress", "completed", "cancelled"}
 // hand-maintained a duplicate copy (NEXT_TRANSITIONS) that had to be kept in sync manually.
 // Task.AllowedTransitions now carries this over the wire instead. Always returns a non-nil slice
 // (possibly empty for terminal statuses), matching the TASKUI-04 nil-slice convention.
-func allowedTaskTransitions(status string) []string {
-	targets := []string{}
+func allowedTaskTransitions(status TaskStatus) []TaskStatus {
+	targets := []TaskStatus{}
 	for _, target := range taskTransitionOrder {
 		for _, source := range taskTransitionSources[target] {
 			if source == status {
@@ -611,7 +623,9 @@ func allowedTaskTransitions(status string) []string {
 // vehicle_status.current_task_id so the Fleet Overview doesn't keep showing a finished task as
 // the vehicle's "current" one.
 func (s *PostgresFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (Task, error) {
-	sources, ok := taskTransitionSources[newStatus]
+	// newStatus arrives as a plain string (HTTP PATCH body, ADR-030) — validated against the
+	// known transition targets right here via the map lookup, same as before typing TaskStatus.
+	sources, ok := taskTransitionSources[TaskStatus(newStatus)]
 	if !ok {
 		return Task{}, fmt.Errorf("fleetservice: unknown target status %q: %w", newStatus, ErrInvalidTransition)
 	}

@@ -104,9 +104,11 @@ chmod 600 avoc-ec2-key.pem
 | 3001 | TCP | Grafana (**in Produktion auf eigene IP einschränken**) |
 | 80/443 | TCP | reserviert für Reverse Proxy / HTTPS |
 
-Kein Eintrag für Port 8085 (Fleet Service) — `fleet-service` ist zwar Teil des Dev-Stacks, aber
-(Stand jetzt) nicht in `docker-compose.prod.yml` eingetragen und läuft daher auf keiner per diese
-Anleitung aufgesetzten Instanz, siehe die Lücke bei "Services & zugehöriger Quellcode" unten.
+Kein Eintrag für Port 8085 (Fleet Service) — `fleet-service` ist seit Sprint 36 (`DEPLOY-08`) Teil
+von `docker-compose.prod.yml` und läuft auf jeder per diese Anleitung aufgesetzten Instanz, braucht
+aber keinen eigenen Security-Group-Port: `nginx.conf` proxied `/fleet/` bereits intern über das
+Docker-Netzwerk auf `fleet-service:8085` (analog `auth-service:8081`, das ebenfalls keinen
+eigenen Port in dieser Tabelle hat).
 
 ---
 
@@ -270,13 +272,10 @@ docker buildx build --platform linux/amd64 -t avoc-frontend:latest \
   -f infrastructure/docker/frontend.Dockerfile . --load
 ```
 
-> **Bekannte Lücke:** `fleet-service` wird hier mitgebaut (`make build-prod`/`make push` bauen es
-> ebenfalls, `Makefile`s `GO_SERVICES`), ist aber **nicht** in `docker-compose.prod.yml` als
-> Service eingetragen — das Fleet-Dashboard-Backend läuft aktuell nicht auf einem per diese
-> Anleitung aufgesetzten Produktiv-Server, obwohl das Fleet-Dashboard laut `docs/milestones/
-> meilenstein-2-dashboard.md` die primäre Post-Login-Ansicht ist. Nachziehen von
-> `docker-compose.prod.yml` (Service-Eintrag analog zum Dev-Compose, Port 8085, eigener
-> Postgres-Pool auf `avoc`) ist ein offener Folge-Task.
+`fleet-service` wird hier mitgebaut (`make build-prod`/`make push` bauen es ebenfalls, `Makefile`s
+`GO_SERVICES`) und ist seit Sprint 36 (`DEPLOY-08`) auch regulär in `docker-compose.prod.yml`
+eingetragen (Port 8085, eigener Postgres-Pool auf `avoc`) — das Fleet-Dashboard-Backend läuft auf
+jedem per diese Anleitung aufgesetzten Produktiv-Server.
 
 Als Tar-Archiv verpacken und übertragen:
 
@@ -368,7 +367,7 @@ Sieben Go-Binaries unter `cmd/`, jedes ein eigenes `main.go` plus die
 | **safety-service** | `internal/safetyservice` (nur `bus.go`), `pkg/logger` | Safety Event Bus (In-Memory) |
 | **telemetry-service** | `internal/telemetryservice` (nur `client.go`), `pkg/logger` | MQTT-Telemetrie-Weiterleitung |
 | **webrtc-sfu** | `internal/webrtcsfu` (nur `sfu.go`), `pkg/logger` | Passiver Session-Event-Consumer (Pion) |
-| **fleet-service** | `internal/{fleetservice,fleetgateway}`, `pkg/{db,logger}` | Fleet-Domäne: Zonen/Stationen/Tasks/Alerts/Live-Status (ADR-027/028/029/031) — **nicht in `docker-compose.prod.yml`, siehe Lücke in Schritt 6** |
+| **fleet-service** | `internal/{fleetservice,fleetgateway}`, `pkg/{db,logger}` | Fleet-Domäne: Zonen/Stationen/Tasks/Alerts/Live-Status (ADR-027/028/029/031) — seit Sprint 36 (`DEPLOY-08`) in `docker-compose.prod.yml`, kein eigener Security-Group-Port nötig (siehe Schritt 6) |
 | **vehicle-mock** | `pkg/{logger,ulid}`, `gen/go/{common,control,telemetry,vehicle}/v1` | Fahrzeug-Simulator für Dev/Test |
 
 Geteilte Bausteine, die mehrere Services betreffen können:

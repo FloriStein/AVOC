@@ -89,7 +89,7 @@ func (h *HandoverManager) ConfirmHandover(vehicleID, confirmingOperatorID string
 		return fmt.Errorf("handover token issuance failed: %w", err)
 	}
 
-	h.sessions.UpdateOperator(vehicleID, pending.toOperatorID, string(statemachine.OpActive))
+	h.sessions.UpdateOperator(vehicleID, pending.toOperatorID, RoleActiveOperator)
 	h.vehicles.Get(vehicleID).SM.TransitionOperator(statemachine.OpActive)
 	h.sessions.PushSFUEvent("OPERATOR_HANDOVER")
 

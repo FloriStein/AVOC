@@ -175,7 +175,7 @@ func (f *FakeFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (Task
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	sources, ok := taskTransitionSources[newStatus]
+	sources, ok := taskTransitionSources[TaskStatus(newStatus)]
 	if !ok {
 		return Task{}, ErrInvalidTransition
 	}
@@ -194,8 +194,8 @@ func (f *FakeFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (Task
 		return Task{}, ErrInvalidTransition
 	}
 
-	previousStatus := t.Status
-	t.Status = newStatus
+	previousStatus := string(t.Status)
+	t.Status = TaskStatus(newStatus)
 	t.StatusChangedBy = &changedBy
 	if newStatus == "completed" {
 		now := time.Now()
@@ -203,14 +203,14 @@ func (f *FakeFleetStore) UpdateTaskStatus(id, newStatus, changedBy string) (Task
 	}
 	f.tasks[id] = t
 
-	if t.Status == "completed" || t.Status == "cancelled" {
+	if t.Status == TaskCompleted || t.Status == TaskCancelled {
 		if vs, ok := f.vehicleStatus[t.VehicleID]; ok && vs.CurrentTaskID != nil && *vs.CurrentTaskID == t.ID {
 			vs.CurrentTaskID = nil
 			f.vehicleStatus[t.VehicleID] = vs
 		}
 	}
 	f.taskStatusHistory[t.ID] = append(f.taskStatusHistory[t.ID], TaskStatusHistoryEntry{
-		ID: ulid.Generate(), TaskID: t.ID, FromStatus: &previousStatus, ToStatus: t.Status,
+		ID: ulid.Generate(), TaskID: t.ID, FromStatus: &previousStatus, ToStatus: string(t.Status),
 		ChangedBy: changedBy, ChangedAt: time.Now(),
 	})
 

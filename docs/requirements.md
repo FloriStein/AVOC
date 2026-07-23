@@ -162,7 +162,11 @@ Zwei Quellen, beide laufen in dieselbe Notification-UI:
 - Server-seitiges Video Recording (primär, Audit-fähig)
 - Client-seitiges Recording (optional, via Browser MediaRecorder API)
 - Video-Ausfall → DEGRADED State (kein Auto-Stop, kein SAFE MODE — ADR-009/011)
-- QoS-Latenzziel Video: 100–300ms (kein Safety-Hartziel — ADR-014)
+- QoS-Latenzziel Video: 100–300ms (kein Safety-Hartziel — ADR-014) — **unverifiziert/aspirational**
+  (DRIFT-M20, Sprint 61): kein automatisierter Latenz-Test misst diesen Wert, nur die
+  Farbcodierungs-/Schwellwertlogik der UI-Anzeige ist getestet (`useWebRTC.test.ts`). Bewusste
+  Entscheidung, keinen `getStats()`-basierten Test nachzurüsten — siehe Begründung unter
+  Performance Requirements unten.
 - WebRTC Signaling via bestehenden WebSocket-Kanal (außerhalb Protobuf-Schema — ADR-008/014)
 
 ---
@@ -280,7 +284,15 @@ Regel: NO_OPERATOR → SYSTEM SAFE_MODE. Max. 1 ACTIVE_OPERATOR pro Session.
 ## Performance Requirements
 
 - **Control Loop Latenz:** < 100ms (ACK-Roundtrip Client → Control Server, CI Build-Fail bei Verletzung — ADR-010/006)
-- **Video Latenz:** QoS-Ziel 100–300ms (kein Safety-Hartziel — ADR-014)
+- **Video Latenz:** QoS-Ziel 100–300ms (kein Safety-Hartziel — ADR-014). **Unverifiziert/aspirational**
+  (DRIFT-M20, Sprint 61) — bewusst kein `getStats()`-basierter automatisierter Test: ein Mock des
+  `RTCPeerConnection.getStats()`-Rückgabewerts würde nur beweisen, dass unser Code den Mock-Wert
+  korrekt liest, nicht dass echte Netzwerklatenz im Zielkorridor liegt; ein echter Test gegen einen
+  echten MediaMTX-Container + Browser-Automatisierung wäre der einzige aussagekräftige Ansatz,
+  steht aber in keinem Verhältnis zum Nutzen für ein nicht-sicherheitsrelevantes, nicht CI-Build-Fail-
+  auslösendes QoS-Ziel (anders als die 100ms-Control-Loop-Latenz oben, die bereits real per
+  k6/Go-Benchmark in CI erzwungen wird). Die Farbcodierung/Schwellwertlogik der UI-Anzeige bleibt
+  weiterhin unit-getestet (`useWebRTC.test.ts`).
 - **Safety Events:** near-instant (Safety Event Bus Priority Channel)
 - High reliability connection recovery (Exponential Backoff)
 - Graceful degradation bei schlechter Netzwerkqualität (DEGRADED State)
